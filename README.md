@@ -8,7 +8,7 @@ v0.3 is a from-scratch rewrite. Nothing from the v0.2 prototype is reused (it re
 
 ## Download
 
-Windows 64-bit builds of the client and the dedicated server are on the [releases page](../../releases). Unzip and run `ferrite.exe`; nothing else to install.
+Windows, Linux and macOS builds of the client and the dedicated server are on the [releases page](../../releases). Unpack and run `ferrite`. The macOS build is unsigned: if it refuses to open, run `xattr -dr com.apple.quarantine .` in the unpacked folder once.
 
 ## Run from source
 
