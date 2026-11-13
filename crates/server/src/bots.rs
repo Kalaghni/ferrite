@@ -11,6 +11,8 @@ pub struct Bot {
     rng: Rng,
     skill: f32,
     defender: bool,
+    /// Falls back when badly hurt instead of fighting to the death.
+    cautious: bool,
     lane: usize,
     goal: usize,
     goal_timer: u32,
@@ -43,6 +45,7 @@ impl Bot {
         let mut rng = Rng::new(seed);
         Bot {
             defender: rng.chance(0.3),
+            cautious: rng.chance(0.55),
             lane: (idx / 2) % 3,
             rng,
             skill: skill.max(0.2),
@@ -333,6 +336,34 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
         want_yaw = mv.x.atan2(mv.y);
     }
 
+    // --- Self-preservation ---
+    let mut fleeing = false;
+    for gr in &g.grenades {
+        if gr.team == me.team && gr.owner != i {
+            continue; // friendly frags are harmless
+        }
+        let away = vec2(pos.x - gr.pos.x, pos.z - gr.pos.z);
+        if gr.fuse < 95 && away.length() < 8.5 && (gr.pos.y - pos.y).abs() < 4.0 {
+            mv = away.normalize_or_zero();
+            if mv == Vec2::ZERO {
+                mv = vec2(b.strafe.max(0.5), 0.0);
+            }
+            fleeing = true;
+            crouch = false;
+            fire = false;
+            if b.target.is_none() {
+                want_yaw = mv.x.atan2(mv.y);
+            }
+            break;
+        }
+    }
+    if !fleeing && engaged && b.cautious && me.hp < sim::kit(kit).hp * 0.35 {
+        // Badly hurt: give ground toward friendly territory, still shooting.
+        let back = g.nav.dir(5 + me.team as usize, b.lane, pos.x, pos.z);
+        mv = back + vec2(-b.yaw.cos(), b.yaw.sin()) * b.strafe * 0.5;
+        crouch = false;
+    }
+
     // --- Turn toward the desired view ---
     let dy = wrap_angle(want_yaw - b.yaw);
     let dp = want_pitch - b.pitch;
@@ -351,7 +382,7 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
     let r = mv.dot(vec2(-cy, sy));
     cmd.mz = if f > 0.35 { 1 } else if f < -0.35 { -1 } else { 0 };
     cmd.mx = if r > 0.35 { 1 } else if r < -0.35 { -1 } else { 0 };
-    if !engaged && dgoal > 14.0 && cmd.mz > 0 {
+    if ((!engaged && dgoal > 14.0) || fleeing) && cmd.mz > 0 {
         cmd.buttons |= btn::SPRINT;
     }
     if side && t % 3 != 0 {

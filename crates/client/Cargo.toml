@@ -6,4 +6,4 @@ edition.workspace = true
 [dependencies]
 ferrite-shared = { path = "../shared" }
 ferrite-server = { path = "../server" }
-macroquad = "0.4"
+macroquad = { version = "0.4", features = ["audio"] }

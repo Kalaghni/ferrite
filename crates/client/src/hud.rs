@@ -42,6 +42,44 @@ fn project(vp: &Mat4, p: Vec3, w: f32, h: f32) -> Option<(f32, f32, f32)> {
     Some(((c.x / c.w * 0.5 + 0.5) * w, (1.0 - (c.y / c.w * 0.5 + 0.5)) * h, c.w))
 }
 
+/// Screen rectangles (x, y, w, h) of the two panels in the team picker.
+pub fn team_pick_rects(w: f32, h: f32) -> [(f32, f32, f32, f32); 2] {
+    let pw = (w * 0.3).clamp(220.0, 380.0);
+    let ph = 220.0;
+    let gap = 28.0;
+    let y = h / 2.0 - ph / 2.0;
+    [(w / 2.0 - gap / 2.0 - pw, y, pw, ph), (w / 2.0 + gap / 2.0, y, pw, ph)]
+}
+
+fn draw_team_pick(app: &App, w: f32, h: f32) {
+    draw_rectangle(0.0, 0.0, w, h, col(DARK, 0.8));
+    let rects = team_pick_rects(w, h);
+    text_c("CHOOSE YOUR TEAM", w / 2.0, rects[0].1 - 44.0, 44.0, col(WHITE, 1.0));
+    let (mx, my) = macroquad::prelude::mouse_position();
+    for (t, &(x, y, pw, ph)) in rects.iter().enumerate() {
+        let c = team_col(t as u8);
+        let over = mx >= x && mx < x + pw && my >= y && my < y + ph;
+        let mine = app.my_team as usize == t;
+        draw_rectangle(x, y, pw, ph, col([c[0] * 0.3, c[1] * 0.3, c[2] * 0.3], 0.95));
+        draw_rectangle(x, y, pw, 8.0, col(c, 1.0));
+        if over && !mine {
+            draw_rectangle_lines(x, y, pw, ph, 4.0, col(WHITE, 1.0));
+        }
+        let total = app.net.roster.iter().filter(|r| r.team as usize == t).count();
+        let humans = app.net.roster.iter().filter(|r| r.team as usize == t && !r.bot).count();
+        let cx = x + pw / 2.0;
+        text_c(TEAM_NAMES[t], cx, y + 70.0, 52.0, col(c, 1.0));
+        text_c(&format!("{} fighters  -  {} human", total, humans), cx, y + 108.0, 20.0, col(WHITE, 0.85));
+        if let Some(s) = app.net.latest() {
+            let held = s.points.iter().filter(|p| p.owner as usize == t).count();
+            text_c(&format!("{} tickets  -  holds {} of 5", s.tickets[t], held), cx, y + 136.0, 20.0, col(WHITE, 0.85));
+        }
+        let (label, a) = if mine { ("YOUR TEAM", 0.7) } else if total > humans { ("CLICK TO JOIN", 1.0) } else { ("FULL", 0.5) };
+        text_c(label, cx, y + ph - 28.0, 24.0, col(WHITE, a));
+    }
+    text_c("Switching sides redeploys you.     M or ESC to cancel", w / 2.0, rects[0].1 + rects[0].3 + 40.0, 20.0, col(WHITE, 0.75));
+}
+
 pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) {
     let (w, h) = (screen_width(), screen_height());
     let (cx, cy) = (w * 0.5, h * 0.5);
@@ -119,6 +157,42 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) {
         }
     }
 
+    // ---- grenade warning: a marker toward any live frag close enough to hurt ----
+    if playing {
+        for g in &snap.grenades {
+            let gp = Vec3::from(g.pos);
+            let d = gp - my_pos;
+            let dist = d.length();
+            if dist > 11.0 || (g.team == app.my_team && dist > 3.0) {
+                continue;
+            }
+            let rel = ferrite_shared::wrap_angle(app.yaw - d.x.atan2(d.z));
+            let a = rel - std::f32::consts::FRAC_PI_2;
+            let r = 96.0;
+            let (px, py) = (cx + a.cos() * r, cy + a.sin() * r);
+            let pulse = 0.65 + 0.35 * (now as f32 * 18.0).sin();
+            let c = Color::new(1.0, 0.75, 0.15, pulse * (1.0 - dist / 13.0).clamp(0.3, 1.0));
+            draw_poly(px, py, 6, 13.0, 0.0, col(DARK, 0.7));
+            draw_poly(px, py, 6, 10.0, 0.0, c);
+            text_c("!", px, py + 6.0, 20.0, col(DARK, 1.0));
+            text_c(&format!("{:.0}m", dist), px, py + 26.0, 14.0, c);
+        }
+    }
+
+    // ---- suppression: the edges close in when rounds pass close ----
+    if app.suppress > 0.0 {
+        let a = app.suppress * 0.3;
+        let (bw, bh) = (w * 0.16, h * 0.16);
+        for k in 0..6 {
+            let f = k as f32 / 6.0;
+            let c = col(DARK, a * (1.0 - f) / 3.0);
+            draw_rectangle(0.0, 0.0, w, bh * (1.0 - f), c);
+            draw_rectangle(0.0, h - bh * (1.0 - f), w, bh * (1.0 - f), c);
+            draw_rectangle(0.0, 0.0, bw * (1.0 - f), h, c);
+            draw_rectangle(w - bw * (1.0 - f), 0.0, bw * (1.0 - f), h, c);
+        }
+    }
+
     // ---- damage feedback ----
     if app.dmg_flash > 0.0 {
         let a = app.dmg_flash * 0.35;
@@ -183,7 +257,7 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) {
         }
         if !scoped && !(optic && app.ads > 0.5) {
             let ads = app.ads > 0.5;
-            let cone = sim::spread(kit, ads, app.hspeed(), !app.st.on_ground, app.st.crouch);
+            let cone = sim::spread(kit, ads, app.hspeed(), !app.st.on_ground, app.st.crouch, app.st.heat);
             let px_per_rad = h / app.fov.to_radians();
             let gap = (cone * px_per_rad + 3.0).min(140.0);
             let c = col(WHITE, 0.9);
@@ -478,8 +552,10 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) {
         }
     }
 
-    // ---- pause / help ----
-    if !app.captured && !app.auto && !app.spectator {
+    // ---- team picker / pause / help ----
+    if app.team_pick {
+        draw_team_pick(app, w, h);
+    } else if !app.captured && !app.auto && !app.spectator {
         draw_rectangle(0.0, 0.0, w, h, col(DARK, 0.62));
         text_c("FERRITE", cx, cy - 150.0, 96.0, col(team_col(app.my_team), 1.0));
         text_c("hold the line - five points, one front", cx, cy - 112.0, 22.0, col(WHITE, 0.8));
@@ -487,12 +563,14 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) {
             "CLICK to deploy            ESC release mouse          Q leave match (while released)",
             "",
             "WASD move     SHIFT sprint     SPACE jump     CTRL / C crouch     MOUSE aim",
+            "Crouch while sprinting to SLIDE          Hold SPACE into a ledge to CLIMB it",
             "LMB fire    RMB aim    R reload    Q / wheel swap to sidearm    G frag grenade",
-            "T change sight    1 / 2 / 3 kit for next deploy    TAB scoreboard    F3 net stats",
+            "T change sight    1 / 2 / 3 kit for next deploy    M change team    TAB scoreboard",
             "",
             "Capture points in order - only the front line can be contested.",
             "Standing together captures faster. Every capture grants your team a SURGE.",
             "Teams that hold more ground reinforce more slowly. Crates can be destroyed.",
+            "Long bursts open your spread - fire in short ones at range.",
         ];
         for (i, l) in lines.iter().enumerate() {
             text_c(l, cx, cy - 50.0 + i as f32 * 26.0, 20.0, col(WHITE, 0.92));

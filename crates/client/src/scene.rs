@@ -207,6 +207,41 @@ pub fn build_world(w: &World) -> Mesh {
             m.quad(b0 + side, b0 - side, b1 - side, b1 + side, shade(trunk, 0.8));
         }
     }
+    // Grass tufts and pebbles: cheap detail that breaks up the ground.
+    let free = |x: f32, z: f32| !w.blocks.iter().any(|b| x > b.min.x - 0.2 && x < b.max.x + 0.2 && z > b.min.z - 0.2 && z < b.max.z + 0.2);
+    for k in 0..26000u32 {
+        let x = (hash01(k, seed ^ 0x11) * 2.0 - 1.0) * (HALF_X + 6.0);
+        let z = (hash01(k, seed ^ 0x22) * 2.0 - 1.0) * (HALF_Z + 6.0);
+        let n = w.terrain_normal(x, z);
+        if n.y < 0.93 || !free(x, z) {
+            continue;
+        }
+        let mut near = f32::MAX;
+        for (px, pz) in POINTS_XZ.iter().chain(BASES_XZ.iter()) {
+            near = near.min(((x - px).powi(2) + (z - pz).powi(2)).sqrt());
+        }
+        if near < 9.5 && hash01(k, 3) < 0.85 {
+            continue; // trampled ground around objectives
+        }
+        let base = vec3(x, w.height(x, z), z);
+        if k % 10 == 0 {
+            let s = 0.07 + 0.13 * hash01(k, 5);
+            let g = 0.4 + 0.14 * hash01(k, 8);
+            taper(&mut m, base + vec3(-s, -0.04, -s * 0.8), base + vec3(s, s * 0.8, s * 0.8), 1.0, 0.6, Vec3::ZERO, Vec3::ZERO, rgb(g, g * 0.95, g * 0.9));
+            continue;
+        }
+        let gc = ground_col(base, n, seed, hash01(k, 4));
+        let col = if hash01(k, 6) < 0.3 { rgb(gc[0] * 1.12, gc[1] * 1.05, gc[2] * 0.9) } else { rgb(gc[0] * 0.82, gc[1] * 0.98, gc[2] * 0.74) };
+        let blades = 3 + (hash01(k, 7) * 3.0) as u32;
+        for b in 0..blades {
+            let a = hash01(k, 20 + b) * std::f32::consts::TAU;
+            let hgt = 0.12 + 0.2 * hash01(k, 30 + b);
+            let off = vec3(a.cos(), 0.0, a.sin()) * 0.12 * hash01(k, 40 + b);
+            let wd = vec3(-a.sin(), 0.0, a.cos()) * 0.02;
+            let tip = base + off + vec3(a.cos() * 0.08, hgt, a.sin() * 0.08);
+            m.tri_n(base + off - wd, base + off + wd, tip, n, shade(col, 0.85 + 0.3 * hash01(k, 50 + b)));
+        }
+    }
     m
 }
 
@@ -264,45 +299,103 @@ pub struct PlayerView {
     pub yaw: f32,
     pub pitch: f32,
     pub flags: u8,
+    pub flags2: u8,
     pub hp: u8,
     pub team: u8,
     pub kit: u8,
     pub phase: f32,
     pub moving: f32,
+    /// Smoothed 0..1 pose weights.
+    pub crouch: f32,
+    pub air: f32,
+    pub slide: f32,
+    pub reload: f32,
+    /// 1 on the frame a shot is fired, decaying.
+    pub fire: f32,
+    /// 1 on the frame damage is taken, decaying.
+    pub hurt: f32,
+    /// Velocity in the soldier's own frame (forward, right), m/s.
+    pub vel: (f32, f32),
+    /// 0 = on their feet, 1 = flat on the ground.
+    pub fall: f32,
+    /// How far a body has sunk into the ground before it is removed.
+    pub sink: f32,
 }
 
-pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: f32) {
+/// Box stretched from `a` to `b` (a forearm, a thigh...).
+fn limb(m: &mut Mesh, g: &Mat4, a: Vec3, b: Vec3, r: f32, round: bool, col: Col) {
+    let d = b - a;
+    let len = d.length();
+    if len < 1e-4 {
+        return;
+    }
+    let z = d / len;
+    let up = if z.y.abs() > 0.9 { Vec3::X } else { Vec3::Y };
+    let x = up.cross(z).normalize();
+    let y = z.cross(x);
+    let basis = Mat4::from_cols(x.extend(0.0), y.extend(0.0), z.extend(0.0), ((a + b) * 0.5).extend(1.0));
+    if round {
+        m.tube(&(*g * basis), Vec3::ZERO, r, 0.0, len * 0.5, 12, col);
+    } else {
+        m.obox(&(*g * basis), Vec3::ZERO, vec3(r, r, len * 0.5), col);
+    }
+}
+
+/// A soldier, posed from their movement: stride follows the direction of
+/// travel, the torso leans into a run, knees fold for a crouch or tuck for
+/// a jump, and the weapon drops for a sprint or a reload. `blob` draws a
+/// simple ground shadow for when real shadows are off.
+pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: f32, blob: bool) {
     let tc = team_col(p.team);
     let shield = p.flags & flag::SHIELD != 0;
     let glow = if p.flags & flag::SURGE != 0 { 0.35 + 0.25 * (time * 9.0).sin() } else { 0.0 };
-    let main = [tc[0], tc[1], tc[2], glow];
-    let dark = [tc[0] * 0.42, tc[1] * 0.42, tc[2] * 0.45, glow * 0.5];
-    let metal = rgb(0.16, 0.16, 0.18);
-    let skin = rgb(0.86, 0.78, 0.66);
-    let crouch = p.flags & flag::CROUCH != 0;
-    let drop = if crouch { 0.5 } else { 0.0 };
-    let base = Mat4::from_translation(p.pos) * Mat4::from_rotation_y(p.yaw);
+    // Taking a hit flashes the whole figure toward white.
+    let h = p.hurt * 0.6;
+    let tint = |c: [f32; 3], e: f32| -> Col { [c[0] + (1.0 - c[0]) * h, c[1] + (1.0 - c[1]) * h, c[2] + (1.0 - c[2]) * h, e.max(h * 0.5)] };
+    let main = tint(tc, glow);
+    let dark = tint([tc[0] * 0.42, tc[1] * 0.42, tc[2] * 0.45], glow * 0.5);
+    let metal = tint([0.16, 0.16, 0.18], 0.0);
+    let skin = tint([0.86, 0.78, 0.66], 0.0);
+    let glove = tint([0.2, 0.19, 0.18], 0.0);
+
+    let sl = p.slide;
+    let c = p.crouch.max(sl);
+    let kneel = p.crouch * (1.0 - sl);
+    let air = p.air * (1.0 - c);
+    let speed = (p.vel.0 * p.vel.0 + p.vel.1 * p.vel.1).sqrt();
+    let sprint = ((speed - 6.4) / 1.6).clamp(0.0, 1.0) * (1.0 - c);
+    let fall = p.fall * p.fall * (3.0 - 2.0 * p.fall);
+    let root = Mat4::from_translation(p.pos + vec3(0.0, 0.17 * fall - p.sink, 0.0)) * Mat4::from_rotation_y(p.yaw) * Mat4::from_rotation_x(-fall * 1.5);
     let bulk = if p.kit == 1 { 1.18 } else { 1.0 };
-    let swing = (p.phase * 2.2).sin() * 0.75 * p.moving;
-    for (side, s) in [(0.14f32, swing), (-0.14, -swing)] {
-        if crouch {
-            // Kneeling: thigh forward, shin folded under the body.
-            let hip = base * Mat4::from_translation(vec3(side, 0.34, 0.0));
-            m.obox(&hip, vec3(0.0, 0.0, 0.16 + s * 0.08), vec3(0.105, 0.11, 0.24), dark);
-            m.obox(&hip, vec3(0.0, -0.17, 0.3 - side.signum() * 0.22), vec3(0.1, 0.17, 0.11), shade(dark, 0.85));
-            m.obox(&hip, vec3(0.0, -0.3, 0.34 - side.signum() * 0.22), vec3(0.105, 0.055, 0.16), metal);
-        } else {
-            let hip = base * Mat4::from_translation(vec3(side, 0.78, 0.0)) * Mat4::from_rotation_x(s);
-            m.obox(&hip, vec3(0.0, -0.19, 0.0), vec3(0.11, 0.2, 0.125), dark);
-            // knee bends on the back-swing
-            let knee = hip * Mat4::from_translation(vec3(0.0, -0.38, 0.0)) * Mat4::from_rotation_x(s.max(0.0) * 0.9 + 0.05);
-            m.obox(&knee, vec3(0.0, -0.16, 0.0), vec3(0.095, 0.17, 0.11), shade(dark, 0.85));
-            m.obox(&knee, vec3(0.0, -0.01, 0.07), vec3(0.08, 0.06, 0.05), metal);
-            m.obox(&knee, vec3(0.0, -0.35, 0.04), vec3(0.105, 0.055, 0.16), metal);
-        }
+
+    // ---- legs ----
+    // Stride along the direction of travel, so strafing sidesteps.
+    let la = -p.vel.1.atan2(p.vel.0.abs().max(0.4)) * p.moving.min(1.0) * (1.0 - c);
+    let back = if p.vel.0 < -0.5 { -1.0 } else { 1.0 };
+    let swing = (p.phase * 2.2).sin() * (0.72 + 0.22 * sprint) * p.moving * (1.0 - sl) * (1.0 - 0.55 * kneel) * (1.0 - 0.6 * air) * (1.0 - fall) * back;
+    let hip_y = 0.78 - 0.44 * c;
+    for (side, s, lead) in [(0.14f32, swing, 1.0f32), (-0.14, -swing, 0.0)] {
+        // Kneel: lead knee up, rear knee down. Slide: legs thrown forward.
+        let thigh = s * (1.0 - 0.5 * kneel) - kneel * (0.55 + 0.9 * lead) - air * (0.3 + 0.35 * lead) - sl * (1.3 + 0.2 * lead) + fall * 0.1 * (lead - 0.5);
+        let knee_a = (s.max(0.0) * 0.9 + 0.05) * (1.0 - c) + kneel * (2.0 - 0.5 * lead) + air * (0.5 + 0.7 * (1.0 - lead)) + sl * (0.2 + 0.9 * (1.0 - lead));
+        let hip = root * Mat4::from_translation(vec3(side, hip_y, 0.0)) * Mat4::from_rotation_y(la) * Mat4::from_rotation_x(thigh);
+        m.obox(&hip, vec3(0.0, -0.19, 0.0), vec3(0.11, 0.2, 0.125), dark);
+        let knee = hip * Mat4::from_translation(vec3(0.0, -0.38, 0.0)) * Mat4::from_rotation_x(knee_a);
+        m.obox(&knee, vec3(0.0, -0.16, 0.0), vec3(0.095, 0.17, 0.11), shade(dark, 0.85));
+        m.obox(&knee, vec3(0.0, -0.01, 0.07), vec3(0.08, 0.06, 0.05), metal);
+        m.obox(&knee, vec3(0.0, -0.35, 0.04), vec3(0.105, 0.055, 0.16), metal);
     }
-    let bob = (p.phase * 4.4).sin().abs() * 0.04 * p.moving;
-    let body = base * Mat4::from_translation(vec3(0.0, bob - drop, 0.0));
+
+    // ---- torso ----
+    let idle = (time * 1.7 + p.id as f32).sin() * 0.008 * (1.0 - fall);
+    let bob = (p.phase * 4.4).sin().abs() * (0.04 + 0.025 * sprint) * p.moving * (1.0 - sl);
+    let lean = (0.07 * (p.vel.0 / 5.6).clamp(-1.0, 1.0) + 0.16 * sprint) * (1.0 - sl) + 0.14 * kneel - 0.6 * sl + 0.1 * air - 0.05 * p.fire;
+    let roll = (p.vel.1 / 5.6).clamp(-1.0, 1.0) * 0.07 * (1.0 - c);
+    let body = root
+        * Mat4::from_translation(vec3(0.0, bob + idle - 0.5 * c + 0.84, 0.0))
+        * Mat4::from_rotation_x(lean)
+        * Mat4::from_rotation_z(roll)
+        * Mat4::from_translation(vec3(0.0, -0.84, 0.0));
     m.obox(&body, vec3(0.0, 1.12, 0.0), vec3(0.27 * bulk, 0.34, 0.16 * bulk), main);
     m.obox(&body, vec3(0.0, 0.84, 0.0), vec3(0.28 * bulk, 0.06, 0.17 * bulk), metal);
     m.obox(&body, vec3(0.0, 1.2, 0.165 * bulk), vec3(0.2 * bulk, 0.2, 0.025), shade(main, 0.8));
@@ -316,7 +409,9 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
         2 => m.obox(&body, vec3(0.0, 1.3, -0.2), vec3(0.2, 0.3, 0.04), dark),
         _ => m.obox(&body, vec3(0.0, 1.15, -0.21), vec3(0.16, 0.18, 0.06), dark),
     }
-    let head = body * Mat4::from_translation(vec3(0.0, 1.5, 0.0)) * Mat4::from_rotation_x(-p.pitch * 0.6);
+
+    // ---- head: stays level while the body leans ----
+    let head = body * Mat4::from_translation(vec3(0.0, 1.5, 0.0)) * Mat4::from_rotation_x(-p.pitch * 0.6 * (1.0 - fall) - lean * 0.8);
     m.obox(&head, vec3(0.0, 0.14, 0.0), vec3(0.15, 0.15, 0.15), skin);
     m.obox(&head, vec3(0.0, 0.25, -0.01), vec3(0.18, 0.09, 0.19), main);
     m.obox(&head, vec3(0.0, 0.15, 0.155), vec3(0.12, 0.04, 0.01), metal);
@@ -324,30 +419,60 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
     for sx in [-1.0f32, 1.0] {
         m.obox(&head, vec3(sx * 0.165, 0.13, -0.02), vec3(0.02, 0.07, 0.08), shade(main, 0.9));
     }
-    let arms = body * Mat4::from_translation(vec3(0.0, 1.36, 0.0)) * Mat4::from_rotation_x(-p.pitch);
-    let glen = if p.flags & flag::SIDEARM != 0 { 0.12 } else { [0.36, 0.3, 0.52][p.kit as usize % 3] };
-    m.obox(&arms, vec3(-0.3 * bulk, -0.1, 0.2), vec3(0.075, 0.075, 0.24), dark);
-    m.obox(&arms, vec3(0.22 * bulk, -0.1, 0.27), vec3(0.07, 0.07, 0.26), dark);
-    m.obox(&arms, vec3(-0.2, -0.08, 0.4 + glen * 0.5), vec3(0.04, 0.06, glen), metal);
-    m.obox(&arms, vec3(-0.2, -0.2, 0.42), vec3(0.03, 0.08, 0.05), metal);
-    m.obox(&arms, vec3(-0.2, -0.07, 0.22), vec3(0.035, 0.05, 0.1), shade(metal, 0.8));
-    m.obox(&arms, vec3(-0.2, 0.0, 0.5), vec3(0.012, 0.02, 0.05), metal);
-    m.obox(&arms, vec3(-0.27, -0.1, 0.46), vec3(0.05, 0.05, 0.05), skin);
-    m.obox(&arms, vec3(-0.1, -0.12, 0.56), vec3(0.05, 0.05, 0.05), skin);
+
+    // ---- arms and weapon ----
+    // The muzzle follows the aim, drops for a sprint or a reload, and kicks
+    // when a shot goes off.
+    let relaxed = (0.5 * sprint + 0.3 * air) * (1.0 - p.fire) + 0.55 * p.reload + 1.1 * fall;
+    let aim = -p.pitch * (1.0 - 0.6 * sprint) * (1.0 - fall) - lean + relaxed - 0.07 * p.fire;
+    let arms = body
+        * Mat4::from_translation(vec3(0.0, 1.36, -0.045 * p.fire))
+        * Mat4::from_rotation_x(aim)
+        * Mat4::from_rotation_y(0.45 * sprint * (1.0 - p.fire) + 0.25 * p.reload);
+    let sidearm = p.flags & flag::SIDEARM != 0;
+    let glen = if sidearm { 0.12 } else { [0.36, 0.3, 0.52][p.kit as usize % 3] };
+    let gx = -0.2;
+    m.obox(&arms, vec3(gx, -0.08, 0.4 + glen * 0.5), vec3(0.04, 0.06, glen), metal);
+    m.obox(&arms, vec3(gx, -0.2, 0.42), vec3(0.03, 0.08, 0.05), metal);
+    m.obox(&arms, vec3(gx, 0.0, 0.5), vec3(0.012, 0.02, 0.05), metal);
+    if !sidearm {
+        m.obox(&arms, vec3(gx, -0.07, 0.22), vec3(0.035, 0.05, 0.1), shade(metal, 0.8));
+        m.obox(&arms, vec3(gx, -0.02, 0.4 + glen * 1.5), vec3(0.016, 0.016, glen * 0.5), shade(metal, 0.7));
+        if p.reload < 0.5 {
+            m.obox(&arms, vec3(gx, -0.2, 0.56), vec3(0.025, 0.08, 0.04), shade(metal, 0.7));
+        }
+    }
+    // Right arm: shoulder, elbow, grip.
+    let r_sh = vec3(-0.31 * bulk, 0.02, 0.0);
+    let r_hand = vec3(gx, -0.17, 0.42);
+    let r_el = vec3(-0.36 * bulk, -0.24, 0.14);
+    limb(m, &arms, r_sh, r_el, 0.075, false, dark);
+    limb(m, &arms, r_el, r_hand, 0.065, false, shade(dark, 0.9));
+    m.obox(&arms, r_hand, vec3(0.05, 0.055, 0.05), glove);
+    // Left arm: supports the fore-end, or comes off it to work the magazine.
+    let l_sh = vec3(0.31 * bulk, 0.02, 0.0);
+    let support = if sidearm { vec3(gx + 0.05, -0.2, 0.42) } else { vec3(gx + 0.02, -0.14, 0.4 + glen * 1.1) };
+    let l_hand = support + (vec3(gx + 0.04, -0.3, 0.5) - support) * p.reload;
+    let l_el = vec3(0.24 * bulk, -0.26, 0.2);
+    limb(m, &arms, l_sh, l_el, 0.075, false, dark);
+    limb(m, &arms, l_el, l_hand, 0.065, false, shade(dark, 0.9));
+    m.obox(&arms, l_hand, vec3(0.05, 0.05, 0.055), glove);
+
     if shield {
         let a = 0.25 + 0.15 * (time * 12.0).sin();
-        alpha.cuboid(p.pos + vec3(-0.5, 0.0, -0.5), p.pos + vec3(0.5, 1.95 - drop, 0.5), [1.0, 1.0, 1.0, a * 0.25]);
+        alpha.cuboid(p.pos + vec3(-0.5, 0.0, -0.5), p.pos + vec3(0.5, 1.95 - 0.5 * c, 0.5), [1.0, 1.0, 1.0, a * 0.25]);
     }
-    // Blob shadow.
-    let gy = if p.flags & flag::GROUND != 0 { p.pos.y } else { w.height(p.pos.x, p.pos.z) } + 0.04;
-    let r = 0.55;
-    alpha.quad(
-        vec3(p.pos.x - r, gy, p.pos.z - r),
-        vec3(p.pos.x - r, gy, p.pos.z + r),
-        vec3(p.pos.x + r, gy, p.pos.z + r),
-        vec3(p.pos.x + r, gy, p.pos.z - r),
-        [0.05, 0.04, 0.06, 0.4],
-    );
+    if blob {
+        let gy = if p.flags & flag::GROUND != 0 { p.pos.y } else { w.height(p.pos.x, p.pos.z) } + 0.04;
+        let r = 0.55;
+        alpha.quad(
+            vec3(p.pos.x - r, gy, p.pos.z - r),
+            vec3(p.pos.x - r, gy, p.pos.z + r),
+            vec3(p.pos.x + r, gy, p.pos.z + r),
+            vec3(p.pos.x + r, gy, p.pos.z - r),
+            [0.05, 0.04, 0.06, 0.4],
+        );
+    }
 }
 
 pub fn crates(m: &mut Mesh, w: &World, dmask: u64) {
@@ -546,21 +671,39 @@ pub struct ViewModel {
     pub recoil: f32,
     pub bob: f32,
     pub bob_amt: f32,
+    /// Reload progress 0..1, negative when not reloading.
     pub reload: f32,
+    /// 1 as the weapon starts coming up, 0 once it is ready.
+    pub draw: f32,
+    /// 1 just after a shot, 0 when the next round is ready (pump, bolt).
+    pub cycle: f32,
     pub sway: (f32, f32),
     pub flash: f32,
     pub sprint: f32,
+    /// Landing dip, strafe lean (-1..1), slide, airborne, climbing: 0..1.
+    pub land: f32,
+    pub strafe: f32,
+    pub slide: f32,
+    pub air: f32,
+    pub mantle: f32,
+    pub time: f32,
+    /// Changes every shot; picks the muzzle flash shape.
+    pub seq: u32,
 }
 
-/// First-person weapon, built in camera space (camera looks down -Z).
+/// First-person weapon and arms, built in camera space (camera looks down
+/// -Z, +X is right, +Y is up).
 pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
+    use std::f32::consts::PI;
     let tc = team_col(v.team);
     let accent = rgb(tc[0], tc[1], tc[2]);
     let metal = rgb(0.2, 0.2, 0.23);
     let dark = rgb(0.11, 0.11, 0.13);
     let wood = rgb(0.45, 0.3, 0.17);
     let sleeve = rgb(tc[0] * 0.45, tc[1] * 0.45, tc[2] * 0.48);
-    let hip = vec3(0.2, -0.19, -0.66);
+    let cuff = rgb(tc[0] * 0.3, tc[1] * 0.3, tc[2] * 0.33);
+    let glove = rgb(0.42, 0.34, 0.25);
+    let hip = if v.kit == 4 { vec3(0.15, -0.13, -0.5) } else { vec3(0.19, -0.165, -0.7) };
     let iron = v.sight == IRON;
     let scope = v.sight >= SCOPE4;
     let aim = if iron || scope {
@@ -570,17 +713,51 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
         let (ry, _, s) = rail(v.kit);
         vec3(0.0, -(ry + sight_center(v.sight) * s), if v.kit == 4 { -0.34 } else { -0.47 })
     };
-    let mut pos = hip + (aim - hip) * v.ads;
+    let ease = |t: f32| t * t * (3.0 - 2.0 * t);
+    let seg = |t: f32, a: f32, b: f32| ease(((t - a) / (b - a)).clamp(0.0, 1.0));
+
+    // Reload choreography: tilt in, magazine out, magazine in, settle.
+    let r = v.reload;
+    let reloading = r >= 0.0;
+    let (tilt, mag_out, to_mag, seat) = if reloading {
+        (
+            seg(r, 0.0, 0.14) * (1.0 - seg(r, 0.84, 1.0)),
+            seg(r, 0.14, 0.32) * (1.0 - seg(r, 0.5, 0.68)),
+            seg(r, 0.04, 0.18) * (1.0 - seg(r, 0.72, 0.9)),
+            seg(r, 0.62, 0.68) * (1.0 - seg(r, 0.68, 0.78)),
+        )
+    } else {
+        (0.0, 0.0, 0.0, 0.0)
+    };
+    // Working the action between shots.
+    let cyc = if reloading { 0.0 } else { (seg(1.0 - v.cycle, 0.22, 0.72) * PI).sin() };
+    let pump = if v.kit == 1 { cyc } else { 0.0 };
+    let bolt = if v.kit == 2 { cyc } else { 0.0 };
+    let draw = ease(v.draw.clamp(0.0, 1.0));
+
     let k = 1.0 - v.ads * 0.85;
-    pos += vec3((v.bob).sin() * 0.012, (v.bob * 2.0).sin().abs() * -0.012, 0.0) * v.bob_amt * k;
+    let mut pos = hip + (aim - hip) * v.ads;
+    pos += vec3((v.bob).sin() * 0.012, (v.bob * 2.0).sin().abs() * -0.012, 0.0) * v.bob_amt * (1.0 + 0.6 * v.sprint) * k;
     pos += vec3(v.sway.0, v.sway.1, 0.0) * k;
-    pos.z += v.recoil * 0.07;
-    let dip = (v.reload * std::f32::consts::PI).sin();
-    pos.y -= dip * 0.22 + v.sprint * 0.06;
-    let rot = Mat4::from_rotation_x(v.recoil * 0.09 - dip * 0.7 - v.sprint * 0.25)
-        * Mat4::from_rotation_y(v.sprint * 0.5 + dip * 0.3)
-        * Mat4::from_rotation_z(-dip * 0.4);
+    pos += vec3((v.time * 0.9).sin() * 0.0018, (v.time * 1.7).sin() * 0.003, 0.0) * k;
+    pos.z += v.recoil * 0.07 + pump * 0.012;
+    pos.x -= tilt * 0.05;
+    pos.y -= -tilt * 0.06 + v.sprint * 0.06 + draw * 0.34 + v.land * 0.05 * k + v.mantle * 0.3 - seat * 0.014 - v.air * 0.012 * k;
+    pos.x += (v.slide * 0.03 - bolt * 0.012) * k;
+    let rot = Mat4::from_rotation_x(v.recoil * 0.09 + tilt * 0.36 - v.sprint * 0.25 - draw * 0.9 - v.mantle * 0.8 - v.land * 0.05 * k + pump * 0.03)
+        * Mat4::from_rotation_y(v.sprint * 0.5 + tilt * 0.22 + draw * 0.3 + bolt * 0.04)
+        * Mat4::from_rotation_z(-tilt * 0.55 - v.strafe * 0.05 * k + v.slide * 0.28 * k - bolt * 0.16 * k);
     let g = Mat4::from_translation(pos) * rot;
+
+    // Where the hands go, in gun space, and the magazine if there is one.
+    let (grip, support, mag_c, mag_h) = match v.kit {
+        1 => (vec3(0.0, -0.06, 0.1), vec3(0.0, -0.085, -0.32), Vec3::ZERO, Vec3::ZERO),
+        2 => (vec3(0.0, -0.065, 0.13), vec3(0.0, -0.06, -0.3), vec3(0.0, -0.065, -0.06), vec3(0.016, 0.028, 0.04)),
+        4 => (vec3(0.0, -0.085, 0.02), vec3(-0.03, -0.1, 0.005), vec3(0.0, -0.085, 0.022), vec3(0.013, 0.05, 0.02)),
+        _ => (vec3(0.0, -0.085, 0.1), vec3(0.0, -0.05, -0.36), vec3(0.0, -0.1, -0.06), vec3(0.022, 0.07, 0.04)),
+    };
+    let mag_off = vec3(0.0, -0.3 * mag_out, 0.04 * mag_out);
+    let slide_back = vec3(0.0, 0.0, pump * 0.085);
     let muzzle_z;
     match v.kit {
         1 => {
@@ -590,9 +767,17 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
             }
             m.obox(&g, vec3(0.0, 0.012, -0.42), vec3(0.006, 0.012, 0.2), dark);
             m.obox(&g, vec3(0.0, 0.012, -0.6), vec3(0.045, 0.006, 0.012), metal);
-            m.obox(&g, vec3(0.0, -0.045, -0.32), vec3(0.035, 0.03, 0.1), wood);
+            // pump: slides back toward you between shots
+            m.obox(&g, vec3(0.0, -0.045, -0.32) + slide_back, vec3(0.035, 0.03, 0.1), wood);
+            for z in [-0.38f32, -0.32, -0.26] {
+                m.obox(&g, vec3(0.0, -0.045, z) + slide_back, vec3(0.037, 0.026, 0.006), shade(wood, 0.75));
+            }
+            m.tube(&g, vec3(0.0, -0.04, -0.38), 0.012, 0.0, 0.2, 12, metal);
             m.obox(&g, vec3(0.0, -0.03, 0.22), vec3(0.03, 0.05, 0.1), wood);
+            m.obox(&g, vec3(0.0, -0.045, 0.34), vec3(0.03, 0.065, 0.03), shade(wood, 0.8));
+            m.obox(&g, vec3(0.0, -0.065, 0.06), vec3(0.006, 0.02, 0.05), dark);
             m.obox(&g, vec3(0.0, 0.055, -0.1), vec3(0.042, 0.008, 0.06), accent);
+            m.obox(&g, vec3(0.042, 0.01, -0.02), vec3(0.003, 0.018, 0.05), dark);
             if iron {
                 m.obox(&g, vec3(0.0, 0.045, -0.6), vec3(0.005, 0.012, 0.005), accent);
                 m.obox(&g, vec3(-0.012, 0.07, 0.1), vec3(0.004, 0.008, 0.005), dark);
@@ -601,41 +786,63 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
             muzzle_z = -0.64;
         }
         4 => {
-            // Sidearm: slide, frame, grip, sights.
-            m.obox(&g, vec3(0.0, 0.025, -0.12), vec3(0.022, 0.026, 0.13), metal);
+            // Sidearm: slide (snaps back with each shot), frame, grip.
+            let kick = vec3(0.0, 0.0, v.recoil * 0.035);
+            m.obox(&g, vec3(0.0, 0.025, -0.12) + kick, vec3(0.022, 0.026, 0.13), metal);
+            for z in [-0.02f32, -0.035, -0.05] {
+                m.obox(&g, vec3(0.0, 0.025, z) + kick, vec3(0.0235, 0.022, 0.004), dark);
+            }
             m.obox(&g, vec3(0.0, -0.012, -0.1), vec3(0.02, 0.014, 0.11), dark);
             m.obox(&(g * Mat4::from_rotation_x(-0.25)), vec3(0.0, -0.075, 0.0), vec3(0.02, 0.06, 0.03), dark);
             m.obox(&g, vec3(0.0, -0.035, -0.07), vec3(0.008, 0.012, 0.035), metal);
+            m.obox(&g, vec3(0.0, -0.055, -0.07), vec3(0.006, 0.004, 0.04), metal);
             m.tube(&g, vec3(0.0, 0.03, -0.252), 0.012, 0.007, 0.006, 20, dark);
             if iron {
-                m.obox(&g, vec3(0.0, 0.056, -0.23), vec3(0.005, 0.008, 0.006), dark);
-                m.obox(&g, vec3(-0.013, 0.056, -0.01), vec3(0.004, 0.008, 0.006), dark);
-                m.obox(&g, vec3(0.013, 0.056, -0.01), vec3(0.004, 0.008, 0.006), dark);
+                m.obox(&g, vec3(0.0, 0.056, -0.23) + kick, vec3(0.005, 0.008, 0.006), dark);
+                m.obox(&g, vec3(-0.013, 0.056, -0.01) + kick, vec3(0.004, 0.008, 0.006), dark);
+                m.obox(&g, vec3(0.013, 0.056, -0.01) + kick, vec3(0.004, 0.008, 0.006), dark);
             }
-            m.obox(&g, vec3(0.0, 0.025, 0.0), vec3(0.024, 0.02, 0.012), accent);
+            m.obox(&g, vec3(0.0, 0.025, 0.0) + kick, vec3(0.024, 0.02, 0.012), accent);
             muzzle_z = -0.27;
         }
         2 => {
             m.obox(&g, vec3(0.0, 0.0, -0.1), vec3(0.03, 0.045, 0.3), wood);
+            m.obox(&g, vec3(0.0, 0.022, -0.02), vec3(0.024, 0.026, 0.15), metal);
             m.tube(&g, vec3(0.0, 0.015, -0.6), 0.014, 0.008, 0.28, 24, dark);
             m.tube(&g, vec3(0.0, 0.015, -0.86), 0.02, 0.008, 0.03, 24, metal);
             m.tube(&g, vec3(0.0, 0.015, -0.36), 0.019, 0.0, 0.04, 24, metal);
+            // bolt: lifts and draws back between shots
+            let bz = 0.07 + bolt * 0.075;
+            m.tube(&g, vec3(0.0, 0.022, bz), 0.011, 0.0, 0.05, 12, shade(metal, 1.3));
+            let handle = g * Mat4::from_translation(vec3(0.024, 0.022, bz + 0.03)) * Mat4::from_rotation_z(-0.9 + bolt * 0.9);
+            m.obox(&handle, vec3(0.022, 0.0, 0.0), vec3(0.022, 0.005, 0.005), metal);
+            m.obox(&handle, vec3(0.046, 0.0, 0.0), vec3(0.009, 0.009, 0.009), dark);
+            m.obox(&g, vec3(0.0, -0.055, 0.03), vec3(0.006, 0.016, 0.04), dark);
             if iron {
                 m.obox(&g, vec3(0.0, 0.05, -0.85), vec3(0.005, 0.02, 0.005), dark);
                 m.obox(&g, vec3(-0.014, 0.058, 0.1), vec3(0.004, 0.013, 0.005), dark);
                 m.obox(&g, vec3(0.014, 0.058, 0.1), vec3(0.004, 0.013, 0.005), dark);
             }
             m.obox(&g, vec3(0.0, -0.03, 0.25), vec3(0.028, 0.055, 0.1), wood);
+            m.obox(&g, vec3(0.0, -0.035, 0.37), vec3(0.03, 0.065, 0.02), dark);
             muzzle_z = -0.9;
         }
         _ => {
             m.obox(&g, vec3(0.0, 0.0, -0.08), vec3(0.032, 0.05, 0.24), metal);
             m.tube(&g, vec3(0.0, 0.012, -0.44), 0.014, 0.007, 0.14, 24, dark);
             m.tube(&g, vec3(0.0, 0.012, -0.36), 0.024, 0.0, 0.06, 24, metal);
+            for z in [-0.4f32, -0.36, -0.32] {
+                m.tube(&g, vec3(0.0, 0.012, z), 0.0255, 0.0, 0.006, 24, dark);
+            }
             m.tube(&g, vec3(0.0, 0.012, -0.57), 0.019, 0.007, 0.025, 24, metal);
-            m.obox(&g, vec3(0.0, -0.1, -0.06), vec3(0.022, 0.07, 0.04), dark);
-            m.obox(&g, vec3(0.0, -0.07, 0.1), vec3(0.025, 0.05, 0.03), metal);
+            // grip, trigger guard, stock
+            m.obox(&(g * Mat4::from_rotation_x(-0.3)), vec3(0.0, -0.09, 0.07), vec3(0.02, 0.05, 0.026), dark);
+            m.obox(&g, vec3(0.0, -0.062, 0.04), vec3(0.005, 0.004, 0.045), dark);
             m.obox(&g, vec3(0.0, -0.02, 0.24), vec3(0.028, 0.045, 0.09), metal);
+            m.obox(&g, vec3(0.0, -0.03, 0.34), vec3(0.03, 0.06, 0.02), dark);
+            // ejection port and charging handle
+            m.obox(&g, vec3(0.0325, 0.012, -0.03), vec3(0.002, 0.014, 0.04), dark);
+            m.obox(&g, vec3(0.0, 0.052, 0.13 + v.recoil * 0.03), vec3(0.014, 0.006, 0.02), dark);
             m.obox(&g, vec3(0.0, 0.058, -0.02), vec3(0.034, 0.008, 0.1), accent);
             if iron {
                 m.obox(&g, vec3(0.0, 0.075, -0.27), vec3(0.006, 0.012, 0.006), dark);
@@ -645,23 +852,59 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
             muzzle_z = -0.6;
         }
     }
+    if mag_h != Vec3::ZERO && mag_out < 0.97 {
+        m.obox(&g, mag_c + mag_off, mag_h, dark);
+        m.obox(&g, mag_c + mag_off - vec3(0.0, mag_h.y, 0.0), vec3(mag_h.x * 1.1, 0.006, mag_h.z * 1.05), metal);
+    }
     if !iron {
         optic(m, &g, v.kit, v.sight, accent, dark, metal);
     }
-    // Arms.
-    let (arm_y, arm_z) = if v.kit == 4 { (-0.13, 0.22) } else { (-0.09, 0.2) };
-    m.obox(&g, vec3(0.05, arm_y, arm_z), vec3(0.04, 0.04, 0.2), sleeve);
-    if v.kit == 4 {
-        // one-handed grip with a support hand under the frame
-        m.obox(&(g * Mat4::from_rotation_y(0.9)), vec3(-0.04, -0.1, -0.06), vec3(0.035, 0.035, 0.12), sleeve);
+
+    // ---- arms: elbows hang in camera space, hands stay on the weapon ----
+    let follow = (pos - hip) * 0.55;
+    let r_el = vec3(0.36, -0.56, -0.16) + follow;
+    let l_el = vec3(-0.16, -0.56, -0.3) + follow;
+    // Right hand holds the grip, or reaches up to work the bolt.
+    let r_gun = grip + (vec3(0.07, 0.03, 0.1 + bolt * 0.07) - grip) * bolt.min(1.0);
+    let r_hand = g.transform_point3(r_gun);
+    // Left hand supports the fore-end, rides the pump, or handles the magazine.
+    let l_gun = if v.kit == 1 && reloading {
+        // feeding shells one at a time
+        let push = (r * 4.0 * PI).sin().abs();
+        let port = vec3(0.0, -0.075 - 0.07 * (1.0 - push), -0.06);
+        support + (port - support) * to_mag
     } else {
-        m.obox(&(g * Mat4::from_rotation_y(0.5)), vec3(-0.02, -0.07, -0.22), vec3(0.04, 0.04, 0.17), sleeve);
+        let at_mag = mag_c + mag_off - vec3(0.0, mag_h.y + 0.02, 0.0);
+        support + slide_back + (at_mag - support) * to_mag
+    };
+    let l_hand = g.transform_point3(l_gun);
+    let cam = Mat4::IDENTITY;
+    for (el, hand, thumb_x) in [(r_el, r_hand, -1.0f32), (l_el, l_hand, 1.0)] {
+        let d = (hand - el).normalize_or_zero();
+        let wrist = hand - d * 0.075;
+        limb(m, &cam, el, wrist, 0.043, true, sleeve);
+        limb(m, &cam, wrist - d * 0.035, wrist, 0.047, true, cuff);
+        limb(m, &cam, wrist, hand + d * 0.03, 0.036, false, glove);
+        // thumb wrapped over the top
+        let side = d.cross(Vec3::Y).normalize_or_zero();
+        m.obox(&cam, hand + side * (0.034 * thumb_x) + vec3(0.0, 0.022, 0.0), vec3(0.012, 0.013, 0.03), shade(glove, 1.2));
     }
+    if v.kit == 1 && reloading && to_mag > 0.6 {
+        // the shell going in
+        m.obox(&g, l_gun + vec3(0.0, 0.03, -0.01), vec3(0.011, 0.011, 0.028), rgb(0.75, 0.2, 0.15));
+    }
+
     if v.flash > 0.0 {
         let c = g.transform_point3(vec3(0.0, 0.015, muzzle_z));
-        let s = 0.02 + 0.035 * v.flash;
+        let s = (0.012 + 0.02 * v.flash) * if v.kit == 1 { 1.5 } else { 1.0 };
         let col = [1.0, 0.8, 0.4, v.flash];
-        add.quad(c + vec3(-s, -s, 0.0), c + vec3(s, -s, 0.0), c + vec3(s, s, 0.0), c + vec3(-s, s, 0.0), col);
-        add.quad(c + vec3(-s * 2.2, 0.0, 0.0), c + vec3(0.0, -s * 0.5, 0.0), c + vec3(s * 2.2, 0.0, 0.0), c + vec3(0.0, s * 0.5, 0.0), col);
+        let a0 = hash01(v.seq, 5) * PI;
+        add.quad(c + vec3(-s, -s, 0.0) * 0.7, c + vec3(s, -s, 0.0) * 0.7, c + vec3(s, s, 0.0) * 0.7, c + vec3(-s, s, 0.0) * 0.7, [1.0, 0.95, 0.75, v.flash]);
+        for j in 0..3u32 {
+            let a = a0 + j as f32 * PI / 3.0;
+            let (u, w2) = (vec3(a.cos(), a.sin(), 0.0), vec3(-a.sin(), a.cos(), 0.0));
+            let len = s * (1.7 + 0.8 * hash01(v.seq, 9 + j));
+            add.quad(c - u * len, c - w2 * s * 0.35, c + u * len, c + w2 * s * 0.35, col);
+        }
     }
 }

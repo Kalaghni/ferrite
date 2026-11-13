@@ -40,16 +40,17 @@ pub struct Remote {
     pub yaw: f32,
     pub pitch: f32,
     pub flags: u8,
+    pub flags2: u8,
     pub hp: u8,
 }
 
 impl Net {
     /// Blocking handshake with retries (runs before the first frame).
-    pub fn connect(addr: SocketAddr, name: &str, spectator: bool) -> Result<(Net, Welcome), String> {
+    pub fn connect(addr: SocketAddr, name: &str, spectator: bool, team: u8) -> Result<(Net, Welcome), String> {
         let sock = UdpSocket::bind(("0.0.0.0", 0)).map_err(|e| e.to_string())?;
         sock.connect(addr).map_err(|e| e.to_string())?;
         sock.set_read_timeout(Some(Duration::from_millis(100))).ok();
-        let hello = encode(&C2S::Hello { proto: PROTO, name: name.to_string(), spectator });
+        let hello = encode(&C2S::Hello { proto: PROTO, name: name.to_string(), spectator, team });
         let start = Instant::now();
         let mut buf = [0u8; 4096];
         let mut welcome = None;
@@ -151,6 +152,14 @@ impl Net {
         let _ = self.sock.send(&encode(&C2S::Cmds { cmds: cmds.to_vec(), ack_feed: self.ack_feed, kit }));
     }
 
+    /// Ask the server to move us to `team`. Sent a few times because the
+    /// request is a single unacknowledged datagram; repeats are harmless.
+    pub fn send_team(&self, team: u8) {
+        for _ in 0..3 {
+            let _ = self.sock.send(&encode(&C2S::Team(team)));
+        }
+    }
+
     pub fn bye(&self) {
         let _ = self.sock.send(&encode(&C2S::Bye));
     }
@@ -177,7 +186,7 @@ impl Net {
                 break;
             }
         }
-        let mk = |p: &NetPlayer| Remote { pos: Vec3::from(p.pos), yaw: p.yaw_f(), pitch: p.pitch_f(), flags: p.flags, hp: p.hp };
+        let mk = |p: &NetPlayer| Remote { pos: Vec3::from(p.pos), yaw: p.yaw_f(), pitch: p.pitch_f(), flags: p.flags, flags2: p.flags2, hp: p.hp };
         match (prev, next) {
             (Some((s0, a)), Some((s1, b))) => {
                 let f = ((rt - s0.tick as f64) / (s1.tick - s0.tick).max(1) as f64).clamp(0.0, 1.0) as f32;

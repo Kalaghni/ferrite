@@ -188,17 +188,18 @@ fn udp_round_trip() {
     let mut buf = [0u8; 8192];
 
     // wrong protocol version is refused with a reason
-    sock.send(&encode(&C2S::Hello { proto: PROTO + 1, name: "old".into(), spectator: false })).unwrap();
+    sock.send(&encode(&C2S::Hello { proto: PROTO + 1, name: "old".into(), spectator: false, team: 2 })).unwrap();
     let n = sock.recv(&mut buf).unwrap();
     assert!(matches!(decode::<S2C>(&buf[..n]), Some(S2C::Reject(_))));
 
-    sock.send(&encode(&C2S::Hello { proto: PROTO, name: "net-test".into(), spectator: false })).unwrap();
-    let (mut id, mut seed) = (SPECTATOR_ID, 0);
+    sock.send(&encode(&C2S::Hello { proto: PROTO, name: "net-test".into(), spectator: false, team: 2 })).unwrap();
+    let (mut id, mut seed, mut first_team) = (SPECTATOR_ID, 0, 0u8);
     for _ in 0..10 {
         let n = sock.recv(&mut buf).unwrap();
-        if let Some(S2C::Welcome { id: i, seed: s, .. }) = decode::<S2C>(&buf[..n]) {
+        if let Some(S2C::Welcome { id: i, seed: s, team, .. }) = decode::<S2C>(&buf[..n]) {
             id = i;
             seed = s;
+            first_team = team;
             break;
         }
     }
@@ -209,6 +210,7 @@ fn udp_round_trip() {
     let (mut seq, mut max_ack, mut snaps, mut saw_self, mut in_roster) = (0u32, 0u32, 0, false, false);
     let mut last_send = Instant::now() - Duration::from_secs(1);
     let mut history: Vec<Cmd> = Vec::new();
+    let (mut asked_switch, mut roster_team) = (false, first_team);
     sock.set_read_timeout(Some(Duration::from_millis(4))).unwrap();
     while start.elapsed() < Duration::from_millis(1500) {
         if last_send.elapsed() >= Duration::from_micros(16_666) {
@@ -217,6 +219,10 @@ fn udp_round_trip() {
             history.push(Cmd { seq, mz: 1, yaw: 1.0, ..Default::default() });
             let recent: Vec<Cmd> = history.iter().rev().take(3).rev().copied().collect();
             sock.send(&encode(&C2S::Cmds { cmds: recent, ack_feed: 0, kit: 1 })).unwrap();
+        }
+        if !asked_switch && start.elapsed() > Duration::from_millis(600) {
+            asked_switch = true;
+            sock.send(&encode(&C2S::Team(1 - first_team))).unwrap();
         }
         if let Ok(n) = sock.recv(&mut buf) {
             match decode::<S2C>(&buf[..n]) {
@@ -227,7 +233,12 @@ fn udp_round_trip() {
                         saw_self |= me.alive;
                     }
                 }
-                Some(S2C::Roster(r)) => in_roster |= r.iter().any(|e| e.id == id && e.name == "net-test" && !e.bot),
+                Some(S2C::Roster(r)) => {
+                    in_roster |= r.iter().any(|e| e.id == id && e.name == "net-test" && !e.bot);
+                    if let Some(e) = r.iter().find(|e| e.id == id) {
+                        roster_team = e.team;
+                    }
+                }
                 _ => {}
             }
         }
@@ -236,6 +247,7 @@ fn udp_round_trip() {
     assert!(max_ack + 12 >= seq, "server acked {max_ack} of {seq}");
     assert!(saw_self && in_roster);
     sock.send(&encode(&C2S::Bye)).unwrap();
+    assert_eq!(roster_team, 1 - first_team, "team change request was applied");
     server.stop();
 }
 
@@ -270,7 +282,7 @@ fn crouch_is_slower_and_lower() {
     let d = ferrite_shared::vec3(0.0, 0.0, 1.0);
     assert!(sim::ray_player(o, d, pos, false).is_some());
     assert!(sim::ray_player(o, d, pos, true).is_none());
-    assert!(sim::spread(0, false, 0.0, false, true) < sim::spread(0, false, 0.0, false, false));
+    assert!(sim::spread(0, false, 0.0, false, true, 0) < sim::spread(0, false, 0.0, false, false, 0));
 }
 
 /// Sidearm: swapping keeps separate magazines, blocks fire during the draw,
@@ -319,4 +331,151 @@ fn sidearm_swap_and_semi_auto() {
     assert!(snap.players.iter().any(|p| p.id as usize == me && p.flags & flag::SIDEARM != 0));
     send(&mut g, btn::SWAP);
     assert_eq!((g.players[me].st.slot, g.players[me].st.ammo), (0, primary_left));
+}
+
+#[test]
+fn team_choice_and_switch() {
+    let mut g = Game::new(cfg(4));
+    // A requested side is honoured even when auto-balance would say otherwise.
+    let a = g.join_team("a", 1).unwrap();
+    let b = g.join_team("b", 1).unwrap();
+    assert_eq!((g.players[a].team, g.players[b].team), (1, 1));
+    let count = |g: &Game, t: u8| g.players.iter().filter(|p| p.team == t).count();
+    assert_eq!((count(&g, 0), count(&g, 1)), (4, 4));
+    for _ in 0..600 {
+        g.tick();
+    }
+    // Switching trades places with a bot: sizes hold, no death is charged.
+    let (deaths, tickets) = (g.players[a].deaths, g.tickets);
+    assert!(g.set_team(a, 0));
+    assert_eq!(g.players[a].team, 0);
+    assert!(!g.players[a].alive);
+    assert_eq!(g.players[a].deaths, deaths);
+    assert_eq!(g.tickets, tickets);
+    assert_eq!((count(&g, 0), count(&g, 1)), (4, 4));
+    for _ in 0..300 {
+        g.tick();
+    }
+    assert!(g.players[a].alive, "redeploys on the new side");
+    // A side with no bots left cannot be joined.
+    let mut ids = vec![];
+    while let Some(i) = g.join_team("x", 0) {
+        if g.players[i].team != 0 {
+            g.leave(i);
+            break;
+        }
+        ids.push(i);
+    }
+    assert!(g.players.iter().filter(|p| p.team == 0).all(|p| p.bot.is_none()));
+    assert!(!g.set_team(b, 0));
+    assert_eq!(g.players[b].team, 1);
+}
+
+/// Sprint then crouch: a slide carries speed that a crouch-walk never has,
+/// and it shows up in snapshots so other clients can animate it.
+#[test]
+fn slide_keeps_sprint_speed() {
+    use ferrite_shared::map::World;
+    use ferrite_shared::vec3;
+    let w = World::new(0xFE221);
+    let (x, z) = (-106.0, -12.0);
+    let mut st = sim::PState::spawn(vec3(x, w.height(x, z), z), 0);
+    let mut seq = 0;
+    let mut send = |st: &mut sim::PState, buttons: u8| {
+        seq += 1;
+        sim::step(st, &Cmd { seq, mz: 1, buttons, yaw: 0.0, ..Default::default() }, &w, 0)
+    };
+    for _ in 0..50 {
+        send(&mut st, btn::SPRINT);
+    }
+    let start = st.pos;
+    assert!(send(&mut st, btn::SPRINT | btn::CROUCH).slid, "crouching at a sprint starts a slide: {st:?}");
+    for _ in 0..24 {
+        send(&mut st, btn::CROUCH);
+    }
+    assert!(st.slide > 0 && st.crouch);
+    let slid = (st.pos - start).length();
+    assert!(slid > 2.6, "slid only {slid} m in 25 ticks");
+    for _ in 0..60 {
+        send(&mut st, btn::CROUCH);
+    }
+    assert_eq!(st.slide, 0, "slides end");
+    assert!(st.crouch);
+    // A second slide needs a fresh sprint.
+    assert!(!send(&mut st, btn::CROUCH).slid);
+
+    // Other clients are told, so they can animate it.
+    let mut g = Game::new(cfg(1));
+    g.players[0].st.slide = 10;
+    g.players[0].st.reload = 10;
+    let snap = g.snapshot(None, 0, g.tick);
+    assert!(snap.players.iter().any(|p| p.id == 0 && p.flags2 & flag2::SLIDE != 0 && p.flags2 & flag2::RELOAD != 0));
+}
+
+/// Holding jump against a ledge within reach climbs it; a tall wall does not.
+#[test]
+fn mantle_climbs_reachable_ledges_only() {
+    use ferrite_shared::map::{Block, BlockKind, World};
+    use ferrite_shared::vec3;
+    let climb = |wall_h: f32| {
+        let mut w = World::new(0xFE221);
+        let (x, z) = (-106.0, 4.0);
+        let g = w.height(x, z);
+        w.blocks.push(Block { min: vec3(x - 3.0, g - 2.0, z + 2.0), max: vec3(x + 3.0, g + wall_h, z + 40.0), kind: BlockKind::Concrete, tint: 0, dest: None });
+        let mut st = sim::PState::spawn(vec3(x, g, z), 0);
+        let mut mantled = false;
+        for seq in 1..110 {
+            let c = Cmd { seq, mz: 1, buttons: btn::JUMP, yaw: 0.0, ..Default::default() };
+            mantled |= sim::step(&mut st, &c, &w, 0).mantle;
+        }
+        (st.pos.y - g, st.pos.z - z, mantled)
+    };
+    let (up, fwd, mantled) = climb(1.9);
+    assert!(mantled && up > 1.8 && fwd > 2.0, "1.9 m ledge: up {up}, forward {fwd}, mantled {mantled}");
+    let (up, fwd, _) = climb(3.2);
+    assert!(up < 1.5 && fwd < 2.0, "3.2 m wall must not be climbable: up {up}, forward {fwd}");
+}
+
+/// Sustained fire opens the cone and it closes again off the trigger.
+#[test]
+fn sustained_fire_blooms_and_recovers() {
+    let mut g = Game::new(cfg(1));
+    let me = g.join("sprayer").unwrap();
+    for _ in 0..40 {
+        g.tick();
+    }
+    let yaw = g.players[me].yaw;
+    let mut seq = 0;
+    let mut send = |g: &mut Game, buttons: u8| {
+        seq += 1;
+        g.apply_cmd(me, Cmd { seq, buttons, yaw, pitch: 1.2, ..Default::default() });
+        g.tick();
+    };
+    for _ in 0..70 {
+        send(&mut g, btn::FIRE);
+    }
+    let hot = g.players[me].st.heat;
+    assert!(hot >= 80, "heat after a long burst: {hot}");
+    assert!(sim::spread(0, false, 0.0, false, false, hot) > sim::spread(0, false, 0.0, false, false, 0) * 1.8);
+    for _ in 0..40 {
+        send(&mut g, 0);
+    }
+    assert_eq!(g.players[me].st.heat, 0);
+}
+
+/// Whoever did real damage before someone else lands the kill gets an assist.
+#[test]
+fn assists_are_credited() {
+    let mut g = Game::new(cfg(2));
+    let (victim, a, b) = (1, 0, 2);
+    assert!(g.players[victim].team != g.players[a].team && g.players[a].team == g.players[b].team);
+    g.damage(victim, Some(a), 60.0, false, 0);
+    g.damage(victim, Some(b), 200.0, false, 0);
+    assert!(!g.players[victim].alive);
+    match g.feed.last() {
+        Some(Feed::Kill { killer, assist, .. }) => assert_eq!((*killer, *assist), (b as u8, a as u8)),
+        other => panic!("expected a kill, got {other:?}"),
+    }
+    assert_eq!(g.players[a].score, 50);
+    assert_eq!(g.players[b].score, 100);
 }

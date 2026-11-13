@@ -24,8 +24,10 @@ use std::net::ToSocketAddrs;
 
 pub struct Args {
     connect: Option<String>,
+    team: u8,
     host: bool,
     menu_shot: Option<String>,
+    pick_team: bool,
     name: String,
     per_team: usize,
     port: u16,
@@ -40,13 +42,19 @@ pub struct Args {
     volume: f32,
     sight: Option<u8>,
     kit: u8,
+    /// Side of the sun shadow map in texels; 0 turns shadows off.
+    shadows: u32,
+    /// Verification aid: freeze the first-person reload animation here.
+    vm_reload: Option<f32>,
 }
 
 fn parse_args() -> Args {
     let mut a = Args {
         connect: None,
+        team: 2,
         host: false,
         menu_shot: None,
+        pick_team: false,
         name: std::env::var("USERNAME").or_else(|_| std::env::var("USER")).unwrap_or_else(|_| "Player".into()),
         per_team: 12,
         port: DEFAULT_PORT,
@@ -61,6 +69,8 @@ fn parse_args() -> Args {
         volume: 0.7,
         sight: None,
         kit: 0,
+        shadows: 4096,
+        vm_reload: None,
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -82,9 +92,28 @@ fn parse_args() -> Args {
             "--shot-at" => a.shot_at = val.parse().expect("--shot-at <secs>"),
             "--quit-at" => a.quit_at = Some(val.parse().expect("--quit-at <secs>")),
             "--menu-shot" => a.menu_shot = Some(val),
+            "--team" => {
+                a.team = match val.to_ascii_lowercase().as_str() {
+                    "ember" | "0" => 0,
+                    "cobalt" | "1" => 1,
+                    _ => 2,
+                }
+            }
+            "--pick-team" => {
+                a.pick_team = true;
+                used = 1;
+            }
             "--host" => {
                 a.host = true;
                 used = 1;
+            }
+            "--vm-reload" => a.vm_reload = val.parse().ok(),
+            "--shadows" => {
+                a.shadows = match val.as_str() {
+                    "off" | "0" => 0,
+                    "low" => 2048,
+                    _ => 4096,
+                }
             }
             "--spectate" => {
                 a.spectate = true;
@@ -96,7 +125,7 @@ fn parse_args() -> Args {
             }
             "--fullscreen" => used = 1,
             "-h" | "--help" => {
-                println!("ferrite [--connect host[:port]] [--host] [--name N] [--bots 12] [--port 27500] [--seed N] [--tickets 250] [--skill 1.0]\n        [--volume 0.7] [--fullscreen] [--spectate] [--auto] [--shot file.png --shot-at SECS] [--quit-at SECS]");
+                println!("ferrite [--connect host[:port]] [--host] [--team ember|cobalt|auto] [--name N] [--bots 12] [--port 27500] [--seed N] [--tickets 250] [--skill 1.0]\n        [--volume 0.7] [--shadows high|low|off] [--fullscreen] [--spectate] [--auto] [--shot file.png --shot-at SECS] [--quit-at SECS]");
                 std::process::exit(0);
             }
             other => {
@@ -177,6 +206,22 @@ pub struct App {
     pub ads: f32,
     pub fov: f32,
     recoil: f32,
+    /// Recoil climb and drift added to the aim; settles back off the trigger.
+    pub recoil_p: f32,
+    pub recoil_y: f32,
+    last_fire: f64,
+    shot_seq: u32,
+    land: f32,
+    mantling: bool,
+    mantle_vis: f32,
+    slide_vis: f32,
+    air_vis: f32,
+    strafe_vis: f32,
+    view_lit: f32,
+    /// Rounds snapping past: darkens the edges of the screen for a moment.
+    pub suppress: f32,
+    whizz_at: f64,
+    trail_acc: f32,
     bob: f32,
     flash: f32,
     sprint_vis: f32,
@@ -194,6 +239,19 @@ pub struct App {
     pub fx: fx::Fx,
     pub audio: Audio,
     walk: [f32; 64],
+    // Smoothed animation state for other players.
+    rvel: [(f32, f32); 64],
+    rcrouch: [f32; 64],
+    rair: [f32; 64],
+    rslide: [f32; 64],
+    rreload: [f32; 64],
+    rfire: [f32; 64],
+    rhurt: [f32; 64],
+    rhp: [u8; 64],
+    rstep: [f32; 64],
+    last_view: [PlayerView; 64],
+    /// The fallen: pose at death and when it happened.
+    corpses: Vec<(PlayerView, f64)>,
     pub last_pos: [Vec3; 64],
     last_seen: [f64; 64],
     last_shot_snd: [f64; 64],
@@ -202,6 +260,8 @@ pub struct App {
     spec_since: f64,
     death_pos: Vec3,
     pub show_net: bool,
+    /// The in-match team picker is open.
+    pub team_pick: bool,
     /// Chosen sight per weapon id.
     pub sights: [u8; 5],
     pub stats: Stats,
@@ -228,6 +288,23 @@ impl App {
     pub fn hspeed(&self) -> f32 {
         (self.st.vel.x * self.st.vel.x + self.st.vel.z * self.st.vel.z).sqrt()
     }
+    /// Where the weapon actually points: the view plus recoil.
+    pub fn aim(&self) -> (f32, f32) {
+        (self.yaw + self.recoil_y, (self.pitch + self.recoil_p).clamp(-1.5, 1.5))
+    }
+    fn own_view(&self) -> PlayerView {
+        PlayerView {
+            id: self.my_id,
+            pos: self.st.pos,
+            yaw: self.yaw,
+            pitch: self.pitch,
+            flags: if self.st.slot == 1 { flag::SIDEARM } else { 0 },
+            team: self.my_team,
+            kit: self.st.kit,
+            crouch: if self.st.crouch { 1.0 } else { 0.0 },
+            ..Default::default()
+        }
+    }
 
     fn handle_fx(&mut self, f: &Fx, listener: Vec3, now: f64) {
         match *f {
@@ -236,10 +313,24 @@ impl App {
                 let mine = who == self.my_id && !self.spectator;
                 let team = self.team(who);
                 if !mine {
+                    let len = (to - from).length();
                     let d = (to - from).normalize_or_zero();
                     let col = if team == 0 { [1.0, 0.72, 0.38] } else { [0.5, 0.8, 1.0] };
                     self.fx.tracer(from + d * 0.8 - vec3(0.0, 0.14, 0.0), to, col);
                     let i = who as usize % 64;
+                    self.rfire[i] = 1.0;
+                    // A round that passes close by cracks in your ear.
+                    if team != self.my_team && !self.spectator && self.alive && len > 8.0 {
+                        let t = (listener - from).dot(d).clamp(0.0, len);
+                        let near = from + d * t;
+                        if t > 6.0 && (near - listener).length() < 2.4 {
+                            self.suppress = (self.suppress + 0.3).min(1.0);
+                            if now - self.whizz_at > 0.09 {
+                                self.whizz_at = now;
+                                self.audio.play_at(Sfx::Whizz, near, listener, 0.9, 6.0);
+                            }
+                        }
+                    }
                     if now - self.last_shot_snd[i] > 0.03 {
                         self.last_shot_snd[i] = now;
                         self.fx.muzzle(from + d * 0.9 - vec3(0.0, 0.14, 0.0));
@@ -248,7 +339,8 @@ impl App {
                         self.audio.play_at(s, from, listener, 0.55, 28.0);
                     }
                     if hit == 1 {
-                        self.fx.impact(to, [0.55, 0.5, 0.42]);
+                        let n = self.world.raycast(from, d, len + 0.5, self.dmask).map_or(-d, |h| h.normal);
+                        self.fx.impact(to, n, [0.55, 0.5, 0.42]);
                     }
                 }
                 if hit == 2 {
@@ -276,7 +368,7 @@ impl App {
             }
             Fx::Boom { pos } => {
                 let p = Vec3::from(pos);
-                self.fx.explosion(p);
+                self.fx.explosion(p, &self.world);
                 self.audio.play_at(Sfx::Boom, p, listener, 1.0, 40.0);
                 let d = (p - listener).length();
                 self.shake = self.shake.max((1.0 - d / 30.0).max(0.0));
@@ -295,15 +387,27 @@ impl App {
 
     fn handle_feed(&mut self, f: &Feed, now: f64) {
         match *f {
-            Feed::Kill { killer, victim, weapon, head } => {
+            Feed::Kill { killer, victim, weapon, head, assist } => {
                 let vteam = self.team(victim);
-                let pos = if victim == self.my_id && !self.spectator { self.st.pos } else { self.last_pos[victim as usize % 64] };
-                if victim == self.my_id || now - self.last_seen[victim as usize % 64] < 1.5 {
+                let me = victim == self.my_id && !self.spectator;
+                let pos = if me { self.st.pos } else { self.last_pos[victim as usize % 64] };
+                if me || now - self.last_seen[victim as usize % 64] < 1.5 {
                     self.fx.shatter(pos, scene::team_col(vteam));
+                    // Leave a body where they fell.
+                    let mut v = if me { self.own_view() } else { self.last_view[victim as usize % 64] };
+                    v.pos = pos;
+                    v.team = vteam;
+                    self.corpses.push((v, now));
+                    if self.corpses.len() > 18 {
+                        self.corpses.remove(0);
+                    }
                 }
                 if killer == self.my_id && victim != self.my_id {
                     self.stats.my_kills += 1;
-                    self.sub_banner = Some((format!("ELIMINATED  {}", self.name(victim)), now));
+                    let how = if head { "HEADSHOT" } else { "ELIMINATED" };
+                    self.sub_banner = Some((format!("{how}  {}", self.name(victim)), now));
+                } else if assist == self.my_id && !self.spectator {
+                    self.sub_banner = Some((format!("ASSIST  {}  +50", self.name(victim)), now));
                 }
                 if victim == self.my_id {
                     self.stats.my_deaths += 1;
@@ -405,7 +509,8 @@ impl App {
 
     fn build_cmd(&mut self, now: f64) -> Cmd {
         self.seq += 1;
-        let mut c = Cmd { seq: self.seq, yaw: self.yaw, pitch: self.pitch, interp: self.net.render_tick(now), ..Default::default() };
+        let (yaw, pitch) = self.aim();
+        let mut c = Cmd { seq: self.seq, yaw, pitch, interp: self.net.render_tick(now), ..Default::default() };
         if self.auto {
             // Scripted input for unattended end-to-end runs.
             let t = now - self.start;
@@ -489,20 +594,38 @@ impl App {
                 let fwd = sim::view_dir(c.yaw, c.pitch);
                 let muzzle = origin + fwd * 0.7 + right * 0.17 * (1.0 - self.ads) - vec3(0.0, 0.11, 0.0);
                 let col = if self.my_team == 0 { [1.0, 0.72, 0.38] } else { [0.5, 0.8, 1.0] };
-                for d in sim::shot_dirs(kit, c.seq, c.yaw, c.pitch, ads, self.hspeed(), !self.st.on_ground, self.st.crouch) {
+                for d in sim::shot_dirs(kit, c.seq, c.yaw, c.pitch, ads, self.hspeed(), !self.st.on_ground, self.st.crouch, out.heat) {
                     let hit = self.world.raycast(origin, d, 300.0, self.dmask);
                     let end = origin + d * hit.map_or(300.0, |h| h.t);
                     self.fx.tracer(muzzle, end, col);
-                    if hit.is_some() {
-                        self.fx.impact(end, [0.55, 0.5, 0.42]);
+                    if let Some(h) = hit {
+                        self.fx.impact(end, h.normal, [0.55, 0.5, 0.42]);
                     }
                 }
+                // Recoil climbs and wanders while you hold the trigger, then
+                // settles back. Crouching and aiming both steady it.
                 let r = (self.seq as f32 * 0.618).fract();
-                self.pitch = (self.pitch + wd.recoil * (0.7 + 0.5 * r)).min(1.5);
-                self.yaw += wd.recoil * 0.5 * (r - 0.5);
+                let r2 = (self.seq as f32 * 0.381).fract();
+                let steady = if self.st.crouch { 0.8 } else { 1.0 } * (1.0 - 0.25 * self.ads);
+                self.recoil_p = (self.recoil_p + wd.recoil * (0.8 + 0.5 * r) * steady).min(0.17);
+                self.recoil_y = (self.recoil_y + wd.recoil * 0.6 * (r2 - 0.5) * steady).clamp(-0.07, 0.07);
+                self.last_fire = now;
+                self.shot_seq = self.shot_seq.wrapping_add(1);
                 self.recoil = 1.0;
                 self.flash = 1.0;
                 self.audio.play(audio::shot_sfx(kit), 0.75);
+                self.fx.light(muzzle, 7.0, [1.0, 0.75, 0.4], 1.4, 0.06);
+                if kit != 2 {
+                    let port = origin + fwd * 0.5 + right * 0.2 - vec3(0.0, 0.12, 0.0);
+                    self.fx.shell(port, right * 2.4 + vec3(0.0, 1.9, 0.0) + self.st.vel, kit == 1);
+                }
+            }
+            self.mantling = out.mantle;
+            if out.slid {
+                self.audio.play(Sfx::Slide, 0.6);
+            }
+            if self.st.slide > 0 && self.st.on_ground && self.seq % 4 == 0 {
+                self.fx.dust(self.st.pos, 0.8);
             }
             if out.swapped {
                 self.audio.play(Sfx::Step, 0.5);
@@ -516,6 +639,8 @@ impl App {
             if out.landed {
                 self.audio.play(Sfx::Step, 0.7);
                 self.step_y -= 0.12;
+                self.land = 1.0;
+                self.fx.dust(self.st.pos, 1.0);
             }
             if self.st.on_ground {
                 self.stride += self.hspeed() * DT;
@@ -561,7 +686,8 @@ async fn main() {
             Some(a) => menu::Choice::Join(a.clone()),
             None => menu::Choice::Host { port: args.port, per_team: args.per_team },
         };
-        let (_, msg) = play(&args, &args.name, choice).await;
+        let mut sens = 0.0022;
+        let (_, msg) = play(&args, &args.name, args.team, choice, &mut sens).await;
         if let Some(m) = msg {
             eprintln!("{m}");
             for _ in 0..240 {
@@ -582,7 +708,8 @@ async fn main() {
             menu::Choice::Host { .. } => None,
         };
         let name = menu.name();
-        let (joined, msg) = play(&args, &name, choice).await;
+        let (joined, msg) = play(&args, &name, menu.team, choice, &mut menu.sens).await;
+        menu.persist();
         if let (true, Some(a)) = (joined, joining) {
             menu.remember(&a);
         }
@@ -592,7 +719,7 @@ async fn main() {
 
 /// Run one match. Returns whether we got into the match, and a message for
 /// the home screen if it ended for a reason other than the player leaving.
-async fn play(args: &Args, name: &str, choice: menu::Choice) -> (bool, Option<String>) {
+async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mut f32) -> (bool, Option<String>) {
     let mut server = None;
     let addr = match choice {
         menu::Choice::Join(a) => {
@@ -624,12 +751,16 @@ async fn play(args: &Args, name: &str, choice: menu::Choice) -> (bool, Option<St
     mq::draw_text(&format!("FERRITE - connecting to {addr}..."), 40.0, 60.0, 32.0, mq::WHITE);
     mq::next_frame().await;
 
-    let (net, welcome) = match Net::connect(addr, name, args.spectate) {
+    let (net, welcome) = match Net::connect(addr, name, args.spectate, team) {
         Ok(x) => x,
         Err(e) => return (false, Some(format!("Could not join {addr}: {e}"))),
     };
     let world = World::new(welcome.seed);
-    let mut gpu = gfx::Gpu::new(scene::build_world(&world), scene::build_sky());
+    let bounds = (
+        vec3(-ferrite_shared::map::HALF_X - 8.0, -12.0, -ferrite_shared::map::HALF_Z - 8.0),
+        vec3(ferrite_shared::map::HALF_X + 8.0, 34.0, ferrite_shared::map::HALF_Z + 8.0),
+    );
+    let mut gpu = gfx::Gpu::new(scene::build_world(&world), scene::build_sky(), args.shadows, scene::SUN.normalize(), bounds);
     let audio = Audio::new(args.volume).await;
     let start = mq::get_time();
     let hosting = server.as_ref().map(|h: &ferrite_server::ServerHandle| format!("hosting on UDP {}", h.addr.port()));
@@ -660,11 +791,25 @@ async fn play(args: &Args, name: &str, choice: menu::Choice) -> (bool, Option<St
         swap_latch: false,
         reload_latch: false,
         captured: false,
-        sens: 0.0022,
+        sens: sens.clamp(0.0004, 0.01),
         last_mouse: (0.0, 0.0),
         ads: 0.0,
         fov: 66.0,
         recoil: 0.0,
+        recoil_p: 0.0,
+        recoil_y: 0.0,
+        last_fire: 0.0,
+        shot_seq: 0,
+        land: 0.0,
+        mantling: false,
+        mantle_vis: 0.0,
+        slide_vis: 0.0,
+        air_vis: 0.0,
+        strafe_vis: 0.0,
+        view_lit: 1.0,
+        suppress: 0.0,
+        whizz_at: 0.0,
+        trail_acc: 0.0,
         bob: 0.0,
         flash: 0.0,
         sprint_vis: 0.0,
@@ -682,6 +827,17 @@ async fn play(args: &Args, name: &str, choice: menu::Choice) -> (bool, Option<St
         fx: fx::Fx::new(),
         audio,
         walk: [0.0; 64],
+        rvel: [(0.0, 0.0); 64],
+        rcrouch: [0.0; 64],
+        rair: [0.0; 64],
+        rslide: [0.0; 64],
+        rreload: [0.0; 64],
+        rfire: [0.0; 64],
+        rhurt: [0.0; 64],
+        rhp: [0; 64],
+        rstep: [0.0; 64],
+        last_view: [PlayerView::default(); 64],
+        corpses: Vec::new(),
         last_pos: [Vec3::ZERO; 64],
         last_seen: [-10.0; 64],
         last_shot_snd: [0.0; 64],
@@ -690,6 +846,7 @@ async fn play(args: &Args, name: &str, choice: menu::Choice) -> (bool, Option<St
         spec_since: 0.0,
         death_pos: Vec3::ZERO,
         show_net: false,
+        team_pick: false,
         sights: match args.sight {
             Some(s) => [s.min(5); 5],
             None => [scene::IRON, scene::IRON, scene::SCOPE4, 0, scene::IRON],
@@ -698,6 +855,7 @@ async fn play(args: &Args, name: &str, choice: menu::Choice) -> (bool, Option<St
         hosting,
         start,
     };
+    app.team_pick = args.pick_team;
     let (mut opaque, mut alpha, mut add) = (gfx::Mesh::default(), gfx::Mesh::default(), gfx::Mesh::default());
     let (mut vm_opaque, mut vm_add) = (gfx::Mesh::default(), gfx::Mesh::default());
     let mut acc = 0.0f32;
@@ -705,6 +863,7 @@ async fn play(args: &Args, name: &str, choice: menu::Choice) -> (bool, Option<St
     let mut listener = Vec3::ZERO;
     let mut shot_done = false;
     let mut peak_tris = 0usize;
+    let mut grabbed = false;
     let mut sway = (0.0f32, 0.0f32);
     let mut ended: Option<String> = None;
 
@@ -721,23 +880,51 @@ async fn play(args: &Args, name: &str, choice: menu::Choice) -> (bool, Option<St
         app.audio.begin_frame();
 
         // ---- input: mouse capture, look, edge-triggered keys ----
-        if mq::is_key_pressed(mq::KeyCode::Escape) && app.captured {
+        // Team picker: M opens it; click a side, or M / Esc to cancel.
+        let mut picked = false;
+        if app.team_pick {
+            if mq::is_key_pressed(mq::KeyCode::M) || mq::is_key_pressed(mq::KeyCode::Escape) {
+                app.team_pick = false;
+                picked = true; // swallow this Esc
+            } else if mq::is_mouse_button_pressed(mq::MouseButton::Left) {
+                let (mx, my) = mq::mouse_position();
+                let rects = hud::team_pick_rects(mq::screen_width(), mq::screen_height());
+                for (t, &(x, y, w, h)) in rects.iter().enumerate() {
+                    if mx >= x && mx < x + w && my >= y && my < y + h {
+                        if t as u8 != app.my_team {
+                            app.net.send_team(t as u8);
+                        }
+                        app.team_pick = false;
+                    }
+                }
+                picked = true; // this click chose a team, it does not deploy
+            }
+        } else if mq::is_key_pressed(mq::KeyCode::M) && !app.spectator && !app.auto {
+            app.team_pick = true;
             app.captured = false;
-            mq::set_cursor_grab(false);
-            mq::show_mouse(true);
+        }
+        if picked || app.team_pick {
+        } else if mq::is_key_pressed(mq::KeyCode::Escape) && app.captured {
+            app.captured = false;
         } else if mq::is_mouse_button_pressed(mq::MouseButton::Left) && !app.captured && !app.auto && !app.spectator {
             app.captured = true;
-            mq::set_cursor_grab(true);
-            mq::show_mouse(false);
+        }
+        // The mouse is only held while you are alive: dead, it is visible and
+        // free to leave the window, and it is taken back when you deploy.
+        let want_grab = app.captured && app.alive;
+        if want_grab != grabbed {
+            grabbed = want_grab;
+            mq::set_cursor_grab(grabbed);
+            mq::show_mouse(!grabbed);
             app.last_mouse = mq::mouse_position();
         }
-        if (!app.captured || app.spectator) && (mq::is_key_pressed(mq::KeyCode::Q) || (app.spectator && mq::is_key_pressed(mq::KeyCode::Escape))) {
+        if !app.team_pick && !picked && (!app.captured || app.spectator) && (mq::is_key_pressed(mq::KeyCode::Q) || (app.spectator && mq::is_key_pressed(mq::KeyCode::Escape))) {
             break;
         }
         let m = mq::mouse_position();
         let (mdx, mdy) = ((m.0 - app.last_mouse.0).clamp(-400.0, 400.0), (m.1 - app.last_mouse.1).clamp(-400.0, 400.0));
         app.last_mouse = m;
-        if app.captured {
+        if grabbed {
             let s = app.sens * (app.fov / 66.0);
             app.yaw = ferrite_shared::wrap_angle(app.yaw - mdx * s);
             app.pitch = (app.pitch - mdy * s).clamp(-1.5, 1.5);
@@ -796,6 +983,15 @@ async fn play(args: &Args, name: &str, choice: menu::Choice) -> (bool, Option<St
         if let Some(s) = fresh.last() {
             app.reconcile(s);
         }
+        // The roster is the authority on which side we are on.
+        if !app.spectator {
+            if let Some(t) = app.net.roster.iter().find(|r| r.id == app.my_id).map(|r| r.team) {
+                if t != app.my_team && t < 2 {
+                    app.my_team = t;
+                    app.banner = Some((format!("YOU JOINED {}", TEAM_NAMES[t as usize]), if t == 0 { [1.0, 0.72, 0.38] } else { [0.5, 0.8, 1.0] }, now));
+                }
+            }
+        }
 
         // ---- fixed-rate prediction ----
         acc += dt;
@@ -822,7 +1018,20 @@ async fn play(args: &Args, name: &str, choice: menu::Choice) -> (bool, Option<St
         let sprinting = playing && app.hspeed() > sim::WALK * 1.2;
         app.sprint_vis += (if sprinting { 1.0 } else { 0.0 } - app.sprint_vis) * (9.0 * dt).min(1.0);
         let sight = app.sight();
-        app.fov = 66.0 + (scene::sight_fov(kit, sight) - 66.0) * app.ads + 5.0 * app.sprint_vis;
+        let ease = |cur: &mut f32, on: bool, rate: f32| *cur += (if on { 1.0 } else { 0.0 } - *cur) * (rate * dt).min(1.0);
+        ease(&mut app.slide_vis, playing && app.st.slide > 0, 12.0);
+        ease(&mut app.air_vis, playing && !app.st.on_ground, 8.0);
+        let climbing = playing && app.mantling;
+        ease(&mut app.mantle_vis, climbing, 10.0);
+        let side_v = if playing { app.st.vel.dot(sim::right_of(app.yaw)) / sim::WALK } else { 0.0 };
+        app.strafe_vis += (side_v.clamp(-1.0, 1.0) - app.strafe_vis) * (8.0 * dt).min(1.0);
+        app.fov = 66.0 + (scene::sight_fov(kit, sight) - 66.0) * app.ads + 5.0 * app.sprint_vis + 5.0 * app.slide_vis * (1.0 - app.ads);
+        // Recoil settles once you are off the trigger.
+        let settle = if now - app.last_fire > 0.11 { 7.5 } else { 0.6 };
+        app.recoil_p *= 1.0 - (settle * dt).min(1.0);
+        app.recoil_y *= 1.0 - (settle * dt).min(1.0);
+        app.land = (app.land - dt * 4.0).max(0.0);
+        app.suppress = (app.suppress - dt * 0.7).max(0.0);
         app.recoil *= 1.0 - (11.0 * dt).min(1.0);
         app.flash = (app.flash - dt * 16.0).max(0.0);
         app.hitmarker = (app.hitmarker - dt).max(0.0);
@@ -850,24 +1059,83 @@ async fn play(args: &Args, name: &str, choice: menu::Choice) -> (bool, Option<St
             let d = r.pos - app.last_pos[i];
             let step = (d.x * d.x + d.z * d.z).sqrt();
             let fresh_pos = now - app.last_seen[i] < 0.5 && step < 3.0;
-            let speed = if fresh_pos && dt > 0.0 { step / dt } else { 0.0 };
-            if fresh_pos {
+            let grounded = r.flags & flag::GROUND != 0;
+            let on = |b: bool| if b { 1.0 } else { 0.0 };
+            let (crouch_t, air_t) = (on(r.flags & flag::CROUCH != 0), on(!grounded));
+            let slide_t = on(r.flags2 & flag2::SLIDE != 0);
+            let reload_t = on(r.flags2 & (flag2::RELOAD | flag2::DRAW) != 0);
+            if fresh_pos && dt > 0.0 {
+                // Velocity in the soldier's own frame drives the stride and lean.
+                let (f, rt_dir) = (sim::view_dir(r.yaw, 0.0), sim::right_of(r.yaw));
+                let v = d / dt;
+                let k = (9.0 * dt).min(1.0);
+                app.rvel[i].0 += (v.x * f.x + v.z * f.z - app.rvel[i].0) * k;
+                app.rvel[i].1 += (v.x * rt_dir.x + v.z * rt_dir.z - app.rvel[i].1) * k;
                 app.walk[i] += step;
+                let k = |rate: f32| (rate * dt).min(1.0);
+                app.rcrouch[i] += (crouch_t - app.rcrouch[i]) * k(12.0);
+                app.rair[i] += (air_t - app.rair[i]) * k(10.0);
+                app.rslide[i] += (slide_t - app.rslide[i]) * k(12.0);
+                app.rreload[i] += (reload_t - app.rreload[i]) * k(9.0);
+                if r.hp < app.rhp[i] {
+                    app.rhurt[i] = 1.0;
+                }
+            } else {
+                // Just came into view (or respawned): snap, do not blend.
+                app.rvel[i] = (0.0, 0.0);
+                app.rcrouch[i] = crouch_t;
+                app.rair[i] = air_t;
+                app.rslide[i] = slide_t;
+                app.rreload[i] = reload_t;
+                app.rhurt[i] = 0.0;
+                app.rstep[i] = 0.0;
+            }
+            app.rhp[i] = r.hp;
+            app.rfire[i] *= 1.0 - (14.0 * dt).min(1.0);
+            app.rhurt[i] = (app.rhurt[i] - dt * 5.0).max(0.0);
+            let speed = (app.rvel[i].0 * app.rvel[i].0 + app.rvel[i].1 * app.rvel[i].1).sqrt();
+            // Footfalls: you can hear someone running up on you.
+            if fresh_pos && grounded && speed > 4.2 && app.rcrouch[i] < 0.5 && app.rslide[i] < 0.3 {
+                app.rstep[i] += step;
+                if app.rstep[i] > 2.6 {
+                    app.rstep[i] = 0.0;
+                    // Only close ones: enemies carry further than friends.
+                    let enemy = team != app.my_team || app.spectator;
+                    let near = (r.pos - listener).length();
+                    if near < if enemy { 14.0 } else { 6.0 } {
+                        app.audio.play_at(Sfx::Step, r.pos, listener, if enemy { 0.45 } else { 0.16 }, 6.0);
+                    }
+                    if near < 40.0 {
+                        app.fx.dust(r.pos, 0.5);
+                    }
+                }
             }
             app.last_pos[i] = r.pos;
             app.last_seen[i] = now;
-            app.views.push(PlayerView {
+            let view = PlayerView {
                 id,
                 pos: r.pos,
                 yaw: r.yaw,
                 pitch: r.pitch,
                 flags: r.flags,
+                flags2: r.flags2,
                 hp: r.hp,
                 team,
                 kit,
                 phase: app.walk[i],
                 moving: (speed / 3.0).min(1.0),
-            });
+                crouch: app.rcrouch[i],
+                air: app.rair[i],
+                slide: app.rslide[i],
+                reload: app.rreload[i],
+                fire: app.rfire[i],
+                hurt: app.rhurt[i],
+                vel: app.rvel[i],
+                fall: 0.0,
+                sink: 0.0,
+            };
+            app.last_view[i] = view;
+            app.views.push(view);
         }
 
         // ---- camera ----
@@ -895,7 +1163,8 @@ async fn play(args: &Args, name: &str, choice: menu::Choice) -> (bool, Option<St
         } else if app.alive {
             let p = app.render_pos(a);
             let kick = app.recoil * wd.recoil * 0.6;
-            (p + vec3(0.0, app.eye + app.step_y, 0.0) + shake, sim::view_dir(app.yaw, app.pitch + kick))
+            let (yaw, pitch) = app.aim();
+            (p + vec3(0.0, app.eye + app.step_y, 0.0) + shake, sim::view_dir(yaw, pitch + kick))
         } else {
             // Death cam: pull back and look toward whoever got you.
             let target = if app.killer != SPECTATOR_ID { app.last_pos[app.killer as usize % 64] } else { app.death_pos + sim::view_dir(app.yaw, 0.0) };
@@ -909,11 +1178,19 @@ async fn play(args: &Args, name: &str, choice: menu::Choice) -> (bool, Option<St
         };
         listener = eye;
         let proj = Mat4::perspective_rh_gl(app.fov.to_radians(), aspect, 0.08, 900.0);
-        let view = Mat4::look_to_rh(eye, dir, Vec3::Y);
-        let vp = proj * view;
-        let sky_vp = proj * Mat4::look_to_rh(Vec3::ZERO, dir, Vec3::Y);
         let cam_right = dir.cross(Vec3::Y).normalize_or_zero();
+        // The view tips a little into a strafe and more into a slide.
+        let tip = if playing { (app.strafe_vis * 0.012 + app.slide_vis * 0.045) * (1.0 - app.ads) } else { 0.0 };
+        let up_dir = (Vec3::Y + cam_right * tip).normalize();
+        let view = Mat4::look_to_rh(eye, dir, up_dir);
+        let vp = proj * view;
+        let sky_vp = proj * Mat4::look_to_rh(Vec3::ZERO, dir, up_dir);
         let cam_up = cam_right.cross(dir);
+        app.audio.right = cam_right;
+        // Is the player standing in sunlight? The weapon in hand dims in shade.
+        let sun_dir = scene::SUN.normalize();
+        let lit = !gpu.shadows() || app.world.los(eye, eye + sun_dir * 160.0, app.dmask);
+        app.view_lit += (if lit { 1.0 } else { 0.0 } - app.view_lit) * (6.0 * dt).min(1.0);
 
         // ---- build dynamic geometry ----
         app.fx.update(dt, &app.world);
@@ -923,10 +1200,35 @@ async fn play(args: &Args, name: &str, choice: menu::Choice) -> (bool, Option<St
         vm_opaque.clear();
         vm_add.clear();
         let time = now as f32;
+        let blob = !gpu.shadows();
         for v in &app.views {
-            scene::soldier(&mut opaque, &mut alpha, &app.world, v, time);
+            scene::soldier(&mut opaque, &mut alpha, &app.world, v, time, blob);
+        }
+        app.corpses.retain(|c| now - c.1 < 7.0);
+        for (v, at) in &app.corpses {
+            let age = (now - at) as f32;
+            let mut v = *v;
+            v.fall = (age / 0.5).min(1.0);
+            v.sink = ((age - 5.5) / 1.5).clamp(0.0, 1.0) * 0.7;
+            v.hurt = (1.0 - age * 4.0).max(0.0);
+            v.moving = 0.0;
+            v.fire = 0.0;
+            v.air = 0.0;
+            v.flags &= !(flag::SHIELD | flag::SURGE);
+            scene::soldier(&mut opaque, &mut alpha, &app.world, &v, time, false);
+        }
+        app.trail_acc += dt;
+        let trail = app.trail_acc > 0.035;
+        if trail {
+            app.trail_acc = 0.0;
         }
         scene::crates(&mut opaque, &app.world, app.dmask);
+        let nades: Vec<Vec3> = app.net.latest().map_or(Vec::new(), |s| s.grenades.iter().map(|g| Vec3::from(g.pos)).collect());
+        if trail {
+            for p in &nades {
+                app.fx.trail(*p);
+            }
+        }
         if let Some(s) = app.net.latest() {
             let owners: Vec<(u8, f32, bool)> =
                 s.points.iter().map(|p| (p.owner, p.progress as f32 / 100.0, p.n[0] > 0 && p.n[1] > 0)).collect();
@@ -953,10 +1255,26 @@ async fn play(args: &Args, name: &str, choice: menu::Choice) -> (bool, Option<St
                     recoil: app.recoil,
                     bob: app.bob,
                     bob_amt: (app.hspeed() / sim::WALK).min(1.5),
-                    reload: if reloading { 1.0 - app.st.reload as f32 / wd.reload as f32 } else { (app.st.swap as f32 / 26.0).min(1.0) * 0.6 },
+                    reload: if let Some(r) = args.vm_reload {
+                        r
+                    } else if reloading {
+                        let total = if app.st.surge { wd.reload / 2 } else { wd.reload }.max(1);
+                        (1.0 - app.st.reload as f32 / total as f32).clamp(0.0, 1.0)
+                    } else {
+                        -1.0
+                    },
+                    draw: app.st.swap as f32 / if app.st.slot == 1 { 16.0 } else { 26.0 },
+                    cycle: if wd.interval > 20 && app.st.ammo > 0 { app.st.cooldown as f32 / wd.interval as f32 } else { 0.0 },
                     sway,
                     flash: app.flash,
                     sprint: app.sprint_vis,
+                    land: app.land,
+                    strafe: app.strafe_vis,
+                    slide: app.slide_vis,
+                    air: app.air_vis,
+                    mantle: app.mantle_vis,
+                    time,
+                    seq: app.shot_seq,
                 },
             );
         }
@@ -968,11 +1286,13 @@ async fn play(args: &Args, name: &str, choice: menu::Choice) -> (bool, Option<St
             cam: eye,
             sun: scene::SUN.normalize(),
             fog: scene::FOG,
+            lights: app.fx.lights(eye),
             opaque: &opaque,
             alpha: &alpha,
             add: &add,
             view_vp: Mat4::perspective_rh_gl(52f32.to_radians(), aspect, 0.01, 10.0),
             view_sun: view.transform_vector3(scene::SUN.normalize()),
+            view_lit: app.view_lit,
             view_opaque: if scoped { &empty } else { &vm_opaque },
             view_add: if scoped { &empty } else { &vm_add },
         });
@@ -1000,8 +1320,14 @@ async fn play(args: &Args, name: &str, choice: menu::Choice) -> (bool, Option<St
         if args.quit_at.map_or(false, |q| t >= q) {
             break;
         }
+        // Without vsync (some drivers, or a hidden window) do not spin flat out.
+        let spent = mq::get_time() - now;
+        if spent < 0.002 {
+            std::thread::sleep(std::time::Duration::from_secs_f64(0.002 - spent));
+        }
         mq::next_frame().await
     }
+    *sens = app.sens;
 
     app.net.bye();
     let s = &app.stats;

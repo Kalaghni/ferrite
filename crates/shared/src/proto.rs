@@ -9,7 +9,7 @@ use crate::sim::PState;
 use bincode::Options;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-pub const PROTO: u32 = 5;
+pub const PROTO: u32 = 7;
 pub const DEFAULT_PORT: u16 = 27500;
 pub const SPECTATOR_ID: u8 = 255;
 
@@ -35,6 +35,13 @@ pub mod flag {
     pub const SIDEARM: u8 = 128;
 }
 
+/// Second flag byte: animation state for other players.
+pub mod flag2 {
+    pub const RELOAD: u8 = 1;
+    pub const SLIDE: u8 = 2;
+    pub const DRAW: u8 = 4;
+}
+
 /// One 60 Hz tick of player intent.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
 pub struct Cmd {
@@ -51,9 +58,12 @@ pub struct Cmd {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum C2S {
-    Hello { proto: u32, name: String, spectator: bool },
+    /// `team`: 0 or 1 to ask for a side, anything else for auto-balance.
+    Hello { proto: u32, name: String, spectator: bool, team: u8 },
     Cmds { cmds: Vec<Cmd>, ack_feed: u32, kit: u8 },
     Bye,
+    /// Ask to change sides mid-match.
+    Team(u8),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -71,6 +81,7 @@ pub struct NetPlayer {
     pub yaw: i16,
     pub pitch: i8,
     pub flags: u8,
+    pub flags2: u8,
     pub hp: u8,
 }
 
@@ -121,7 +132,8 @@ pub enum Fx {
 /// Reliable: resent every snapshot until the client acknowledges the id.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 pub enum Feed {
-    Kill { killer: u8, victim: u8, weapon: u8, head: bool },
+    /// `assist`: who else did real damage, or SPECTATOR_ID for nobody.
+    Kill { killer: u8, victim: u8, weapon: u8, head: bool, assist: u8 },
     Capture { point: u8, team: u8 },
     Neutralized { point: u8, by: u8 },
     MatchEnd { winner: u8 },

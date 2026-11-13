@@ -15,6 +15,7 @@ struct Conn {
     last_heard: Instant,
     ack_feed: u32,
     fx_sent: u32,
+    team_switch: Instant,
 }
 
 pub struct ServerHandle {
@@ -153,7 +154,7 @@ pub fn run(cfg: Config, sock: UdpSocket, stop: Arc<AtomicBool>) {
 fn handle(game: &mut Game, conns: &mut HashMap<SocketAddr, Conn>, sock: &UdpSocket, addr: SocketAddr, data: &[u8], log: bool) {
     let Some(msg) = decode::<C2S>(data) else { return };
     match msg {
-        C2S::Hello { proto, name, spectator } => {
+        C2S::Hello { proto, name, spectator, team } => {
             if proto != PROTO {
                 let _ = sock.send_to(&encode(&S2C::Reject(format!("protocol mismatch: server speaks v{}", PROTO))), addr);
                 return;
@@ -163,7 +164,7 @@ fn handle(game: &mut Game, conns: &mut HashMap<SocketAddr, Conn>, sock: &UdpSock
                     let _ = sock.send_to(&encode(&S2C::Reject("server full".into())), addr);
                     return;
                 }
-                let player = if spectator { None } else { game.join(&name) };
+                let player = if spectator { None } else { game.join_team(&name, team) };
                 if !spectator && player.is_none() {
                     let _ = sock.send_to(&encode(&S2C::Reject("server full".into())), addr);
                     return;
@@ -176,7 +177,7 @@ fn handle(game: &mut Game, conns: &mut HashMap<SocketAddr, Conn>, sock: &UdpSock
                 }
                 conns.insert(
                     addr,
-                    Conn { player, last_heard: Instant::now(), ack_feed: game.feed.len() as u32, fx_sent: game.tick },
+                    Conn { player, last_heard: Instant::now(), ack_feed: game.feed.len() as u32, fx_sent: game.tick, team_switch: Instant::now() - Duration::from_secs(60) },
                 );
             }
             let c = &conns[&addr];
@@ -199,6 +200,21 @@ fn handle(game: &mut Game, conns: &mut HashMap<SocketAddr, Conn>, sock: &UdpSock
                 for cmd in cmds {
                     game.apply_cmd(i, cmd);
                 }
+            }
+        }
+        C2S::Team(team) => {
+            let Some(c) = conns.get_mut(&addr) else { return };
+            let Some(i) = c.player else { return };
+            // One change every few seconds is plenty.
+            if c.team_switch.elapsed() < Duration::from_secs(4) || game.players[i].team == team {
+                return;
+            }
+            if game.set_team(i, team) {
+                c.team_switch = Instant::now();
+                if log {
+                    println!("[{}] {} switched to team {}", game.tick, game.players[i].name, team);
+                }
+                let _ = sock.send_to(&encode(&S2C::Roster(game.roster())), addr);
             }
         }
         C2S::Bye => {

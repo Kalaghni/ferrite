@@ -7,7 +7,10 @@ PLAY
       or pick one from the saved list - servers you join are remembered
     - host a match yourself: HOST AND PLAY starts a server inside the game,
       fills empty slots with bots, and lets others on your network join you
-  Your callsign and saved servers are kept in ferrite-client.txt next to the game.
+  Pick your team (or AUTO) next to your callsign; press M in a match to
+  change sides.
+  Your callsign, team, mouse sensitivity and saved servers are kept in
+  ferrite-client.txt next to the game.
 
 RUN A DEDICATED SERVER
   Run start-server.bat (Windows) or ./start-server.sh (Linux, macOS).
@@ -28,10 +31,16 @@ PLATFORM NOTES
 
 CONTROLS
   WASD move      Shift sprint     Space jump      Ctrl/C crouch
+  Crouch while sprinting to slide. Hold Space while pushing into a ledge to
+  climb it. Long bursts open your spread; fire short ones at range.
   LMB fire       RMB aim          R reload        G grenade
   Q/F/wheel swap to sidearm       T change sight  1/2/3 pick kit
-  Tab scoreboard F3 net stats     -/= mouse sensitivity
+  M change team  Tab scoreboard   F3 net stats    -/= mouse sensitivity
   Esc release mouse, then Q to leave the match
+
+GRAPHICS
+  ferrite --shadows low      smaller shadow map, for older graphics cards
+  ferrite --shadows off      no sun shadows at all
 
 SKIP THE HOME SCREEN
   ferrite --connect host[:port]     join directly

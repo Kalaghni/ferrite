@@ -66,6 +66,8 @@ pub struct Player {
     pub spawn_count: u8,
     pub spawn_yaw: f32,
     pub killer: u8,
+    /// Recent damage taken: (attacker, tick, total). Decides assists.
+    hits: Vec<(u8, u32, f32)>,
     hist: [Vec3; HIST],
 }
 
@@ -181,6 +183,7 @@ impl Game {
                 spawn_count: 0,
                 spawn_yaw: 0.0,
                 killer: SPECTATOR_ID,
+                hits: Vec::new(),
                 hist: [Vec3::ZERO; HIST],
             };
             g.make_bot(&mut p);
@@ -206,8 +209,20 @@ impl Game {
 
     /// A human takes over a bot slot on the team with fewer humans.
     pub fn join(&mut self, name: &str) -> Option<usize> {
+        self.join_team(name, NEUTRAL)
+    }
+
+    /// As `join`, but honours a requested side (0 or 1) while that side
+    /// still has a bot to replace. Friends may stack one team against bots.
+    pub fn join_team(&mut self, name: &str, want: u8) -> Option<usize> {
         let humans = |t: u8, g: &Game| g.players.iter().filter(|p| p.team == t && p.bot.is_none()).count();
-        let team = if humans(1, self) < humans(0, self) { 1 } else { 0 };
+        let team = if want < 2 {
+            want
+        } else if humans(1, self) < humans(0, self) {
+            1
+        } else {
+            0
+        };
         let slot = self
             .players
             .iter()
@@ -227,6 +242,31 @@ impl Game {
         p.alive = false;
         p.respawn_at = t + 20;
         Some(slot)
+    }
+
+    /// Move a human to the other side by trading places with one of its
+    /// bots, so the teams stay the same size. Both redeploy; no death or
+    /// ticket is charged. Returns false if the side has no bot to trade.
+    pub fn set_team(&mut self, i: usize, team: u8) -> bool {
+        if i >= self.players.len() || team > 1 || self.players[i].bot.is_some() {
+            return false;
+        }
+        if self.players[i].team == team {
+            return true;
+        }
+        let Some(j) = self.players.iter().position(|p| p.team == team && p.bot.is_some()) else { return false };
+        let t = self.tick;
+        self.players[j].team = 1 - team;
+        self.players[i].team = team;
+        for k in [i, j] {
+            let p = &mut self.players[k];
+            p.alive = false;
+            p.hp = 0.0;
+            p.killer = SPECTATOR_ID;
+            p.marked_until = 0;
+            p.respawn_at = t + 3 * TICK_HZ;
+        }
+        true
     }
 
     pub fn leave(&mut self, i: usize) {
@@ -301,7 +341,7 @@ impl Game {
         }
         let out = sim::step(&mut self.players[i].st, &cmd, &self.world, self.dmask);
         if out.fired {
-            self.fire(i, &cmd);
+            self.fire(i, &cmd, out.heat);
         }
         if out.threw {
             let p = &self.players[i];
@@ -320,7 +360,7 @@ impl Game {
         }
     }
 
-    fn fire(&mut self, i: usize, cmd: &Cmd) {
+    fn fire(&mut self, i: usize, cmd: &Cmd, heat: u8) {
         let t = self.tick;
         let (team, kit, origin, hspeed, airborne, human, crouch) = {
             let p = &self.players[i];
@@ -342,7 +382,7 @@ impl Game {
         self.players[i].firing_until = t + 90;
         self.players[i].protect_until = 0;
         self.stats.shots += 1;
-        for d in sim::shot_dirs(kit, cmd.seq, cmd.yaw, cmd.pitch, ads, hspeed, airborne, crouch) {
+        for d in sim::shot_dirs(kit, cmd.seq, cmd.yaw, cmd.pitch, ads, hspeed, airborne, crouch, heat) {
             let wh = self.world.raycast(origin, d, 300.0, self.dmask);
             let mut best_t = wh.map_or(300.0, |h| h.t);
             let mut hit_player = None;
@@ -400,6 +440,15 @@ impl Game {
         let p = &mut self.players[j];
         p.hp -= dmg;
         p.last_dmg_tick = t;
+        if let Some(a) = attacker.filter(|&a| a != j) {
+            match p.hits.iter_mut().find(|h| h.0 == a as u8) {
+                Some(h) => {
+                    h.1 = t;
+                    h.2 += dmg;
+                }
+                None => p.hits.push((a as u8, t, dmg)),
+            }
+        }
         let kill = p.hp <= 0.0;
         if let (Some(b), Some(a)) = (p.bot.as_mut(), attacker) {
             b.alert(a, t);
@@ -427,19 +476,33 @@ impl Game {
         p.deaths += 1;
         p.respawn_at = wave.max(t + 2 * TICK_HZ);
         p.killer = attacker.map_or(SPECTATOR_ID, |a| a as u8);
+        let hits = std::mem::take(&mut p.hits);
         let mut killer_id = j as u8;
         if let Some(a) = attacker {
             if a != j {
                 self.players[a].kills += 1;
-                self.players[a].score += 100;
+                self.players[a].score += if head { 125 } else { 100 };
                 killer_id = a as u8;
             }
+        }
+        // Assist: whoever else did the most real damage in the last ten seconds.
+        let mut assist = SPECTATOR_ID;
+        let mut best = 30.0;
+        for (a, when, dmg) in hits {
+            let ai = a as usize;
+            if ai != killer_id as usize && ai < self.players.len() && self.players[ai].team != team && t - when < 10 * TICK_HZ && dmg >= best {
+                best = dmg;
+                assist = a;
+            }
+        }
+        if assist != SPECTATOR_ID {
+            self.players[assist as usize].score += 50;
         }
         self.stats.kills += 1;
         if self.phase == 0 {
             self.tickets[team as usize] -= 1;
         }
-        self.feed.push(Feed::Kill { killer: killer_id, victim: j as u8, weapon, head });
+        self.feed.push(Feed::Kill { killer: killer_id, victim: j as u8, weapon, head, assist });
     }
 
     fn spawn_player(&mut self, i: usize) {
@@ -470,6 +533,7 @@ impl Game {
                 break;
             }
         }
+        let front = self.world.points[self.orders[team as usize].min(NUM_POINTS - 1)];
         let p = &mut self.players[i];
         p.st = PState::spawn(pos, p.next_kit);
         p.hp = sim::kit(p.next_kit).hp;
@@ -477,7 +541,16 @@ impl Game {
         p.protect_until = t + 2 * TICK_HZ;
         p.marked_until = 0;
         p.spawn_count = p.spawn_count.wrapping_add(1);
-        p.spawn_yaw = if team == 0 { std::f32::consts::FRAC_PI_2 } else { -std::f32::consts::FRAC_PI_2 };
+        p.hits.clear();
+        // Face the fight: toward the point the team is pushing.
+        let to = front - pos;
+        p.spawn_yaw = if to.x * to.x + to.z * to.z > 4.0 {
+            to.x.atan2(to.z)
+        } else if team == 0 {
+            std::f32::consts::FRAC_PI_2
+        } else {
+            -std::f32::consts::FRAC_PI_2
+        };
         p.yaw = p.spawn_yaw;
         p.pitch = 0.0;
         p.hist = [pos; HIST];
@@ -583,6 +656,12 @@ impl Game {
                 let by = 1 - pt.owner;
                 pt.owner = NEUTRAL;
                 self.feed.push(Feed::Neutralized { point: k as u8, by });
+                for p in self.players.iter_mut().filter(|p| p.team == by && p.alive) {
+                    let d = p.st.pos - c;
+                    if d.x * d.x + d.z * d.z < POINT_RADIUS * POINT_RADIUS {
+                        p.score += 75;
+                    }
+                }
             }
             let pt = &mut self.points[k];
             if pt.owner == NEUTRAL && pt.progress.abs() >= 1.0 {
@@ -748,12 +827,23 @@ impl Game {
                 if p.st.slot == 1 {
                     flags |= flag::SIDEARM;
                 }
+                let mut flags2 = 0;
+                if p.st.reload > 0 {
+                    flags2 |= flag2::RELOAD;
+                }
+                if p.st.slide > 0 {
+                    flags2 |= flag2::SLIDE;
+                }
+                if p.st.swap > 0 {
+                    flags2 |= flag2::DRAW;
+                }
                 NetPlayer {
                     id: p.id,
                     pos: p.st.pos.to_array(),
                     yaw: NetPlayer::enc_yaw(p.yaw),
                     pitch: NetPlayer::enc_pitch(p.pitch),
                     flags,
+                    flags2,
                     hp: p.hp.clamp(0.0, 255.0).ceil() as u8,
                 }
             })
@@ -866,6 +956,7 @@ fn dummy() -> Player {
         spawn_count: 0,
         spawn_yaw: 0.0,
         killer: SPECTATOR_ID,
+        hits: Vec::new(),
         hist: [Vec3::ZERO; HIST],
     }
 }

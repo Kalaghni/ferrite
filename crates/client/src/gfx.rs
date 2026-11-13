@@ -59,6 +59,15 @@ impl Mesh {
         self.i.extend_from_slice(&[base, base + 1, base + 2]);
     }
 
+    /// Triangle with a given normal (grass takes the ground's shading).
+    pub fn tri_n(&mut self, a: Vec3, b: Vec3, c: Vec3, n: Vec3, col: Col) {
+        let base = self.reserve(3);
+        for p in [a, b, c] {
+            self.v.push(Vertex { pos: p.to_array(), nrm: n.to_array(), col });
+        }
+        self.i.extend_from_slice(&[base, base + 1, base + 2]);
+    }
+
     pub fn quad(&mut self, a: Vec3, b: Vec3, c: Vec3, d: Vec3, col: Col) {
         self.quad_c(a, b, c, d, [col; 4]);
     }
@@ -154,6 +163,10 @@ struct Uniforms {
     sun: [f32; 3],
     fog: [f32; 4],
     params: [f32; 4],
+    light: [f32; 16],
+    lights: [[f32; 4]; 4],
+    lcols: [[f32; 4]; 4],
+    sh: [f32; 4],
 }
 
 const VS: &str = r#"#version 100
@@ -172,7 +185,9 @@ void main() {
 }"#;
 
 // u_params.x: 0 = lit opaque (alpha channel = emissive), 1 = alpha blended,
-// 2 = additive. u_params.y scales fog density.
+// 2 = additive. u_params.y scales fog density, .z scales direct sunlight
+// (the first-person weapon dims when you stand in shade).
+// u_sh: x = shadow texel size, y = shadows on, z = depth bias, w = grain on.
 const FS: &str = r#"#version 100
 precision highp float;
 varying vec4 v_col;
@@ -182,27 +197,109 @@ uniform vec3 u_cam;
 uniform vec3 u_sun;
 uniform vec4 u_fog;
 uniform vec4 u_params;
+uniform mat4 u_light;
+uniform vec4 u_lights[4];
+uniform vec4 u_lcols[4];
+uniform vec4 u_sh;
+uniform sampler2D u_shadow;
+
+float unpack(vec4 c) {
+    return dot(c, vec4(1.0, 1.0 / 255.0, 1.0 / 65025.0, 1.0 / 16581375.0));
+}
+float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+float vnoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+float shadow(vec3 p, vec3 n, float ndl) {
+    vec4 lp = u_light * vec4(p + n * (0.04 + 0.1 * (1.0 - ndl)), 1.0);
+    vec3 q = lp.xyz * 0.5 + 0.5;
+    if (q.x < 0.002 || q.x > 0.998 || q.y < 0.002 || q.y > 0.998 || q.z > 0.999) return 1.0;
+    float z = q.z - u_sh.z;
+    // Rotate the 3x3 kernel per pixel so the edge dithers instead of banding.
+    float a = hash(gl_FragCoord.xy) * 6.2831853;
+    vec2 r0 = vec2(cos(a), sin(a)) * u_sh.x * 1.1;
+    vec2 r1 = vec2(-r0.y, r0.x);
+    float s = 0.0;
+    for (int i = -1; i <= 1; i++) {
+        for (int j = -1; j <= 1; j++) {
+            vec2 uv = q.xy + r0 * float(i) + r1 * float(j);
+            s += step(z, unpack(texture2D(u_shadow, uv)));
+        }
+    }
+    return s / 9.0;
+}
 void main() {
-    float dist = length(v_pos - u_cam);
-    float x = dist * u_fog.w * u_params.y;
+    vec3 to = v_pos - u_cam;
+    float dist = length(to);
+    // Haze pools in the valley and thins with height.
+    float hk = mix(1.0, clamp(1.25 - (u_cam.y + v_pos.y) * 0.011, 0.35, 1.25), u_sh.w);
+    float x = dist * u_fog.w * u_params.y * hk;
     float f = 1.0 - exp(-x * sqrt(x));
+    float glare = pow(max(dot(to / max(dist, 0.001), u_sun), 0.0), 6.0);
+    vec3 fogc = mix(u_fog.rgb, vec3(1.0, 0.93, 0.76), glare * 0.45 * u_sh.w);
     vec3 c;
     float a = 1.0;
     if (u_params.x < 0.5) {
         vec3 n = normalize(v_nrm);
-        float d = max(dot(n, u_sun), 0.0);
+        float ndl = dot(n, u_sun);
+        float d = max(ndl, 0.0);
+        if (d > 0.0 && u_sh.y > 0.5) {
+            d *= shadow(v_pos, n, d);
+        }
+        d *= u_params.z;
         float hemi = n.y * 0.5 + 0.5;
-        vec3 amb = mix(vec3(0.34, 0.30, 0.36), vec3(0.50, 0.60, 0.74), hemi);
-        vec3 lit = v_col.rgb * (amb + vec3(1.05, 0.93, 0.74) * d);
+        vec3 amb = mix(vec3(0.30, 0.27, 0.34), vec3(0.46, 0.57, 0.74), hemi);
+        // Bounce: faces turned away from the sun pick up warm ground light.
+        amb += vec3(0.10, 0.08, 0.05) * max(-ndl, 0.0) * (1.0 - hemi * 0.6);
+        // Surface grain so a large face is not one flat colour.
+        vec3 an = abs(n);
+        vec2 gp = an.y > 0.6 ? v_pos.xz : (an.x > an.z ? v_pos.zy : v_pos.xy);
+        float grain = (vnoise(gp * 0.9) - 0.5) * 0.10 + (vnoise(gp * 5.3) - 0.5) * 0.07;
+        grain *= clamp(1.0 - dist / 70.0, 0.0, 1.0) * u_sh.w;
+        vec3 base = v_col.rgb * (1.0 + grain);
+        vec3 light = amb + vec3(1.12, 0.98, 0.76) * d;
+        for (int i = 0; i < 4; i++) {
+            vec3 lv = u_lights[i].xyz - v_pos;
+            float r = u_lights[i].w;
+            float at = clamp(1.0 - dot(lv, lv) / (r * r), 0.0, 1.0);
+            float nl = 0.35 + 0.65 * max(dot(n, normalize(lv + vec3(0.0001))), 0.0);
+            light += u_lcols[i].rgb * (at * at * nl * u_lcols[i].a);
+        }
+        vec3 lit = base * light;
+        // Gentle highlight roll-off so bright faces do not clip.
+        lit = lit / (1.0 + max(lit - 0.75, 0.0) * 0.6);
         c = mix(lit, v_col.rgb, v_col.a);
-        c = mix(c, u_fog.rgb, f);
+        c = mix(c, fogc, f);
     } else if (u_params.x < 1.5) {
-        c = mix(v_col.rgb, u_fog.rgb, f);
+        c = mix(v_col.rgb, fogc, f);
         a = v_col.a;
     } else {
         c = v_col.rgb * v_col.a * (1.0 - f);
     }
     gl_FragColor = vec4(c, a);
+}"#;
+
+const SHADOW_VS: &str = r#"#version 100
+attribute vec3 in_pos;
+uniform mat4 u_vp;
+varying float v_depth;
+void main() {
+    gl_Position = u_vp * vec4(in_pos, 1.0);
+    v_depth = gl_Position.z * 0.5 + 0.5;
+}"#;
+
+const SHADOW_FS: &str = r#"#version 100
+precision highp float;
+varying float v_depth;
+void main() {
+    vec4 enc = fract(clamp(v_depth, 0.0, 0.9999) * vec4(1.0, 255.0, 65025.0, 16581375.0));
+    enc -= enc.yzww * vec4(1.0 / 255.0, 1.0 / 255.0, 1.0 / 255.0, 0.0);
+    gl_FragColor = enc;
 }"#;
 
 struct DynBuf {
@@ -213,11 +310,11 @@ struct DynBuf {
 }
 
 impl DynBuf {
-    fn new(ctx: &mut dyn RenderingBackend, cap_v: usize) -> DynBuf {
+    fn new(ctx: &mut dyn RenderingBackend, cap_v: usize, tex: TextureId) -> DynBuf {
         let cap_i = cap_v * 3 / 2 + 6;
         let vb = ctx.new_buffer(BufferType::VertexBuffer, BufferUsage::Stream, BufferSource::empty::<Vertex>(cap_v));
         let ib = ctx.new_buffer(BufferType::IndexBuffer, BufferUsage::Stream, BufferSource::empty::<u16>(cap_i));
-        DynBuf { b: Bindings { vertex_buffers: vec![vb], index_buffer: ib, images: vec![] }, cap_v, cap_i, n: 0 }
+        DynBuf { b: Bindings { vertex_buffers: vec![vb], index_buffer: ib, images: vec![tex] }, cap_v, cap_i, n: 0 }
     }
 
     fn upload(&mut self, ctx: &mut dyn RenderingBackend, m: &Mesh) {
@@ -243,25 +340,51 @@ fn depth_mask(on: bool) {
     unsafe { macroquad::miniquad::gl::glDepthMask(on as _) }
 }
 
+/// A short-lived point light (muzzle flash, explosion).
+#[derive(Clone, Copy, Default)]
+pub struct Light {
+    pub pos: Vec3,
+    pub radius: f32,
+    pub col: [f32; 3],
+    pub power: f32,
+}
+
 pub struct Frame<'a> {
     pub vp: Mat4,
     pub sky_vp: Mat4,
     pub cam: Vec3,
     pub sun: Vec3,
     pub fog: [f32; 4],
+    pub lights: [Light; 4],
     pub opaque: &'a Mesh,
     pub alpha: &'a Mesh,
     pub add: &'a Mesh,
     pub view_vp: Mat4,
     pub view_sun: Vec3,
+    /// 0..1: how much direct sun reaches the first-person weapon.
+    pub view_lit: f32,
     pub view_opaque: &'a Mesh,
     pub view_add: &'a Mesh,
+}
+
+struct Shadow {
+    pass: RenderPass,
+    color: TextureId,
+    depth: TextureId,
+    pipe: Pipeline,
+    shader: ShaderId,
+    vp: Mat4,
+    texel: f32,
+    bias: f32,
 }
 
 pub struct Gpu {
     opaque: Pipeline,
     alpha: Pipeline,
     add: Pipeline,
+    shader: ShaderId,
+    dummy: TextureId,
+    shadow: Option<Shadow>,
     statics: Vec<(Bindings, i32)>,
     sky: Vec<(Bindings, i32)>,
     d_opaque: DynBuf,
@@ -272,15 +395,34 @@ pub struct Gpu {
     pub tris: usize,
 }
 
-fn upload_static(ctx: &mut dyn RenderingBackend, mesh: Mesh) -> Vec<(Bindings, i32)> {
+fn upload_static(ctx: &mut dyn RenderingBackend, mesh: Mesh, tex: TextureId) -> Vec<(Bindings, i32)> {
     mesh.finish()
         .into_iter()
         .map(|(v, i)| {
             let vb = ctx.new_buffer(BufferType::VertexBuffer, BufferUsage::Immutable, BufferSource::slice(&v));
             let ib = ctx.new_buffer(BufferType::IndexBuffer, BufferUsage::Immutable, BufferSource::slice(&i));
-            (Bindings { vertex_buffers: vec![vb], index_buffer: ib, images: vec![] }, i.len() as i32)
+            (Bindings { vertex_buffers: vec![vb], index_buffer: ib, images: vec![tex] }, i.len() as i32)
         })
         .collect()
+}
+
+fn uniform_meta(images: Vec<String>) -> ShaderMeta {
+    ShaderMeta {
+        images,
+        uniforms: UniformBlockLayout {
+            uniforms: vec![
+                UniformDesc::new("u_vp", UniformType::Mat4),
+                UniformDesc::new("u_cam", UniformType::Float3),
+                UniformDesc::new("u_sun", UniformType::Float3),
+                UniformDesc::new("u_fog", UniformType::Float4),
+                UniformDesc::new("u_params", UniformType::Float4),
+                UniformDesc::new("u_light", UniformType::Mat4),
+                UniformDesc::new("u_lights", UniformType::Float4).array(4),
+                UniformDesc::new("u_lcols", UniformType::Float4).array(4),
+                UniformDesc::new("u_sh", UniformType::Float4),
+            ],
+        },
+    }
 }
 
 impl Gpu {
@@ -297,70 +439,126 @@ impl Gpu {
         for p in [self.opaque, self.alpha, self.add] {
             ctx.delete_pipeline(p);
         }
+        ctx.delete_shader(self.shader);
+        if let Some(s) = self.shadow {
+            ctx.delete_pipeline(s.pipe);
+            ctx.delete_shader(s.shader);
+            ctx.delete_render_pass(s.pass);
+            ctx.delete_texture(s.color);
+            ctx.delete_texture(s.depth);
+        }
+        ctx.delete_texture(self.dummy);
     }
 
-    pub fn new(world_mesh: Mesh, sky_mesh: Mesh) -> Gpu {
+    /// `shadow_res`: side of the sun shadow map in texels, 0 for none.
+    /// `bounds`: world-space box the shadow map has to cover.
+    pub fn new(world_mesh: Mesh, sky_mesh: Mesh, shadow_res: u32, sun: Vec3, bounds: (Vec3, Vec3)) -> Gpu {
         let gl = unsafe { get_internal_gl() };
         let ctx = gl.quad_context;
-        let meta = ShaderMeta {
-            images: vec![],
-            uniforms: UniformBlockLayout {
-                uniforms: vec![
-                    UniformDesc::new("u_vp", UniformType::Mat4),
-                    UniformDesc::new("u_cam", UniformType::Float3),
-                    UniformDesc::new("u_sun", UniformType::Float3),
-                    UniformDesc::new("u_fog", UniformType::Float4),
-                    UniformDesc::new("u_params", UniformType::Float4),
-                ],
-            },
-        };
         let shader = ctx
-            .new_shader(ShaderSource::Glsl { vertex: VS, fragment: FS }, meta)
+            .new_shader(ShaderSource::Glsl { vertex: VS, fragment: FS }, uniform_meta(vec!["u_shadow".to_string()]))
             .unwrap_or_else(|e| panic!("shader compile failed: {e:?}"));
         let attrs = [
             VertexAttribute::new("in_pos", VertexFormat::Float3),
             VertexAttribute::new("in_nrm", VertexFormat::Float3),
             VertexAttribute::new("in_col", VertexFormat::Float4),
         ];
-        let mk = |ctx: &mut dyn RenderingBackend, write: bool, blend: Option<BlendState>| {
+        let mk = |ctx: &mut dyn RenderingBackend, shader: ShaderId, blend: Option<BlendState>| {
             ctx.new_pipeline(
                 &[BufferLayout::default()],
                 &attrs,
                 shader,
                 PipelineParams {
                     depth_test: Comparison::LessOrEqual,
-                    depth_write: write,
+                    depth_write: true,
                     color_blend: blend,
                     cull_face: CullFace::Nothing,
                     ..Default::default()
                 },
             )
         };
-        let opaque = mk(ctx, true, None);
+        let opaque = mk(ctx, shader, None);
         let alpha = mk(
             ctx,
-            true,
+            shader,
             Some(BlendState::new(
                 Equation::Add,
                 BlendFactor::Value(BlendValue::SourceAlpha),
                 BlendFactor::OneMinusValue(BlendValue::SourceAlpha),
             )),
         );
-        let add = mk(ctx, true, Some(BlendState::new(Equation::Add, BlendFactor::One, BlendFactor::One)));
+        let add = mk(ctx, shader, Some(BlendState::new(Equation::Add, BlendFactor::One, BlendFactor::One)));
+        let dummy = ctx.new_texture_from_rgba8(1, 1, &[255, 255, 255, 255]);
+
+        let shadow = if shadow_res > 0 {
+            let params = |format| TextureParams {
+                format,
+                width: shadow_res,
+                height: shadow_res,
+                min_filter: FilterMode::Nearest,
+                mag_filter: FilterMode::Nearest,
+                wrap: TextureWrap::Clamp,
+                ..Default::default()
+            };
+            let color = ctx.new_render_texture(params(TextureFormat::RGBA8));
+            let depth = ctx.new_render_texture(params(TextureFormat::Depth));
+            let pass = ctx.new_render_pass(color, Some(depth));
+            let sh = ctx
+                .new_shader(ShaderSource::Glsl { vertex: SHADOW_VS, fragment: SHADOW_FS }, uniform_meta(vec![]))
+                .unwrap_or_else(|e| panic!("shadow shader compile failed: {e:?}"));
+            let pipe = mk(ctx, sh, None);
+            // Fit an orthographic frustum, seen from the sun, around the valley.
+            let centre = (bounds.0 + bounds.1) * 0.5;
+            let view = Mat4::look_at_rh(centre + sun * 400.0, centre, Vec3::Y);
+            let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+            for k in 0..8 {
+                let p = Vec3::new(
+                    if k & 1 != 0 { bounds.1.x } else { bounds.0.x },
+                    if k & 2 != 0 { bounds.1.y } else { bounds.0.y },
+                    if k & 4 != 0 { bounds.1.z } else { bounds.0.z },
+                );
+                let q = view.transform_point3(p);
+                lo = lo.min(q);
+                hi = hi.max(q);
+            }
+            let proj = Mat4::orthographic_rh_gl(lo.x, hi.x, lo.y, hi.y, -hi.z - 5.0, -lo.z + 5.0);
+            let depth_range = hi.z - lo.z + 10.0;
+            let texel_m = (hi.x - lo.x).max(hi.y - lo.y) / shadow_res as f32;
+            Some(Shadow {
+                pass,
+                color,
+                depth,
+                pipe,
+                shader: sh,
+                vp: proj * view,
+                texel: 1.0 / shadow_res as f32,
+                bias: (0.04 + texel_m * 0.8) / depth_range,
+            })
+        } else {
+            None
+        };
+        let tex = shadow.as_ref().map_or(dummy, |s| s.color);
         let tris = world_mesh.chunks.iter().map(|c| c.1.len()).sum::<usize>() / 3 + world_mesh.i.len() / 3;
         Gpu {
             opaque,
             alpha,
             add,
-            statics: upload_static(ctx, world_mesh),
-            sky: upload_static(ctx, sky_mesh),
-            d_opaque: DynBuf::new(ctx, 60000),
-            d_alpha: DynBuf::new(ctx, 30000),
-            d_add: DynBuf::new(ctx, 30000),
-            d_view: DynBuf::new(ctx, 24000),
-            d_view_add: DynBuf::new(ctx, 400),
+            shader,
+            dummy,
+            statics: upload_static(ctx, world_mesh, tex),
+            sky: upload_static(ctx, sky_mesh, tex),
+            d_opaque: DynBuf::new(ctx, 64000, tex),
+            d_alpha: DynBuf::new(ctx, 30000, tex),
+            d_add: DynBuf::new(ctx, 30000, tex),
+            d_view: DynBuf::new(ctx, 40000, tex),
+            d_view_add: DynBuf::new(ctx, 400, tex),
+            shadow,
             tris,
         }
+    }
+
+    pub fn shadows(&self) -> bool {
+        self.shadow.is_some()
     }
 
     pub fn render(&mut self, f: &Frame) {
@@ -373,13 +571,43 @@ impl Gpu {
         self.d_view.upload(ctx, f.view_opaque);
         self.d_view_add.upload(ctx, f.view_add);
 
-        let uni = |vp: &Mat4, cam: Vec3, sun: Vec3, mode: f32, fog_k: f32| Uniforms {
+        let (light_vp, sh) = match &self.shadow {
+            Some(s) => (s.vp, [s.texel, 1.0, s.bias, 1.0]),
+            None => (Mat4::IDENTITY, [0.0, 0.0, 0.0, 1.0]),
+        };
+        let mut lights = [[0.0f32, 0.0, 0.0, 0.01]; 4];
+        let mut lcols = [[0.0f32; 4]; 4];
+        for (k, l) in f.lights.iter().enumerate() {
+            lights[k] = [l.pos.x, l.pos.y, l.pos.z, l.radius.max(0.01)];
+            lcols[k] = [l.col[0], l.col[1], l.col[2], l.power];
+        }
+        let uni = |vp: &Mat4, cam: Vec3, sun: Vec3, mode: f32, fog_k: f32, lit: f32, world: bool| Uniforms {
             vp: vp.to_cols_array(),
             cam: cam.to_array(),
             sun: sun.to_array(),
             fog: f.fog,
-            params: [mode, fog_k, 0.0, 0.0],
+            params: [mode, fog_k, lit, 0.0],
+            light: light_vp.to_cols_array(),
+            lights: if world { lights } else { [[0.0, 0.0, 0.0, 0.01]; 4] },
+            lcols: if world { lcols } else { [[0.0; 4]; 4] },
+            sh: if world { sh } else { [0.0; 4] },
         };
+
+        // Sun shadow map: everything solid, seen from the sun.
+        if let Some(s) = &self.shadow {
+            ctx.begin_pass(Some(s.pass), PassAction::Clear { color: Some((1.0, 1.0, 1.0, 1.0)), depth: Some(1.0), stencil: None });
+            ctx.apply_pipeline(&s.pipe);
+            ctx.apply_uniforms(UniformsSource::table(&uni(&s.vp, Vec3::ZERO, f.sun, 0.0, 0.0, 1.0, false)));
+            for (b, n) in &self.statics {
+                ctx.apply_bindings(b);
+                ctx.draw(0, *n, 1);
+            }
+            if self.d_opaque.n > 0 {
+                ctx.apply_bindings(&self.d_opaque.b);
+                ctx.draw(0, self.d_opaque.n, 1);
+            }
+            ctx.end_render_pass();
+        }
 
         ctx.begin_default_pass(PassAction::Clear {
             color: Some((f.fog[0], f.fog[1], f.fog[2], 1.0)),
@@ -389,14 +617,14 @@ impl Gpu {
         // Sky: camera-centred dome, no fog, no depth write.
         ctx.apply_pipeline(&self.alpha);
         depth_mask(false);
-        ctx.apply_uniforms(UniformsSource::table(&uni(&f.sky_vp, Vec3::ZERO, f.sun, 1.0, 0.0)));
+        ctx.apply_uniforms(UniformsSource::table(&uni(&f.sky_vp, Vec3::ZERO, f.sun, 1.0, 0.0, 1.0, false)));
         for (b, n) in &self.sky {
             ctx.apply_bindings(b);
             ctx.draw(0, *n, 1);
         }
         ctx.apply_pipeline(&self.opaque);
         depth_mask(true);
-        ctx.apply_uniforms(UniformsSource::table(&uni(&f.vp, f.cam, f.sun, 0.0, 1.0)));
+        ctx.apply_uniforms(UniformsSource::table(&uni(&f.vp, f.cam, f.sun, 0.0, 1.0, 1.0, true)));
         for (b, n) in &self.statics {
             ctx.apply_bindings(b);
             ctx.draw(0, *n, 1);
@@ -408,14 +636,14 @@ impl Gpu {
         if self.d_alpha.n > 0 {
             ctx.apply_pipeline(&self.alpha);
             depth_mask(false);
-            ctx.apply_uniforms(UniformsSource::table(&uni(&f.vp, f.cam, f.sun, 1.0, 1.0)));
+            ctx.apply_uniforms(UniformsSource::table(&uni(&f.vp, f.cam, f.sun, 1.0, 1.0, 1.0, true)));
             ctx.apply_bindings(&self.d_alpha.b);
             ctx.draw(0, self.d_alpha.n, 1);
         }
         if self.d_add.n > 0 {
             ctx.apply_pipeline(&self.add);
             depth_mask(false);
-            ctx.apply_uniforms(UniformsSource::table(&uni(&f.vp, f.cam, f.sun, 2.0, 0.6)));
+            ctx.apply_uniforms(UniformsSource::table(&uni(&f.vp, f.cam, f.sun, 2.0, 0.6, 1.0, true)));
             ctx.apply_bindings(&self.d_add.b);
             ctx.draw(0, self.d_add.n, 1);
         }
@@ -427,13 +655,13 @@ impl Gpu {
         if self.d_view.n > 0 {
             ctx.begin_default_pass(PassAction::Clear { color: None, depth: Some(1.0), stencil: None });
             ctx.apply_pipeline(&self.opaque);
-            ctx.apply_uniforms(UniformsSource::table(&uni(&f.view_vp, Vec3::ZERO, f.view_sun, 0.0, 0.0)));
+            ctx.apply_uniforms(UniformsSource::table(&uni(&f.view_vp, Vec3::ZERO, f.view_sun, 0.0, 0.0, 0.3 + 0.7 * f.view_lit, false)));
             ctx.apply_bindings(&self.d_view.b);
             ctx.draw(0, self.d_view.n, 1);
             if self.d_view_add.n > 0 {
                 ctx.apply_pipeline(&self.add);
                 depth_mask(false);
-                ctx.apply_uniforms(UniformsSource::table(&uni(&f.view_vp, Vec3::ZERO, f.view_sun, 2.0, 0.0)));
+                ctx.apply_uniforms(UniformsSource::table(&uni(&f.view_vp, Vec3::ZERO, f.view_sun, 2.0, 0.0, 1.0, false)));
                 ctx.apply_bindings(&self.d_view_add.b);
                 ctx.draw(0, self.d_view_add.n, 1);
                 depth_mask(true);

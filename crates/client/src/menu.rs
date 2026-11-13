@@ -6,6 +6,9 @@ use ferrite_shared::proto::DEFAULT_PORT;
 use macroquad::prelude as mq;
 use std::path::PathBuf;
 
+/// Team preference: 0 EMBER, 1 COBALT, 2 auto-balance.
+pub const TEAM_LABELS: [&str; 3] = ["EMBER", "COBALT", "AUTO"];
+
 pub enum Choice {
     Host { port: u16, per_team: usize },
     Join(String),
@@ -24,6 +27,9 @@ pub struct Menu {
     f: [String; 5],
     servers: Vec<String>,
     focus: usize,
+    pub team: u8,
+    /// Mouse sensitivity, remembered between matches and launches.
+    pub sens: f32,
     pub error: Option<String>,
     lan_ip: Option<String>,
     repeat_at: f64,
@@ -87,6 +93,8 @@ impl Menu {
             ],
             servers: Vec::new(),
             focus: F_HOST,
+            team: 2,
+            sens: 0.0022,
             error: None,
             lan_ip: lan_ip(),
             repeat_at: 0.0,
@@ -101,6 +109,8 @@ impl Menu {
                     "name" if !v.is_empty() => m.f[F_NAME] = v.chars().take(16).collect(),
                     "server" if !v.is_empty() && m.servers.len() < MAX_SAVED => m.servers.push(v.to_string()),
                     "bots" if v.parse::<usize>().is_ok() => m.f[F_BOTS] = v.to_string(),
+                    "team" => m.team = v.parse::<u8>().unwrap_or(2).min(2),
+                    "sens" => m.sens = v.parse::<f32>().unwrap_or(0.0022).clamp(0.0004, 0.01),
                     _ => {}
                 }
             }
@@ -109,11 +119,16 @@ impl Menu {
     }
 
     fn save(&self) {
-        let mut out = format!("name={}\nbots={}\n", self.f[F_NAME], self.f[F_BOTS]);
+        let mut out = format!("name={}\nbots={}\nteam={}\nsens={}\n", self.f[F_NAME], self.f[F_BOTS], self.team, self.sens);
         for s in &self.servers {
             out += &format!("server={s}\n");
         }
         let _ = std::fs::write(cfg_path(), out);
+    }
+
+    /// Write settings changed during a match (sensitivity) back to disk.
+    pub fn persist(&self) {
+        self.save();
     }
 
     pub fn name(&self) -> String {
@@ -241,6 +256,25 @@ impl Menu {
             y += 92.0;
 
             self.field(F_NAME, x, y, 260.0, "CALLSIGN", "Player", now);
+            // Team picker: which side to ask the server for.
+            let tx = x + 290.0;
+            mq::draw_text("TEAM", tx, y - 8.0, 16.0, DIM);
+            let bw = ((w - 290.0 - 16.0) / 3.0).floor();
+            for (k, id) in [2u8, 0, 1].into_iter().enumerate() {
+                let bx = tx + k as f32 * (bw + 8.0);
+                let c = [EMBER, COBALT, mq::Color::new(0.5, 0.49, 0.47, 1.0)][id as usize];
+                let on = self.team == id;
+                mq::draw_rectangle(bx, y, bw, 38.0, if on { c } else { mq::Color::new(c.r * 0.28, c.g * 0.28, c.b * 0.28, 1.0) });
+                if hit(bx, y, bw, 38.0) || on {
+                    mq::draw_rectangle_lines(bx, y, bw, 38.0, 2.0, mq::WHITE);
+                }
+                let label = TEAM_LABELS[id as usize];
+                let m = mq::measure_text(label, None, 22, 1.0);
+                mq::draw_text(label, bx + (bw - m.width) / 2.0, y + 26.0, 22.0, if on { mq::WHITE } else { DIM });
+                if hit(bx, y, bw, 38.0) && mq::is_mouse_button_pressed(mq::MouseButton::Left) {
+                    self.team = id;
+                }
+            }
             y += 62.0;
 
             if let Some(e) = &self.error {

@@ -36,6 +36,11 @@ pub const SPRINT_MULT: f32 = 1.5;
 pub const JUMP_V: f32 = 7.6;
 pub const GRAVITY: f32 = 24.0;
 pub const STEP_H: f32 = 0.5;
+/// How far above your feet a ledge can be and still be climbed.
+pub const MANTLE_REACH: f32 = 1.05;
+pub const MANTLE_V: f32 = 4.6;
+pub const SLIDE_TICKS: u8 = 42;
+pub const HEAT_MAX: u8 = 100;
 pub const GRENADE_WEAPON: u8 = 3;
 
 pub struct WeaponDef {
@@ -53,6 +58,10 @@ pub struct WeaponDef {
     pub ads_fov: f32,
     /// Semi-automatic: one shot per trigger pull.
     pub semi: bool,
+    /// Heat added per shot; sustained fire opens the cone.
+    pub heat: u8,
+    /// Extra cone half-angle at full heat.
+    pub bloom: f32,
 }
 
 pub struct KitDef {
@@ -82,6 +91,8 @@ pub static KITS: [KitDef; 3] = [
             recoil: 0.011,
             ads_fov: 48.0,
             semi: false,
+            heat: 18,
+            bloom: 0.024,
         },
         hp: 100.0,
         grenades: 2,
@@ -104,6 +115,8 @@ pub static KITS: [KitDef; 3] = [
             recoil: 0.05,
             ads_fov: 58.0,
             semi: false,
+            heat: 0,
+            bloom: 0.0,
         },
         hp: 130.0,
         grenades: 1,
@@ -126,6 +139,8 @@ pub static KITS: [KitDef; 3] = [
             recoil: 0.045,
             ads_fov: 22.0,
             semi: false,
+            heat: 0,
+            bloom: 0.0,
         },
         hp: 90.0,
         grenades: 1,
@@ -151,6 +166,8 @@ pub static SIDEARM: WeaponDef = WeaponDef {
     recoil: 0.02,
     ads_fov: 56.0,
     semi: true,
+    heat: 34,
+    bloom: 0.03,
 };
 
 pub fn weapon_def(wid: u8) -> &'static WeaponDef {
@@ -197,6 +214,12 @@ pub struct PState {
     pub kit: u8,
     pub surge: bool,
     pub crouch: bool,
+    /// Ticks left in a slide (sprint, then crouch).
+    pub slide: u8,
+    /// Ticks until another slide is allowed.
+    pub slide_cd: u8,
+    /// Barrel heat, 0..=HEAT_MAX. Widens the cone; cools between shots.
+    pub heat: u8,
 }
 
 impl PState {
@@ -218,6 +241,9 @@ impl PState {
             kit: k % 3,
             surge: false,
             crouch: false,
+            slide: 0,
+            slide_cd: 0,
+            heat: 0,
         }
     }
 }
@@ -230,6 +256,10 @@ pub struct StepOut {
     pub landed: bool,
     pub reload_started: bool,
     pub swapped: bool,
+    pub slid: bool,
+    pub mantle: bool,
+    /// Barrel heat the shot was fired with (before this shot heated it).
+    pub heat: u8,
 }
 
 pub fn view_dir(yaw: f32, pitch: f32) -> Vec3 {
@@ -254,6 +284,31 @@ fn overlaps(b: &Block, p: Vec3, h: f32) -> bool {
 
 fn blocked_at(w: &World, p: Vec3, dmask: u64, h: f32) -> bool {
     w.blocks.iter().enumerate().any(|(i, b)| overlaps(b, p, h) && w.solid(i, dmask))
+}
+
+/// A ledge directly ahead that can be climbed: something solid in the way
+/// whose top is within reach, with room to stand on it.
+fn mantle_top(s: &PState, w: &World, dmask: u64, dir: Vec3) -> Option<f32> {
+    let h = height_of(s.crouch);
+    let probe = s.pos + dir * 0.45;
+    let mut top: Option<f32> = None;
+    for (i, b) in w.blocks.iter().enumerate() {
+        if !overlaps(b, probe, h) || !w.solid(i, dmask) {
+            continue;
+        }
+        let rise = b.max.y - s.pos.y;
+        if rise > MANTLE_REACH {
+            return None;
+        }
+        if rise > 0.0 {
+            top = Some(top.map_or(b.max.y, |t: f32| t.max(b.max.y)));
+        }
+    }
+    let ty = top?;
+    if blocked_at(w, vec3(probe.x, ty + 0.02, probe.z), dmask, h) {
+        return None;
+    }
+    Some(ty)
 }
 
 fn move_axis(s: &mut PState, w: &World, dmask: u64, axis: usize, was_ground: bool) {
@@ -348,11 +403,32 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
     let mx = c.mx.clamp(-1, 1) as f32;
     // Crouch: lower profile, steadier aim, slower. Standing back up needs
     // headroom, so you cannot pop up inside something.
-    if c.buttons & btn::CROUCH != 0 {
+    let hv = vec3(s.vel.x, 0.0, s.vel.z);
+    let hs = hv.length();
+    let crouch_btn = c.buttons & btn::CROUCH != 0;
+    s.slide_cd = s.slide_cd.saturating_sub(1);
+    // Slide: hit crouch at a sprint and you keep the speed for a moment,
+    // low to the ground. Jumping or running out of speed ends it.
+    if crouch_btn && !s.crouch && s.on_ground && s.slide == 0 && s.slide_cd == 0 && hs > WALK * kd.speed * 1.25 {
+        s.slide = SLIDE_TICKS;
+        s.slide_cd = SLIDE_TICKS + 36;
+        let boost = (hs * 1.12).min(WALK * 2.0) / hs;
+        s.vel.x *= boost;
+        s.vel.z *= boost;
+        out.slid = true;
+    }
+    if s.slide > 0 {
+        s.slide -= 1;
+        if hs < 3.0 || (!crouch_btn && s.slide < SLIDE_TICKS - 10) {
+            s.slide = 0;
+        }
+    }
+    if crouch_btn || s.slide > 0 {
         s.crouch = true;
     } else if s.crouch && !blocked_at(w, s.pos, dmask, P_H) {
         s.crouch = false;
     }
+    let sliding = s.slide > 0;
     let sprint = c.buttons & btn::SPRINT != 0 && mz > 0.0 && !fire_btn && !ads && !s.crouch;
 
     let (sy, cy) = c.yaw.sin_cos();
@@ -380,17 +456,36 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
     }
     let was_ground = s.on_ground;
     let hv = vec3(s.vel.x, 0.0, s.vel.z);
-    if was_ground || wish != Vec3::ZERO {
-        let accel = if was_ground { 70.0 } else { 16.0 };
+    if sliding {
+        // Friction only, plus a little steering.
+        let dv = wish * 2.0 * DT - hv.normalize_or_zero() * (if was_ground { 5.5 } else { 0.5 }) * DT;
+        s.vel.x += dv.x;
+        s.vel.z += dv.z;
+    } else if was_ground || wish != Vec3::ZERO {
+        // Quicker to stop than to start: crisp, but with a little weight.
+        let accel = if !was_ground {
+            16.0
+        } else if wish == Vec3::ZERO {
+            60.0
+        } else {
+            52.0
+        };
         let dv = wish * speed - hv;
         let max = accel * DT;
         let dv = if dv.length() > max { dv.normalize() * max } else { dv };
         s.vel.x += dv.x;
         s.vel.z += dv.z;
     }
-    if was_ground && c.buttons & btn::JUMP != 0 {
+    let jump_btn = c.buttons & btn::JUMP != 0;
+    if was_ground && jump_btn {
         s.vel.y = JUMP_V;
+        s.slide = 0;
         out.jumped = true;
+    }
+    // Mantle: hold jump while pushing into a ledge to climb onto it.
+    if jump_btn && mz > 0.0 && !sliding && s.vel.y < MANTLE_V && mantle_top(s, w, dmask, fwd).is_some() {
+        s.vel.y = MANTLE_V + GRAVITY * DT;
+        out.mantle = true;
     }
     s.vel.y -= GRAVITY * DT;
     let fall = s.vel.y;
@@ -401,6 +496,8 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
     s.cooldown = s.cooldown.saturating_sub(1);
     s.gren_cd = s.gren_cd.saturating_sub(1);
     s.swap = s.swap.saturating_sub(1);
+    // The barrel cools quickly once you are off the trigger.
+    s.heat = s.heat.saturating_sub(if fire_btn && s.cooldown > 0 { 1 } else { 3 });
     if c.buttons & btn::SWAP != 0 && s.swap == 0 {
         // Drawing the other weapon is faster than reloading; it cancels a
         // reload in progress.
@@ -408,6 +505,7 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
         std::mem::swap(&mut s.ammo, &mut s.ammo_alt);
         s.reload = 0;
         s.cooldown = 0;
+        s.heat = 0;
         s.swap = if s.slot == 1 { 16 } else { 26 };
         out.swapped = true;
         wd = weapon_def(wid(s));
@@ -427,6 +525,8 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
         s.ammo -= 1;
         s.cooldown = wd.interval;
         out.fired = true;
+        out.heat = s.heat;
+        s.heat = (s.heat + wd.heat).min(HEAT_MAX);
     }
     s.trig = fire_btn;
     if c.buttons & btn::GRENADE != 0 && s.grenades > 0 && s.gren_cd == 0 {
@@ -438,19 +538,21 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
 }
 
 /// Current cone half-angle. Shared so the crosshair shows the real spread.
-pub fn spread(k: u8, ads: bool, hspeed: f32, airborne: bool, crouch: bool) -> f32 {
+pub fn spread(k: u8, ads: bool, hspeed: f32, airborne: bool, crouch: bool, heat: u8) -> f32 {
     let wd = weapon_def(k);
-    let base = if ads { wd.spread_ads } else { wd.spread_hip } * if crouch { 0.6 } else { 1.0 };
+    let steady = if crouch { 0.6 } else { 1.0 };
+    let base = if ads { wd.spread_ads } else { wd.spread_hip } * steady;
     let mv = (hspeed / WALK).min(1.6) * if ads { 0.006 } else { 0.016 };
-    base + mv + if airborne { 0.04 } else { 0.0 }
+    let bloom = wd.bloom * (heat.min(HEAT_MAX) as f32 / HEAT_MAX as f32) * steady * if ads { 0.55 } else { 1.0 };
+    base + mv + bloom + if airborne { 0.04 } else { 0.0 }
 }
 
 /// Pellet directions for a shot. Seeded by the command sequence so the
 /// client's predicted tracers match what the server resolves.
 #[allow(clippy::too_many_arguments)]
-pub fn shot_dirs(k: u8, seq: u32, yaw: f32, pitch: f32, ads: bool, hspeed: f32, airborne: bool, crouch: bool) -> Vec<Vec3> {
+pub fn shot_dirs(k: u8, seq: u32, yaw: f32, pitch: f32, ads: bool, hspeed: f32, airborne: bool, crouch: bool, heat: u8) -> Vec<Vec3> {
     let wd = weapon_def(k);
-    let cone = spread(k, ads, hspeed, airborne, crouch);
+    let cone = spread(k, ads, hspeed, airborne, crouch, heat);
     let f = view_dir(yaw, pitch);
     let r = right_of(yaw);
     let u = r.cross(f);
