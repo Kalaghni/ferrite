@@ -62,8 +62,9 @@ pub fn run(cfg: Config, sock: UdpSocket, stop: Arc<AtomicBool>) {
     let (mut bytes_out, mut pkts_in) = (0u64, 0u64);
     if log {
         println!(
-            "FERRITE server on {} - {} per team, seed {:#x}",
+            "FERRITE server on {} - map {} - {} per team, seed {:#x}",
             sock.local_addr().map(|a| a.to_string()).unwrap_or_default(),
+            ferrite_shared::map::map_def(game.world.map).name,
             game.cfg.per_team,
             game.cfg.seed
         );
@@ -185,7 +186,7 @@ fn handle(game: &mut Game, conns: &mut HashMap<SocketAddr, Conn>, sock: &UdpSock
                 Some(i) => (i as u8, game.players[i].team),
                 None => (SPECTATOR_ID, 0),
             };
-            let w = S2C::Welcome { id, team, seed: game.cfg.seed, feed_id: c.ack_feed, tick: game.tick };
+            let w = S2C::Welcome { id, team, seed: game.cfg.seed, map: game.world.map, feed_id: c.ack_feed, tick: game.tick };
             let _ = sock.send_to(&encode(&w), addr);
             let _ = sock.send_to(&encode(&S2C::Roster(game.roster())), addr);
         }

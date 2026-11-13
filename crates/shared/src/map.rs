@@ -1,8 +1,8 @@
-//! Procedural battlefield: a rolling valley with five control points in a
-//! staggered line between two bases. Generated identically on client and
-//! server from a seed using only integer hashing and basic arithmetic.
-//! The layout is symmetric under a 180-degree rotation so neither team has
-//! a terrain advantage.
+//! Procedural battlefields: five control points in a staggered line between
+//! two bases. Generated identically on client and server from a seed and a
+//! map id using only integer hashing and basic arithmetic. Every layout is
+//! symmetric under a 180-degree rotation so neither team has a terrain
+//! advantage.
 
 use crate::rng::Rng;
 use glam::{vec2, vec3, Vec2, Vec3};
@@ -20,6 +20,69 @@ pub const POINTS_XZ: [(f32, f32); 5] =
     [(-72.0, 14.0), (-36.0, -24.0), (0.0, 0.0), (36.0, 24.0), (72.0, -14.0)];
 pub const BASES_XZ: [(f32, f32); 2] = [(-106.0, 0.0), (106.0, 0.0)];
 pub const MAX_CRATES: usize = 64;
+
+/// One selectable battlefield. All maps share the same footprint; they
+/// differ in where the objectives sit, the shape of the ground and what is
+/// built on it.
+pub struct MapDef {
+    pub name: &'static str,
+    pub blurb: &'static str,
+    pub points: [(f32, f32); 5],
+    pub bases: [(f32, f32); 2],
+    /// Ground palette: grass, dry patches, packed dirt around objectives.
+    pub ground: [[f32; 3]; 3],
+}
+
+pub static MAPS: [MapDef; 4] = [
+    MapDef {
+        name: "FOUNDRY VALLEY",
+        blurb: "Rolling valley, ruined foundry in the middle",
+        points: POINTS_XZ,
+        bases: BASES_XZ,
+        ground: [[0.40, 0.47, 0.22], [0.62, 0.52, 0.25], [0.55, 0.46, 0.35]],
+    },
+    MapDef {
+        name: "QUARRY",
+        blurb: "Terraced pit - the centre point sits on the floor",
+        points: [(-78.0, -20.0), (-42.0, 18.0), (0.0, 0.0), (42.0, -18.0), (78.0, 20.0)],
+        bases: BASES_XZ,
+        ground: [[0.53, 0.48, 0.37], [0.64, 0.57, 0.44], [0.50, 0.47, 0.44]],
+    },
+    MapDef {
+        name: "RIDGELINE",
+        blurb: "Pine forest split by a rocky ridge with three passes",
+        points: [(-74.0, 22.0), (-34.0, -30.0), (0.0, 0.0), (34.0, 30.0), (74.0, -22.0)],
+        bases: BASES_XZ,
+        ground: [[0.29, 0.43, 0.22], [0.44, 0.49, 0.24], [0.48, 0.42, 0.32]],
+    },
+    MapDef {
+        name: "DEPOT",
+        blurb: "Flat container yard - close quarters, short sightlines",
+        points: [(-74.0, -8.0), (-38.0, 10.0), (0.0, 0.0), (38.0, -10.0), (74.0, 8.0)],
+        bases: BASES_XZ,
+        ground: [[0.37, 0.38, 0.36], [0.46, 0.45, 0.41], [0.42, 0.41, 0.40]],
+    },
+];
+
+pub fn map_def(id: u8) -> &'static MapDef {
+    &MAPS[id as usize % MAPS.len()]
+}
+
+/// Look a map up by number ("2") or by name or unambiguous prefix
+/// ("quarry", "ridge"), ignoring case.
+pub fn map_by_name(s: &str) -> Option<u8> {
+    let s = s.trim().to_ascii_lowercase();
+    if s.is_empty() {
+        return None;
+    }
+    if let Ok(n) = s.parse::<usize>() {
+        return (n < MAPS.len()).then_some(n as u8);
+    }
+    let squash = |t: &str| t.to_ascii_lowercase().replace([' ', '-', '_'], "");
+    let want = squash(&s);
+    let hits: Vec<usize> = (0..MAPS.len()).filter(|&i| squash(MAPS[i].name).contains(&want)).collect();
+    (hits.len() == 1).then(|| hits[0] as u8)
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BlockKind {
@@ -61,6 +124,7 @@ pub struct RayHit {
 
 pub struct World {
     pub seed: u64,
+    pub map: u8,
     pub heights: Vec<f32>,
     pub blocks: Vec<Block>,
     pub trees: Vec<Tree>,
@@ -110,20 +174,54 @@ fn raw_height(x: f32, z: f32, s: u32) -> f32 {
     n(x, z) + n(-x, -z)
 }
 
-fn full_height(x: f32, z: f32, s: u32) -> f32 {
-    let mut h = raw_height(x, z, s);
+/// The lie of the land before objectives are levelled. Each map's shape is
+/// built from terms that are unchanged by (x, z) -> (-x, -z).
+fn shape(x: f32, z: f32, s: u32, map: u8) -> f32 {
+    match map % MAPS.len() as u8 {
+        1 => {
+            // Quarry: an oval pit cut in three terraces down to a flat floor.
+            let d = (x * x * 0.55 + z * z).sqrt();
+            let t = 1.0 - smooth(17.0, 47.0, d);
+            let f = t * 3.0;
+            let q = (f.floor() + smooth(0.0, 0.4, f - f.floor())) / 3.0;
+            raw_height(x, z, s) * 0.4 + 3.0 - q.min(1.0) * 9.5
+        }
+        2 => {
+            // Ridgeline: a spine running corner to corner, cut by a saddle
+            // in the middle and a low pass toward each end.
+            let across = (x - 0.35 * z) / 1.0595;
+            let along = (0.35 * x + z) / 1.0595;
+            let ridge = 1.0 - smooth(4.0, 21.0, across.abs());
+            let gap = |c: f32, w: f32| 1.0 - smooth(w * 0.4, w, (along - c).abs());
+            let cut = (gap(0.0, 17.0) * 0.6 + gap(RIDGE_PASS, 13.0) + gap(-RIDGE_PASS, 13.0)).min(1.0);
+            raw_height(x, z, s) * 0.55 + ridge * 10.5 * (1.0 - cut)
+        }
+        3 => raw_height(x, z, s) * 0.16,
+        _ => raw_height(x, z, s),
+    }
+}
+
+/// Distance along the Ridgeline spine of its two outer passes.
+const RIDGE_PASS: f32 = 44.0;
+
+fn full_height(x: f32, z: f32, s: u32, map: u8) -> f32 {
+    let def = map_def(map);
+    let mut h = shape(x, z, s, map);
+    // The original valley settles objectives halfway to sea level; the other
+    // maps level them where the ground already is (a pit floor stays a floor).
+    let settle = if map % MAPS.len() as u8 == 0 { 0.5 } else { 1.0 };
     let mut flat = |cx: f32, cz: f32, r: f32| {
         let d = ((x - cx).powi(2) + (z - cz).powi(2)).sqrt();
         let w = 1.0 - smooth(r * 0.55, r * 1.4, d);
         if w > 0.0 {
-            let target = raw_height(cx, cz, s) * 0.5;
+            let target = shape(cx, cz, s, map) * settle;
             h += (target - h) * w;
         }
     };
-    for (cx, cz) in POINTS_XZ {
+    for (cx, cz) in def.points {
         flat(cx, cz, 13.0);
     }
-    for (cx, cz) in BASES_XZ {
+    for (cx, cz) in def.bases {
         flat(cx, cz, 20.0);
     }
     // Ridge walls enclosing the playable valley.
@@ -138,18 +236,26 @@ fn full_height(x: f32, z: f32, s: u32) -> f32 {
 }
 
 impl World {
+    /// The original map, Foundry Valley.
     pub fn new(seed: u64) -> World {
+        World::with_map(seed, 0)
+    }
+
+    pub fn with_map(seed: u64, map: u8) -> World {
+        let map = map % MAPS.len() as u8;
+        let def = map_def(map);
         let s = (seed ^ (seed >> 32)) as u32;
         let mut heights = Vec::with_capacity((TNX + 1) * (TNZ + 1));
         for iz in 0..=TNZ {
             for ix in 0..=TNX {
                 let x = TER_X0 + ix as f32 * CELL;
                 let z = TER_Z0 + iz as f32 * CELL;
-                heights.push(full_height(x, z, s));
+                heights.push(full_height(x, z, s, map));
             }
         }
         let mut w = World {
             seed,
+            map,
             heights,
             blocks: Vec::new(),
             trees: Vec::new(),
@@ -157,13 +263,19 @@ impl World {
             bases: [Vec3::ZERO; 2],
             n_crates: 0,
         };
-        for (i, (x, z)) in POINTS_XZ.iter().enumerate() {
+        for (i, (x, z)) in def.points.iter().enumerate() {
             w.points[i] = vec3(*x, w.height(*x, *z), *z);
         }
-        for (i, (x, z)) in BASES_XZ.iter().enumerate() {
+        for (i, (x, z)) in def.bases.iter().enumerate() {
             w.bases[i] = vec3(*x, w.height(*x, *z), *z);
         }
-        w.build_structures(&mut Rng::new(seed ^ 0xFE44_17E0));
+        let mut rng = Rng::new(seed ^ 0xFE44_17E0 ^ ((map as u64) << 40));
+        match map {
+            1 => w.build_quarry(&mut rng),
+            2 => w.build_ridgeline(&mut rng),
+            3 => w.build_depot(&mut rng),
+            _ => w.build_structures(&mut rng),
+        }
         w
     }
 
@@ -294,10 +406,9 @@ impl World {
         })
     }
 
-    fn near_objective(cx: f32, cz: f32, r_point: f32, r_base: f32) -> bool {
-        let near = |px: f32, pz: f32, r: f32| (cx - px).powi(2) + (cz - pz).powi(2) < r * r;
-        POINTS_XZ.iter().any(|&(x, z)| near(x, z, r_point))
-            || BASES_XZ.iter().any(|&(x, z)| near(x, z, r_base))
+    fn near_objective(&self, cx: f32, cz: f32, r_point: f32, r_base: f32) -> bool {
+        let near = |p: Vec3, r: f32| (cx - p.x).powi(2) + (cz - p.z).powi(2) < r * r;
+        self.points.iter().any(|&p| near(p, r_point)) || self.bases.iter().any(|&p| near(p, r_base))
     }
 
     /// Broken perimeter wall. `sides` selects which edges to emit:
@@ -368,15 +479,296 @@ impl World {
         }
     }
 
-    fn build_structures(&mut self, rng: &mut Rng) {
+    /// Block at absolute heights, for things that span uneven ground.
+    #[allow(clippy::too_many_arguments)]
+    fn add_abs(&mut self, cx: f32, cz: f32, hx: f32, hz: f32, y0: f32, y1: f32, kind: BlockKind, tint: u8) {
+        self.blocks.push(Block { min: vec3(cx - hx, y0, cz - hz), max: vec3(cx + hx, y1, cz + hz), kind, tint, dest: None });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn sym_abs(&mut self, cx: f32, cz: f32, hx: f32, hz: f32, y0: f32, y1: f32, kind: BlockKind, tint: u8) {
+        self.add_abs(cx, cz, hx, hz, y0, y1, kind, tint);
+        self.add_abs(-cx, -cz, hx, hz, y0, y1, kind, tint);
+    }
+
+    /// Room for something of radius `r` here and at the mirrored spot.
+    fn clear_both(&self, x: f32, z: f32, r: f32) -> bool {
+        self.footprint_free(x, z, r) && self.footprint_free(-x, -z, r)
+    }
+
+    /// The two bases are built the same on every map (west one authored,
+    /// east one mirrored).
+    fn build_bases(&mut self) {
         use BlockKind::*;
-        // --- Bases (west one authored, east one mirrored) ---
         self.sym(-92.0, -11.0, 0.3, 5.0, 0.0, 3.2, Concrete, 0);
         self.sym(-92.0, 11.0, 0.3, 5.0, 0.0, 3.2, Concrete, 1);
         self.sym(-100.0, -17.0, 3.0, 1.25, 0.0, 2.6, Container, 0);
         self.sym(-100.0, 17.0, 3.0, 1.25, 0.0, 2.6, Container, 2);
         self.sym(-114.0, 0.0, 1.5, 4.0, 0.0, 4.2, Metal, 0);
         self.sym(-114.0, 0.0, 0.25, 0.25, 4.2, 5.0, Metal, 1);
+    }
+
+    /// A tree and its mirror. Trunks collide, canopies are scenery.
+    fn plant(&mut self, rng: &mut Rng, x: f32, z: f32, collide: bool, pine: f32) {
+        let height = rng.range(5.0, 9.5);
+        let radius = rng.range(1.5, 2.6);
+        let tint = rng.below(5) as u8;
+        let pine = rng.chance(pine);
+        for (px, pz) in [(x, z), (-x, -z)] {
+            let base = vec3(px, self.height(px, pz), pz);
+            self.trees.push(Tree { base, height, radius, tint, pine });
+        }
+        if collide {
+            self.sym(x, z, 0.28, 0.28, 0.0, height * 0.45, BlockKind::Trunk, 0);
+        }
+    }
+
+    /// Trees on the battlefield (`inside`) and on the slopes around it.
+    fn forest(&mut self, rng: &mut Rng, inside: usize, outside: usize, pine: f32) {
+        for _ in 0..inside {
+            let x = rng.range(-HALF_X + 2.0, -1.5);
+            let z = rng.range(-HALF_Z + 2.0, HALF_Z - 2.0);
+            if self.near_objective(x, z, 13.0, 16.0) || !self.clear_both(x, z, 1.6) {
+                continue;
+            }
+            self.plant(rng, x, z, true, pine);
+        }
+        for _ in 0..outside {
+            let x = rng.range(TER_X0 + 8.0, 0.0);
+            let z = rng.range(TER_Z0 + 8.0, -TER_Z0 - 8.0);
+            if x.abs() < HALF_X + 4.0 && z.abs() < HALF_Z + 4.0 {
+                continue;
+            }
+            self.plant(rng, x, z, false, pine);
+        }
+    }
+
+    fn boulders(&mut self, rng: &mut Rng, n: usize, lo: f32, hi: f32) {
+        for _ in 0..n {
+            let x = rng.range(-HALF_X + 6.0, -2.5);
+            let z = rng.range(-HALF_Z + 4.0, HALF_Z - 4.0);
+            if self.near_objective(x, z, 12.5, 17.0) || !self.clear_both(x, z, 3.0) {
+                continue;
+            }
+            let size = rng.range(lo, hi);
+            self.rock(rng, x, z, size);
+        }
+    }
+
+    /// Scattered cover along the route base -> A -> B -> C (and its mirror).
+    fn lane_cover(&mut self, rng: &mut Rng, per_seg: usize, spread: f32) {
+        use BlockKind::*;
+        let chain = [self.bases[0], self.points[0], self.points[1], self.points[2]];
+        for seg in chain.windows(2) {
+            let (a, b) = (vec2(seg[0].x, seg[0].z), vec2(seg[1].x, seg[1].z));
+            let dir = (b - a).normalize();
+            let perp = vec2(-dir.y, dir.x);
+            for k in 0..per_seg {
+                let t = 0.2 + 0.62 * (k as f32 + 0.5) / per_seg as f32;
+                let p = a + (b - a) * t + perp * rng.range(-spread, spread);
+                if p.x > -3.5 || p.y.abs() > HALF_Z - 4.0 || self.near_objective(p.x, p.y, 12.0, 15.0) || !self.clear_both(p.x, p.y, 2.6) {
+                    continue;
+                }
+                match rng.below(4) {
+                    0 => self.rock(rng, p.x, p.y, 1.2),
+                    1 => self.sym(p.x, p.y, 0.45, 2.4, 0.0, 1.1, Sandbag, 0),
+                    2 => self.crates(rng, p.x, p.y, 3),
+                    _ => self.sym(p.x, p.y, 2.2, 0.3, 0.0, rng.range(1.2, 2.4), Concrete, 3),
+                }
+            }
+        }
+    }
+
+    /// Raised slab at the map centre with steps up its west and east faces.
+    fn centre_platform(&mut self) {
+        use BlockKind::*;
+        self.add(0.0, 0.0, 2.6, 2.6, 0.0, 2.45, Concrete, 2);
+        for i in 0..7 {
+            let x = -2.6 - 0.3 - 0.6 * (6 - i) as f32;
+            self.sym(x, 0.0, 0.3, 1.1, 0.0, 0.35 * (i + 1) as f32, Step, (i % 2) as u8);
+        }
+        self.sym(1.6, 1.6, 0.25, 0.25, 2.45, 1.0, Concrete, 1);
+    }
+
+    // ------------------------------------------------------------ Quarry
+
+    fn build_quarry(&mut self, rng: &mut Rng) {
+        use BlockKind::*;
+        self.build_bases();
+
+        // --- A / E: site office, a walled yard up on the rim ---
+        self.ruin(rng, -78.0, -20.0, 12.0, 9.0, 3.2, (-200.0, 200.0), 0b1111);
+        self.crates(rng, -78.0, -20.0, 4);
+        self.sym(-69.5, -24.0, 0.45, 2.6, 0.0, 1.1, Sandbag, 0);
+        self.sym(-74.0, -12.5, 2.6, 0.45, 0.0, 1.1, Sandbag, 1);
+
+        // --- B / D: loading terrace with spoil containers and a conveyor ---
+        self.sym(-47.0, 23.0, 3.0, 1.25, 0.0, 2.6, Container, 2);
+        self.sym(-36.5, 25.5, 1.25, 3.0, 0.0, 2.6, Container, 0);
+        self.sym(-47.5, 12.0, 1.25, 3.0, 0.0, 2.6, Container, 3);
+        self.sym(-36.0, 11.5, 2.4, 0.45, 0.0, 1.1, Sandbag, 0);
+        self.crates(rng, -42.0, 18.0, 5);
+        let belt = self.height(-50.0, 32.0) + 5.5;
+        for k in 0..4 {
+            let x = -50.0 + 6.0 * k as f32;
+            self.sym_abs(x, 32.0, 0.3, 0.3, self.height(x, 32.0) - 0.6, belt, Metal, 0);
+        }
+        self.sym_abs(-41.0, 32.0, 9.8, 0.55, belt, belt + 0.5, Metal, 1);
+
+        // --- C: the crusher, down on the pit floor ---
+        self.centre_platform();
+        self.sym(-8.5, 6.5, 1.4, 1.4, 0.0, 7.5, Metal, 0);
+        self.sym(-8.5, 6.5, 1.7, 1.7, 7.5, 0.5, Metal, 1);
+        self.sym(-11.5, -4.5, 0.45, 2.4, 0.0, 1.1, Sandbag, 1);
+        self.sym(-3.5, -10.0, 2.4, 0.45, 0.0, 1.1, Sandbag, 0);
+        self.crates(rng, -6.0, -4.5, 4);
+
+        // --- Cut stone and spoil on the terraces ---
+        for _ in 0..34 {
+            let x = rng.range(-HALF_X + 10.0, -4.0);
+            let z = rng.range(-HALF_Z + 6.0, HALF_Z - 6.0);
+            if self.near_objective(x, z, 12.0, 17.0) || !self.clear_both(x, z, 2.8) {
+                continue;
+            }
+            match rng.below(3) {
+                0 => {
+                    let (hx, hz, h) = (rng.range(0.8, 1.7), rng.range(0.8, 1.7), rng.range(0.9, 2.3));
+                    self.sym(x, z, hx, hz, 0.0, h, Concrete, rng.below(4) as u8);
+                }
+                1 => self.rock(rng, x, z, 1.7),
+                _ => self.crates(rng, x, z, 3),
+            }
+        }
+        self.lane_cover(rng, 4, 11.0);
+        self.boulders(rng, 50, 0.8, 1.8);
+        self.forest(rng, 20, 150, 0.7);
+    }
+
+    // --------------------------------------------------------- Ridgeline
+
+    fn build_ridgeline(&mut self, rng: &mut Rng) {
+        use BlockKind::*;
+        self.build_bases();
+
+        // --- A / E: walled outpost at the forest edge ---
+        self.ruin(rng, -74.0, 22.0, 13.0, 10.0, 3.4, (-200.0, 200.0), 0b1111);
+        self.crates(rng, -74.0, 22.0, 4);
+        self.sym(-64.5, 18.0, 0.45, 2.6, 0.0, 1.1, Sandbag, 0);
+        self.sym(-70.0, 30.5, 2.6, 0.45, 0.0, 1.1, Sandbag, 1);
+
+        // --- B / D: logging camp below the outer pass ---
+        self.ruin(rng, -38.0, -34.0, 9.0, 7.0, 2.8, (-200.0, 200.0), 0b1101);
+        self.sym(-27.5, -26.0, 3.0, 1.25, 0.0, 2.6, Container, 1);
+        self.sym(-40.0, -23.0, 2.4, 0.45, 0.0, 1.1, Sandbag, 0);
+        self.sym(-26.5, -35.0, 0.45, 2.4, 0.0, 1.1, Sandbag, 1);
+        self.crates(rng, -32.5, -28.0, 5);
+
+        // --- C: watch post on the saddle (self-symmetric) ---
+        self.ruin(rng, 0.0, 0.0, 18.0, 13.0, 3.6, (-200.0, 0.0), 0b1101);
+        self.add(0.0, 0.0, 1.6, 1.6, 0.0, 5.0, Concrete, 2);
+        self.add(0.0, 0.0, 2.0, 2.0, 5.0, 0.4, Concrete, 1);
+        self.sym(-5.5, 3.5, 0.45, 2.2, 0.0, 1.1, Sandbag, 1);
+        self.crates(rng, -5.0, -3.5, 3);
+
+        // --- The crest: a wall of rock everywhere but the passes ---
+        let (ux, uz) = (0.35 / 1.0595, 1.0 / 1.0595);
+        let mut along = 15.0;
+        while along < 76.0 {
+            let (x, z) = (ux * along + rng.range(-1.2, 1.2), uz * along + rng.range(-1.0, 1.0));
+            let size = rng.range(1.6, 2.4);
+            if (along - RIDGE_PASS).abs() > 8.5 && z.abs() < HALF_Z - 3.0 && !self.near_objective(x, z, 13.0, 16.0) {
+                self.rock(rng, x, z, size);
+            }
+            along += 4.2;
+        }
+
+        self.lane_cover(rng, 5, 12.0);
+        self.boulders(rng, 26, 0.7, 1.5);
+        self.forest(rng, 200, 190, 0.75);
+    }
+
+    // ------------------------------------------------------------- Depot
+
+    fn build_depot(&mut self, rng: &mut Rng) {
+        use BlockKind::*;
+        self.build_bases();
+
+        // --- A / E: warehouse shell ---
+        self.ruin(rng, -74.0, -8.0, 16.0, 12.0, 4.0, (-200.0, 200.0), 0b1111);
+        self.crates(rng, -74.0, -8.0, 5);
+        self.sym(-63.0, -3.0, 0.45, 2.6, 0.0, 1.1, Sandbag, 0);
+
+        // --- B / D: loading dock, a raised slab with steps at one end ---
+        self.sym(-38.0, 16.5, 5.0, 2.0, 0.0, 1.1, Concrete, 1);
+        for i in 0..3 {
+            let x = -43.3 - 0.6 * (2 - i) as f32;
+            self.sym(x, 16.5, 0.3, 1.2, 0.0, 0.3 * (i + 1) as f32, Step, (i % 2) as u8);
+        }
+        self.sym(-33.0, 3.5, 2.4, 0.45, 0.0, 1.1, Sandbag, 0);
+        self.sym(-45.5, 6.5, 0.45, 2.4, 0.0, 1.1, Sandbag, 1);
+        self.crates(rng, -38.0, 9.5, 5);
+
+        // --- C: gantry crane over the central crossing (self-symmetric) ---
+        let top = self.height(0.0, 0.0) + 9.0;
+        for (x, z) in [(-7.0, -5.0), (-7.0, 5.0)] {
+            self.sym_abs(x, z, 0.5, 0.5, self.height(x, z) - 0.6, top, Metal, 0);
+        }
+        self.sym_abs(0.0, -5.0, 7.8, 0.6, top, top + 0.8, Metal, 1);
+        self.add_abs(0.0, 0.0, 0.8, 5.6, top + 0.8, top + 1.4, Metal, 1);
+        self.sym(-4.2, 2.4, 3.0, 1.25, 0.0, 2.6, Container, 1);
+        self.sym(-11.5, 0.0, 0.45, 2.4, 0.0, 1.1, Sandbag, 1);
+        self.crates(rng, -5.5, -4.5, 4);
+
+        // --- Container rows: loose grid with gaps, some stacked two high ---
+        let mut gx = -98.0;
+        while gx < -6.0 {
+            let mut gz = -58.5;
+            while gz < 59.0 {
+                let (x, z) = (gx + rng.range(-1.0, 1.0), gz + rng.range(-0.8, 0.8));
+                let roll = rng.f32();
+                let long_x = rng.chance(0.5);
+                let tint = rng.below(4) as u8;
+                gz += 9.0;
+                if roll < 0.42 || self.near_objective(x, z, 11.0, 17.0) || !self.clear_both(x, z, 3.6) {
+                    continue;
+                }
+                let (hx, hz) = if long_x { (3.0, 1.25) } else { (1.25, 3.0) };
+                self.sym(x, z, hx, hz, 0.0, 2.6, Container, tint);
+                if roll > 0.86 {
+                    self.sym(x, z, hx, hz, 2.6, 2.6, Container, (tint + 1) % 4);
+                }
+            }
+            gx += 10.0;
+        }
+
+        // --- Barriers and light masts in the lanes ---
+        for _ in 0..40 {
+            let x = rng.range(-HALF_X + 8.0, -3.5);
+            let z = rng.range(-HALF_Z + 4.0, HALF_Z - 4.0);
+            let kind = rng.below(4);
+            if self.near_objective(x, z, 10.0, 16.0) || !self.clear_both(x, z, 2.6) {
+                continue;
+            }
+            match kind {
+                0 => {
+                    self.sym(x, z, 0.16, 0.16, 0.0, 7.0, Metal, 1);
+                    self.sym(x, z, 0.55, 0.2, 7.0, 0.25, Metal, 0);
+                }
+                1 => self.sym(x, z, 0.3, 2.0, 0.0, 1.1, Concrete, 3),
+                _ => self.sym(x, z, 2.0, 0.3, 0.0, 1.1, Concrete, 3),
+            }
+        }
+        self.crates(rng, -56.0, 4.0, 3);
+        self.crates(rng, -20.0, -6.0, 3);
+        self.boulders(rng, 6, 0.7, 1.2);
+        self.forest(rng, 10, 150, 0.3);
+    }
+
+    // ---------------------------------------------------- Foundry Valley
+
+    fn build_structures(&mut self, rng: &mut Rng) {
+        use BlockKind::*;
+        self.build_bases();
 
         // --- A / E: walled outpost ---
         self.ruin(rng, -72.0, 14.0, 13.0, 10.0, 3.4, (-200.0, 200.0), 0b1111);
@@ -415,7 +807,7 @@ impl World {
             for k in 0..5 {
                 let t = 0.24 + 0.13 * k as f32;
                 let p = a + (b - a) * t + perp * rng.range(-13.0, 13.0);
-                if Self::near_objective(p.x, p.y, 12.0, 15.0) || !self.footprint_free(p.x, p.y, 2.5) {
+                if self.near_objective(p.x, p.y, 12.0, 15.0) || !self.footprint_free(p.x, p.y, 2.5) {
                     continue;
                 }
                 match rng.below(4) {
@@ -431,7 +823,7 @@ impl World {
         for _ in 0..46 {
             let x = rng.range(-HALF_X + 6.0, -1.0);
             let z = rng.range(-HALF_Z + 4.0, HALF_Z - 4.0);
-            if Self::near_objective(x, z, 12.5, 17.0) || !self.footprint_free(x, z, 3.0) {
+            if self.near_objective(x, z, 12.5, 17.0) || !self.footprint_free(x, z, 3.0) {
                 continue;
             }
             let size = rng.range(0.7, 1.6);
@@ -455,7 +847,7 @@ impl World {
         for _ in 0..90 {
             let x = rng.range(-HALF_X + 2.0, -1.5);
             let z = rng.range(-HALF_Z + 2.0, HALF_Z - 2.0);
-            if Self::near_objective(x, z, 13.0, 16.0) || !self.footprint_free(x, z, 1.6) {
+            if self.near_objective(x, z, 13.0, 16.0) || !self.footprint_free(x, z, 1.6) {
                 continue;
             }
             tree(self, rng, x, z, true);

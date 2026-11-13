@@ -5,8 +5,9 @@ PLAY
   Run ferrite (ferrite.exe on Windows). The home screen lets you:
     - join a server: type its address (port defaults to 27500) and press JOIN,
       or pick one from the saved list - servers you join are remembered
-    - host a match yourself: HOST AND PLAY starts a server inside the game,
-      fills empty slots with bots, and lets others on your network join you
+    - host a match yourself: pick a MAP, then HOST AND PLAY starts a server
+      inside the game, fills empty slots with bots, and lets others on your
+      network join you
   Pick your team (or AUTO) next to your callsign; press M in a match to
   change sides.
   Your callsign, team, mouse sensitivity and saved servers are kept in
@@ -15,7 +16,9 @@ PLAY
 RUN A DEDICATED SERVER
   Run start-server.bat (Windows) or ./start-server.sh (Linux, macOS).
   It listens on UDP port 27500 and logs a status line every 10 seconds.
-  Options: --port N  --bots N  --skill X  --tickets N  --seed N
+  Options: --port N  --map NAME  --bots N  --skill X  --tickets N  --seed N
+  Maps: foundry valley, quarry, ridgeline, depot (--maps lists them). A name
+  can be shortened: --map ridge. Players get the map from the server.
   Players join by typing this machine's address into the home screen.
 
   For others to reach it:
@@ -45,3 +48,4 @@ GRAPHICS
 SKIP THE HOME SCREEN
   ferrite --connect host[:port]     join directly
   ferrite --host                    host directly
+  ferrite --host --map quarry       host directly on a chosen map

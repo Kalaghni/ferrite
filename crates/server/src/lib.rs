@@ -19,6 +19,8 @@ pub struct Config {
     pub port: u16,
     pub per_team: usize,
     pub seed: u64,
+    /// Index into `ferrite_shared::map::MAPS`.
+    pub map: u8,
     pub tickets: i32,
     pub bot_skill: f32,
     pub log: bool,
@@ -26,7 +28,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Config { port: DEFAULT_PORT, per_team: 12, seed: 0xFE221, tickets: 250, bot_skill: 1.0, log: false }
+        Config { port: DEFAULT_PORT, per_team: 12, seed: 0xFE221, map: 0, tickets: 250, bot_skill: 1.0, log: false }
     }
 }
 
@@ -129,7 +131,7 @@ fn initial_points() -> [Point; NUM_POINTS] {
 
 impl Game {
     pub fn new(cfg: Config) -> Game {
-        let world = World::new(cfg.seed);
+        let world = World::with_map(cfg.seed, cfg.map);
         let nav = Nav::build(&world);
         let mut g = Game {
             world,

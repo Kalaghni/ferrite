@@ -8,7 +8,7 @@ use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
 fn cfg(per_team: usize) -> Config {
-    Config { port: 0, per_team, seed: 0xFE221, tickets: 250, bot_skill: 1.0, log: false }
+    Config { port: 0, per_team, seed: 0xFE221, map: 0, tickets: 250, bot_skill: 1.0, log: false }
 }
 
 fn random_cmd(rng: &mut Rng, seq: u32, yaw: &mut f32) -> Cmd {
@@ -478,4 +478,81 @@ fn assists_are_credited() {
     }
     assert_eq!(g.players[a].score, 50);
     assert_eq!(g.players[b].score, 100);
+}
+
+/// Every map must be fair (mirrored objectives and ground), navigable (a
+/// bot can walk from either base to every point), and actually play: a
+/// three-minute bot war on it takes ground without breaking the world.
+#[test]
+fn every_map_is_fair_and_playable() {
+    use ferrite_shared::map::{map_by_name, Nav, World, MAPS};
+    assert_eq!(map_by_name("quarry"), Some(1));
+    assert_eq!(map_by_name("RIDGE"), Some(2));
+    assert_eq!(map_by_name("3"), Some(3));
+    assert_eq!(map_by_name("foundry valley"), Some(0));
+    assert_eq!(map_by_name("nowhere"), None);
+    assert_eq!(map_by_name("9"), None);
+
+    // The original map is untouched by the map table.
+    let (old, new) = (World::new(0xFE221), World::with_map(0xFE221, 0));
+    assert_eq!(old.heights, new.heights);
+    assert_eq!(old.blocks.len(), new.blocks.len());
+
+    for id in 0..MAPS.len() as u8 {
+        let name = MAPS[id as usize].name;
+        let w = World::with_map(0xFE221, id);
+        for k in 0..5 {
+            let (p, q) = (w.points[k], w.points[4 - k]);
+            assert!((p.x + q.x).abs() < 1e-3 && (p.z + q.z).abs() < 1e-3 && (p.y - q.y).abs() < 0.05, "{name}: point {k} is not mirrored");
+        }
+        let mut x = -117.0;
+        while x < 117.0 {
+            let mut z = -67.0;
+            while z < 67.0 {
+                assert!((w.height(x, z) - w.height(-x, -z)).abs() < 0.02, "{name}: ground differs at {x},{z}");
+                z += 3.7;
+            }
+            x += 4.3;
+        }
+        let west = w.blocks.iter().filter(|b| b.min.x + b.max.x < -0.01).count();
+        let east = w.blocks.iter().filter(|b| b.min.x + b.max.x > 0.01).count();
+        assert_eq!(west, east, "{name}: cover is not mirrored");
+
+        let nav = Nav::build(&w);
+        for goal in 0..5 {
+            for base in 0..2 {
+                for lane in 0..3 {
+                    let (mut px, mut pz) = (w.bases[base].x, w.bases[base].z);
+                    let target = w.points[goal];
+                    let mut reached = false;
+                    for _ in 0..1200 {
+                        if ((px - target.x).powi(2) + (pz - target.z).powi(2)).sqrt() < 6.5 {
+                            reached = true;
+                            break;
+                        }
+                        let d = nav.dir(goal, lane, px, pz);
+                        px += d.x * 0.6;
+                        pz += d.y * 0.6;
+                    }
+                    assert!(reached, "{name}: no route from base {base} to point {goal} (lane {lane}); stuck at {px:.1},{pz:.1}");
+                }
+            }
+        }
+
+        let mut g = Game::new(Config { map: id, ..cfg(10) });
+        assert_eq!(g.world.map, id);
+        for _ in 0..(180 * 60) {
+            g.tick();
+            if g.tick % 30 == 0 {
+                for p in &g.players {
+                    assert!(p.st.pos.is_finite() && p.st.pos.x.abs() <= HALF_X && p.st.pos.z.abs() <= HALF_Z, "{name}: {} left the map", p.name);
+                    if p.alive {
+                        assert!(p.st.pos.y >= g.world.height(p.st.pos.x, p.st.pos.z) - 0.05, "{name}: {} fell through terrain", p.name);
+                    }
+                }
+            }
+        }
+        assert!(g.stats.kills > 40, "{name}: only {} kills in three minutes", g.stats.kills);
+        assert!(g.stats.captures >= 2, "{name}: only {} captures in three minutes", g.stats.captures);
+    }
 }

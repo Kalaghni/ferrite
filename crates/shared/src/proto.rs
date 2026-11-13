@@ -9,7 +9,7 @@ use crate::sim::PState;
 use bincode::Options;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-pub const PROTO: u32 = 7;
+pub const PROTO: u32 = 8;
 pub const DEFAULT_PORT: u16 = 27500;
 pub const SPECTATOR_ID: u8 = 255;
 
@@ -68,7 +68,7 @@ pub enum C2S {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum S2C {
-    Welcome { id: u8, team: u8, seed: u64, feed_id: u32, tick: u32 },
+    Welcome { id: u8, team: u8, seed: u64, map: u8, feed_id: u32, tick: u32 },
     Snap(Snapshot),
     Roster(Vec<RosterEntry>),
     Reject(String),

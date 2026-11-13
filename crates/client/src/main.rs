@@ -31,6 +31,8 @@ pub struct Args {
     name: String,
     per_team: usize,
     port: u16,
+    /// Map to host (index into the shared map table).
+    map: Option<u8>,
     seed: u64,
     tickets: i32,
     skill: f32,
@@ -58,6 +60,7 @@ fn parse_args() -> Args {
         name: std::env::var("USERNAME").or_else(|_| std::env::var("USER")).unwrap_or_else(|_| "Player".into()),
         per_team: 12,
         port: DEFAULT_PORT,
+        map: None,
         seed: 0xFE221,
         tickets: 250,
         skill: 1.0,
@@ -83,6 +86,14 @@ fn parse_args() -> Args {
             "--bots" => a.per_team = val.parse().expect("--bots <players per team>"),
             "--port" => a.port = val.parse().expect("--port <u16>"),
             "--seed" => a.seed = val.parse().expect("--seed <u64>"),
+            "--map" => match ferrite_shared::map::map_by_name(&val) {
+                Some(m) => a.map = Some(m),
+                None => {
+                    let names: Vec<String> = ferrite_shared::map::MAPS.iter().map(|m| m.name.to_lowercase()).collect();
+                    eprintln!("unknown map '{val}'. Maps: {}", names.join(", "));
+                    std::process::exit(2);
+                }
+            },
             "--tickets" => a.tickets = val.parse().expect("--tickets <n>"),
             "--skill" => a.skill = val.parse().expect("--skill <f32>"),
             "--volume" => a.volume = val.parse().expect("--volume <0..1>"),
@@ -125,7 +136,7 @@ fn parse_args() -> Args {
             }
             "--fullscreen" => used = 1,
             "-h" | "--help" => {
-                println!("ferrite [--connect host[:port]] [--host] [--team ember|cobalt|auto] [--name N] [--bots 12] [--port 27500] [--seed N] [--tickets 250] [--skill 1.0]\n        [--volume 0.7] [--shadows high|low|off] [--fullscreen] [--spectate] [--auto] [--shot file.png --shot-at SECS] [--quit-at SECS]");
+                println!("ferrite [--connect host[:port]] [--host] [--team ember|cobalt|auto] [--name N] [--map NAME] [--bots 12] [--port 27500] [--seed N] [--tickets 250] [--skill 1.0]\n        [--volume 0.7] [--shadows high|low|off] [--fullscreen] [--spectate] [--auto] [--shot file.png --shot-at SECS] [--quit-at SECS]");
                 std::process::exit(0);
             }
             other => {
@@ -684,7 +695,7 @@ async fn main() {
     if direct {
         let choice = match &args.connect {
             Some(a) => menu::Choice::Join(a.clone()),
-            None => menu::Choice::Host { port: args.port, per_team: args.per_team },
+            None => menu::Choice::Host { port: args.port, per_team: args.per_team, map: args.map.unwrap_or(0) },
         };
         let mut sens = 0.0022;
         let (_, msg) = play(&args, &args.name, args.team, choice, &mut sens).await;
@@ -699,6 +710,9 @@ async fn main() {
         return;
     }
     let mut menu = menu::Menu::load(&args.name, args.port, args.per_team);
+    if let Some(m) = args.map {
+        menu.map = m;
+    }
     menu.shot = args.menu_shot.clone();
     loop {
         let choice = menu.run().await;
@@ -729,10 +743,11 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
                 None => return (false, Some(format!("Cannot resolve {a}"))),
             }
         }
-        menu::Choice::Host { port, per_team } => {
+        menu::Choice::Host { port, per_team, map } => {
             let h = match ferrite_server::spawn(ferrite_server::Config {
                 port,
                 per_team,
+                map,
                 seed: args.seed,
                 tickets: args.tickets,
                 bot_skill: args.skill,
@@ -755,12 +770,13 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         Ok(x) => x,
         Err(e) => return (false, Some(format!("Could not join {addr}: {e}"))),
     };
-    let world = World::new(welcome.seed);
+    let world = World::with_map(welcome.seed, welcome.map);
     let bounds = (
         vec3(-ferrite_shared::map::HALF_X - 8.0, -12.0, -ferrite_shared::map::HALF_Z - 8.0),
         vec3(ferrite_shared::map::HALF_X + 8.0, 34.0, ferrite_shared::map::HALF_Z + 8.0),
     );
     let mut gpu = gfx::Gpu::new(scene::build_world(&world), scene::build_sky(), args.shadows, scene::SUN.normalize(), bounds);
+    let map_name = ferrite_shared::map::map_def(world.map).name;
     let audio = Audio::new(args.volume).await;
     let start = mq::get_time();
     let hosting = server.as_ref().map(|h: &ferrite_server::ServerHandle| format!("hosting on UDP {}", h.addr.port()));
@@ -856,6 +872,7 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         start,
     };
     app.team_pick = args.pick_team;
+    app.banner = Some((map_name.to_string(), scene::NEUTRAL_COL, start + 0.5));
     let (mut opaque, mut alpha, mut add) = (gfx::Mesh::default(), gfx::Mesh::default(), gfx::Mesh::default());
     let (mut vm_opaque, mut vm_add) = (gfx::Mesh::default(), gfx::Mesh::default());
     let mut acc = 0.0f32;

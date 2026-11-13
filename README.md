@@ -42,7 +42,17 @@ Skip the home screen, or run a dedicated server:
 cargo run --release -p ferrite -- --host                      # host straight away
 cargo run --release -p ferrite -- --connect 192.168.1.20      # join a host (UDP 27500)
 cargo run --release -p ferrite-server                         # dedicated server
+cargo run --release -p ferrite-server -- --map depot          # ...on another map
 ```
+
+Four maps ship with the game. The host picks one on the home screen (or with `--map NAME`); a dedicated server takes `--map quarry`, and `--maps` lists them. Clients are told the map when they join.
+
+| Map | Character |
+|---|---|
+| Foundry Valley | The original: rolling valley, ruined foundry in the middle |
+| Quarry | A terraced pit; the centre point sits on the pit floor, overlooked from every side |
+| Ridgeline | Pine forest split by a rock-crowned ridge with three passes through it |
+| Depot | Flat container yard: close quarters and short sightlines |
 
 Each human replaces a bot. Pick EMBER, COBALT or AUTO on the home screen (AUTO joins the side with fewer humans), and press M in a match to change sides: you trade places with a bot, so the teams stay the same size. Allow UDP 27500 through the host's firewall.
 
@@ -98,7 +108,7 @@ crates/client   window, renderer, prediction, effects, synthesised audio, HUD
 ## Verification
 
 ```sh
-cargo test --workspace                                            # 14 integration tests
+cargo test --workspace                                            # 15 integration tests
 cargo run --release -p ferrite-server -- --bench 900              # headless 15-minute bot war + timing
 cargo run --release -p ferrite -- --spectate                      # watch a match
 cargo run --release -p ferrite -- --auto --quit-at 30             # scripted client, prints session stats

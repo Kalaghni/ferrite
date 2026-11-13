@@ -36,14 +36,17 @@ fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-fn ground_col(c: Vec3, n: Vec3, seed: u32, jitter: f32) -> Col {
-    let patch = vnoise(c.x / 24.0, c.z / 24.0, seed ^ 7);
-    let mut col = mix3([0.40, 0.47, 0.22], [0.62, 0.52, 0.25], smooth(0.3, 0.75, patch));
+/// Ground colour at `c`: the map's palette, worn to dirt around its
+/// objectives and to rock on slopes.
+fn ground_col(w: &World, c: Vec3, n: Vec3, jitter: f32) -> Col {
+    let [grass, dry, dirt] = map_def(w.map).ground;
+    let patch = vnoise(c.x / 24.0, c.z / 24.0, w.seed as u32 ^ 7);
+    let mut col = mix3(grass, dry, smooth(0.3, 0.75, patch));
     let mut near = f32::MAX;
-    for (x, z) in POINTS_XZ.iter().chain(BASES_XZ.iter()) {
-        near = near.min(((c.x - x).powi(2) + (c.z - z).powi(2)).sqrt());
+    for p in w.points.iter().chain(w.bases.iter()) {
+        near = near.min(((c.x - p.x).powi(2) + (c.z - p.z).powi(2)).sqrt());
     }
-    col = mix3(col, [0.55, 0.46, 0.35], 1.0 - smooth(7.0, 16.0, near));
+    col = mix3(col, dirt, 1.0 - smooth(7.0, 16.0, near));
     col = mix3(col, [0.47, 0.40, 0.35], smooth(0.06, 0.22, 1.0 - n.y));
     let k = 0.9 + 0.2 * jitter;
     rgb(col[0] * k, col[1] * k, col[2] * k)
@@ -114,7 +117,7 @@ pub fn build_world(w: &World) -> Mesh {
                 let n = (b - a).cross(c - a).normalize();
                 let cen = (a + b + c) / 3.0;
                 let j = hash01((ix * 2 + k) as u32, iz as u32 ^ seed);
-                m.tri(a, b, c, ground_col(cen, n, seed, j));
+                m.tri(a, b, c, ground_col(w, cen, n, j));
             }
         }
     }
@@ -217,8 +220,8 @@ pub fn build_world(w: &World) -> Mesh {
             continue;
         }
         let mut near = f32::MAX;
-        for (px, pz) in POINTS_XZ.iter().chain(BASES_XZ.iter()) {
-            near = near.min(((x - px).powi(2) + (z - pz).powi(2)).sqrt());
+        for p in w.points.iter().chain(w.bases.iter()) {
+            near = near.min(((x - p.x).powi(2) + (z - p.z).powi(2)).sqrt());
         }
         if near < 9.5 && hash01(k, 3) < 0.85 {
             continue; // trampled ground around objectives
@@ -230,7 +233,7 @@ pub fn build_world(w: &World) -> Mesh {
             taper(&mut m, base + vec3(-s, -0.04, -s * 0.8), base + vec3(s, s * 0.8, s * 0.8), 1.0, 0.6, Vec3::ZERO, Vec3::ZERO, rgb(g, g * 0.95, g * 0.9));
             continue;
         }
-        let gc = ground_col(base, n, seed, hash01(k, 4));
+        let gc = ground_col(w, base, n, hash01(k, 4));
         let col = if hash01(k, 6) < 0.3 { rgb(gc[0] * 1.12, gc[1] * 1.05, gc[2] * 0.9) } else { rgb(gc[0] * 0.82, gc[1] * 0.98, gc[2] * 0.74) };
         let blades = 3 + (hash01(k, 7) * 3.0) as u32;
         for b in 0..blades {

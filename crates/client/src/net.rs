@@ -16,6 +16,7 @@ pub struct Welcome {
     pub id: u8,
     pub team: u8,
     pub seed: u64,
+    pub map: u8,
 }
 
 pub struct Net {
@@ -60,8 +61,8 @@ impl Net {
             while wait.elapsed() < Duration::from_millis(250) {
                 if let Ok(n) = sock.recv(&mut buf) {
                     match decode::<S2C>(&buf[..n]) {
-                        Some(S2C::Welcome { id, team, seed, feed_id, .. }) => {
-                            welcome = Some((Welcome { id, team, seed }, feed_id));
+                        Some(S2C::Welcome { id, team, seed, map, feed_id, .. }) => {
+                            welcome = Some((Welcome { id, team, seed, map }, feed_id));
                             break;
                         }
                         Some(S2C::Reject(why)) => return Err(why),

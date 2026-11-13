@@ -14,11 +14,24 @@ fn main() {
             "--port" => cfg.port = val.parse().expect("--port <u16>"),
             "--bots" => cfg.per_team = val.parse().expect("--bots <players per team>"),
             "--seed" => cfg.seed = val.parse().expect("--seed <u64>"),
+            "--map" => match ferrite_shared::map::map_by_name(&val) {
+                Some(m) => cfg.map = m,
+                None => {
+                    eprintln!("unknown map '{val}'. Try --maps for the list.");
+                    std::process::exit(2);
+                }
+            },
+            "--maps" => {
+                for (i, m) in ferrite_shared::map::MAPS.iter().enumerate() {
+                    println!("{i}  {:<15} {}", m.name.to_lowercase(), m.blurb);
+                }
+                return;
+            }
             "--tickets" => cfg.tickets = val.parse().expect("--tickets <n>"),
             "--skill" => cfg.bot_skill = val.parse().expect("--skill <f32>"),
             "--bench" => bench = Some(val.parse().expect("--bench <simulated seconds>")),
             "-h" | "--help" => {
-                println!("ferrite-server [--port 27500] [--bots 12] [--seed N] [--tickets 250] [--skill 1.0] [--bench SECS]");
+                println!("ferrite-server [--port 27500] [--map NAME|N] [--maps] [--bots 12] [--seed N] [--tickets 250] [--skill 1.0] [--bench SECS]");
                 return;
             }
             other => panic!("unknown argument {other}"),
@@ -28,6 +41,7 @@ fn main() {
     if let Some(secs) = bench {
         // Headless soak: simulate as fast as possible and report cost.
         let mut g = Game::new(cfg);
+        println!("map: {}", ferrite_shared::map::map_def(g.world.map).name);
         let n = secs * 60;
         let t0 = std::time::Instant::now();
         let mut worst = 0.0f64;

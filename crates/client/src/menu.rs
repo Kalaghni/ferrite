@@ -2,6 +2,7 @@
 //! Saved servers and the player name live in `ferrite-client.txt` next to
 //! the executable.
 
+use ferrite_shared::map::{map_by_name, MAPS};
 use ferrite_shared::proto::DEFAULT_PORT;
 use macroquad::prelude as mq;
 use std::path::PathBuf;
@@ -10,7 +11,7 @@ use std::path::PathBuf;
 pub const TEAM_LABELS: [&str; 3] = ["EMBER", "COBALT", "AUTO"];
 
 pub enum Choice {
-    Host { port: u16, per_team: usize },
+    Host { port: u16, per_team: usize, map: u8 },
     Join(String),
     Quit,
 }
@@ -30,6 +31,8 @@ pub struct Menu {
     pub team: u8,
     /// Mouse sensitivity, remembered between matches and launches.
     pub sens: f32,
+    /// Map to host: index into the shared map table.
+    pub map: u8,
     pub error: Option<String>,
     lan_ip: Option<String>,
     repeat_at: f64,
@@ -95,6 +98,7 @@ impl Menu {
             focus: F_HOST,
             team: 2,
             sens: 0.0022,
+            map: 0,
             error: None,
             lan_ip: lan_ip(),
             repeat_at: 0.0,
@@ -111,6 +115,7 @@ impl Menu {
                     "bots" if v.parse::<usize>().is_ok() => m.f[F_BOTS] = v.to_string(),
                     "team" => m.team = v.parse::<u8>().unwrap_or(2).min(2),
                     "sens" => m.sens = v.parse::<f32>().unwrap_or(0.0022).clamp(0.0004, 0.01),
+                    "map" => m.map = map_by_name(v).unwrap_or(0),
                     _ => {}
                 }
             }
@@ -119,7 +124,8 @@ impl Menu {
     }
 
     fn save(&self) {
-        let mut out = format!("name={}\nbots={}\nteam={}\nsens={}\n", self.f[F_NAME], self.f[F_BOTS], self.team, self.sens);
+        let map = MAPS[self.map as usize % MAPS.len()].name.to_lowercase();
+        let mut out = format!("name={}\nbots={}\nteam={}\nsens={}\nmap={}\n", self.f[F_NAME], self.f[F_BOTS], self.team, self.sens, map);
         for s in &self.servers {
             out += &format!("server={s}\n");
         }
@@ -158,6 +164,7 @@ impl Menu {
         Choice::Host {
             port: self.f[F_HPORT].parse().ok().filter(|p| *p != 0).unwrap_or(DEFAULT_PORT),
             per_team: self.f[F_BOTS].parse::<usize>().unwrap_or(12).clamp(1, 16),
+            map: self.map % MAPS.len() as u8,
         }
     }
 
@@ -328,13 +335,30 @@ impl Menu {
             y += join_h + 18.0;
 
             // ---- host ----
-            let host_h = 150.0;
+            let host_h = 172.0;
             mq::draw_rectangle(x, y, w, host_h, PANEL);
             mq::draw_rectangle(x, y, 4.0, host_h, EMBER);
             mq::draw_text("HOST A MATCH", x + 20.0, y + 30.0, 24.0, mq::WHITE);
             let fy = y + 62.0;
             self.field(F_BOTS, x + 20.0, fy, 150.0, "PLAYERS PER TEAM", "12", now);
             self.field(F_HPORT, x + 186.0, fy, port_w, "PORT", &DEFAULT_PORT.to_string(), now);
+            // Map selector: click the right side for the next map, the left
+            // side for the previous one.
+            let (mx, mw) = (x + 186.0 + port_w + 16.0, (w - 20.0 - 200.0 - 16.0) - (186.0 + port_w + 16.0));
+            let def = &MAPS[self.map as usize % MAPS.len()];
+            mq::draw_text("MAP", mx, fy - 8.0, 16.0, DIM);
+            let over = hit(mx, fy, mw, 38.0);
+            mq::draw_rectangle(mx, fy, mw, 38.0, mq::Color::new(0.05, 0.05, 0.05, 1.0));
+            mq::draw_rectangle_lines(mx, fy, mw, 38.0, 2.0, if over { mq::WHITE } else { LINE });
+            let nm = mq::measure_text(def.name, None, 20, 1.0);
+            mq::draw_text(def.name, mx + (mw - nm.width) / 2.0, fy + 25.0, 20.0, mq::WHITE);
+            mq::draw_text("<", mx + 9.0, fy + 26.0, 22.0, if over { mq::WHITE } else { DIM });
+            mq::draw_text(">", mx + mw - 20.0, fy + 26.0, 22.0, if over { mq::WHITE } else { DIM });
+            if over && mq::is_mouse_button_pressed(mq::MouseButton::Left) {
+                let n = MAPS.len() as u8;
+                let back = mq::mouse_position().0 < mx + mw * 0.3;
+                self.map = (self.map % n + if back { n - 1 } else { 1 }) % n;
+            }
             if button(x + w - 20.0 - 200.0, fy, 200.0, 38.0, "HOST AND PLAY", EMBER, 22.0) {
                 out = Some(self.host_choice());
             }
@@ -343,7 +367,8 @@ impl Menu {
                 Some(ip) => format!("Empty slots are filled by bots. Others on your network can join at {ip}:{hp}"),
                 None => "Empty slots are filled by bots.".to_string(),
             };
-            mq::draw_text(&note, x + 20.0, fy + 66.0, 18.0, DIM);
+            mq::draw_text(&format!("{}: {}.", def.name, def.blurb), x + 20.0, fy + 64.0, 18.0, mq::Color::new(0.8, 0.78, 0.74, 1.0));
+            mq::draw_text(&note, x + 20.0, fy + 88.0, 18.0, DIM);
             y += host_h + 18.0;
 
             if button(x + w - 110.0, y, 110.0, 34.0, "QUIT", LINE, 20.0) || mq::is_key_pressed(mq::KeyCode::Escape) {
