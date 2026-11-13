@@ -1,0 +1,18 @@
+[package]
+name = "ferrite"
+version = "0.2.2"
+edition = "2021"
+description = "Low-poly multiplayer conquest FPS prototype written in Rust"
+
+[dependencies]
+macroquad = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[[bin]]
+name = "ferrite-server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "ferrite-client"
+path = "src/bin/client.rs"
