@@ -8,7 +8,16 @@ v0.3 is a from-scratch rewrite. Nothing from the v0.2 prototype is reused (it re
 
 ## Download
 
-Windows, Linux and macOS builds of the client and the dedicated server are on the [releases page](../../releases). Unpack and run `ferrite`. The macOS build is unsigned: if it refuses to open, run `xattr -dr com.apple.quarantine .` in the unpacked folder once.
+Windows, Linux and macOS builds of the client and the dedicated server are on the [releases page](../../releases). Unpack and run `ferrite`.
+
+**macOS:** the build is not signed with an Apple Developer ID, so a copy downloaded in a browser is blocked by Gatekeeper. The simplest way round it is to download from Terminal, which does not get flagged:
+
+```sh
+curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.3.0/ferrite-v0.3.0-macos-universal.tar.gz | tar xz
+./ferrite-v0.3.0-macos-universal/ferrite
+```
+
+If you already downloaded it in a browser, run `xattr -dr com.apple.quarantine .` in the unpacked folder once.
 
 ## Run from source
 
