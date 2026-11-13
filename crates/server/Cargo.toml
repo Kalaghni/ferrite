@@ -1,0 +1,7 @@
+[package]
+name = "ferrite-server"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+ferrite-shared = { path = "../shared" }

@@ -1,0 +1,9 @@
+[package]
+name = "ferrite-shared"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+glam.workspace = true
+serde.workspace = true
+bincode.workspace = true

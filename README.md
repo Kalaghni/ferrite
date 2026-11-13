@@ -1,110 +1,91 @@
-# FERRITE 0.2.2 — Rust Conquest FPS
+# FERRITE 0.3
 
-Original low-poly multiplayer FPS with a headless, authoritative UDP server and
-Macroquad graphical clients. This release compiles and has actual Linux runtime
-evidence. It remains an experimental LAN/VPN prototype.
+An original low-poly multiplayer FPS in Rust. Two teams of twelve, EMBER and COBALT, fight over five control points strung across a valley. Only the front line can be contested, so the battle has a shape: it masses, breaks, and moves.
 
-## Run
+v0.3 is a from-scratch rewrite. Nothing from the v0.2 prototype is reused (it remains in git history).
 
-Install current stable Rust. In separate terminals at the project root:
+## Download
+
+Windows 64-bit builds of the client and the dedicated server are on the [releases page](../../releases). Unzip and run `ferrite.exe`; nothing else to install.
+
+## Run from source
+
+Needs stable Rust. No assets, no setup - sound and geometry are generated in code.
 
 ```sh
-cargo run --locked --bin ferrite-server
-cargo run --locked --bin ferrite-client -- 127.0.0.1:4000 PlayerOne
-cargo run --locked --bin ferrite-client -- 127.0.0.1:4000 PlayerTwo
+cargo run --release -p ferrite
 ```
 
-WASD moves, Shift sprints, hold left mouse to fire, and Escape releases the mouse.
-Click the window to capture the mouse. Teams are assigned automatically.
-For a trusted LAN, bind the server to `0.0.0.0:4000` and use its LAN IP in the
-client command. UDP/4000 is the default port. Run matching client/server builds.
+The game opens on a home screen. **Host and play** starts a match inside the game (24 fighters, bots fill every empty slot). **Join a server** takes an address and a port (default 27500) and remembers servers you have joined. Click the window to deploy.
 
-## What is implemented
+Skip the home screen, or run a dedicated server:
 
-- Shared 20 Hz horizontal movement and cover collision.
-- Server input acknowledgements, local prediction, unacknowledged-command replay,
-  smoothed corrections, and 120 ms delayed remote-player interpolation.
-- Authoritative ray/AABB hitscan, occluding cover, 25 body / 75 head damage,
-  kills/deaths, hit feedback, and four-second respawns.
-- Three contested capture points, conquest scoring, round victory and reset.
-- Eight server bots and up to 24 human sessions.
-- Opt-in real-client telemetry and seeded network-impairment testing.
+```sh
+cargo run --release -p ferrite -- --host                      # host straight away
+cargo run --release -p ferrite -- --connect 192.168.1.20      # join a host (UDP 27500)
+cargo run --release -p ferrite-server                         # dedicated server
+```
+
+Each human replaces a bot; teams are balanced by human count. Allow UDP 27500 through the host's firewall.
+
+| Key | Action | Key | Action |
+|---|---|---|---|
+| WASD | move | LMB | fire |
+| Shift | sprint | RMB | aim down sights |
+| Space | jump | R | reload |
+| Ctrl / C | crouch (hold) | G | frag grenade |
+| Q / F / wheel | swap primary and sidearm | T | change sight |
+| 1 / 2 / 3 | kit for next deploy | | |
+| Tab | scoreboard | F3 | fps / ping / prediction stats |
+| Esc | release mouse | Q | leave match (only while mouse is released) |
+| - / = | mouse sensitivity | | |
+
+Useful flags: `--name`, `--bots N` (players per team), `--skill 0.6` (bot aim), `--tickets N`, `--seed N` (different valley), `--fullscreen`, `--volume 0..1`, `--spectate` (watch the bots fight).
+
+## The game
+
+- **One front.** Points A-E must be taken in order from your side. You can only push a point that touches ground you hold, so both teams always know where the fight is - and flanking means going around it, not ignoring it.
+- **Numbers matter.** Capture speed scales with how many more of you are on the point (up to 3). Lone wolves stall; squads take ground.
+- **Surge.** Capturing a point gives the whole team eight seconds of faster movement and half-time reloads. A capture is the moment to push the next point, not to rest.
+- **Waves and rubber band.** Reinforcements arrive in waves, and the more ground a team holds the longer its waves take. Winning stretches you thin; losing teams hit back together.
+- **Tickets.** Every death costs one; holding more points bleeds the enemy. First team to zero loses, then the round resets.
+- **Crouch.** Half speed, a much smaller target (you fit behind sandbags and crates), and 40% tighter spread. You cannot stand up under something.
+- **Sidearms.** Every kit carries a 12-round semi-automatic pistol. Drawing it takes a quarter of a second - far quicker than a reload - and you move slightly faster with it out.
+- **Sights.** Press T to cycle the sight on the weapon in hand: iron sights, red dot, holo, 2.5x optic, and 4x / 8x scopes on the Longrifle. Each has its own model, reticle and zoom; your choice is remembered per weapon.
+- **Three kits.** Vanguard (carbine, two frags), Breacher (scattergun, 130 HP, slightly faster), Marksman (longrifle; anyone it hits is marked through walls for the whole team for six seconds).
+- **Readable battlefield.** Team-coloured soldiers and tracers, light pillars over every objective, a front-line bar, minimap that shows enemies who fire or are marked, damage direction indicators.
+- **Breakable cover.** Wooden crates shatter under fire and grenades, for everyone, authoritatively.
+
+## Architecture and trade-offs
+
+```
+crates/shared   deterministic sim (movement, collision, weapons), map generation, wire protocol
+crates/server   game rules, bots, UDP front end; also a library the client embeds to host
+crates/client   window, renderer, prediction, effects, synthesised audio, HUD
+```
+
+- **Server authoritative, client predicted.** Clients send only intent (buttons and view angles) at 60 Hz. The server runs the same `sim::step` the client used to predict, so with no loss prediction is bit-exact, and after loss the client replays its unacknowledged commands on top of the next snapshot. Position is never accepted from the network.
+- **Trust boundary.** Commands are bounds-checked and sequence-checked, and a per-player budget caps how much simulated time a client can claim (a flood of 600 commands moves you under 3 m, not 80). Fire rate, ammo and hits are all decided server-side. Packet decoding is size-limited and cannot panic.
+- **Lag compensation.** Hitscan is resolved against where targets were on the shooter's screen, using a per-player position history, capped at 0.5 s of rewind.
+- **Loss tolerance.** Every command rides in three consecutive packets. Kills, captures and round state use an acknowledged feed that is resent until confirmed; tracers and hit sparks are sent once because losing one costs nothing.
+- **Snapshots.** 30 Hz, fixed-int bincode, about 550 bytes for 24 players (measured ~16 kB/s per client), under one MTU. Remote players are interpolated 100 ms in the past.
+- **Bots are clients.** A bot produces the same command struct as a human and goes through the same validation. They navigate with precomputed flow fields (three lane preferences per objective), follow a shared team push order, and have reaction time and aim error that settles while tracking.
+- **Rendering.** macroquad provides the window, input, audio and 2D HUD; the 3D scene uses raw miniquad pipelines with a custom flat-shading and fog shader. Chosen over Bevy for a 15-second rebuild and a small, stable API surface; the cost is no shadow maps or post-processing (blob shadows instead).
+- **Simple by choice.** Axis-aligned collision boxes on a heightfield; no player-player collision (keeps prediction exact); UDP source address is the session identity with no encryption or authentication - LAN/VPN only, not Internet-hardened.
 
 ## Verification
 
-See `MEASUREMENTS.md` for measured results and limits, `HANDOFF.md` for the next
-engineering gate, and `verification/` for the raw output packaged with this release.
-The source includes 17 shared-simulation tests and a client telemetry correlation
-test. The GitHub Actions workflow checks Linux and Windows when the project is
-pushed; execution in this workspace is Linux only.
-
-Unix:
-
 ```sh
-./scripts/check.sh
+cargo test --workspace                                            # 7 integration tests
+cargo run --release -p ferrite-server -- --bench 900              # headless 15-minute bot war + timing
+cargo run --release -p ferrite -- --spectate                      # watch a match
+cargo run --release -p ferrite -- --auto --quit-at 30             # scripted client, prints session stats
 ```
 
-Windows PowerShell (each command should succeed):
+The tests cover: prediction equals server state exactly over 900 random commands; replay after delayed delivery converges; command-flood rate limiting; NaN/out-of-range/replayed input and malformed packets; a five-minute 12v12 soak asserting territory stays contiguous, nobody leaves the map or falls through terrain, and snapshots stay under 1400 bytes; and a real UDP join / drive / acknowledge / leave round trip.
 
-```powershell
-cargo fmt --all -- --check
-cargo check --locked --all-targets
-cargo test --locked --all-targets
-cargo clippy --locked --all-targets -- -D warnings
-cargo build --locked --bins
-python scripts/smoke.py --spawn
-```
+Every client prints a line on exit with frame times, ping, snapshot count, bandwidth and the number of prediction corrections over 1 cm. `--shot file.png --shot-at SECS` saves a frame.
 
-The UDP smoke harness starts and stops its own real server with `--spawn`.
-To test an existing server instead: `python scripts/smoke.py 127.0.0.1 4000`.
+Note on the ping readout: acknowledgements ride on 30 Hz snapshots, so loopback shows about 15 ms. It is an upper bound on round trip, not a precise measurement.
 
-## Measure a real client
-
-Set a different output path for each client. Telemetry is disabled by default.
-
-```powershell
-$env:FERRITE_METRICS_PATH = "player-one.jsonl"
-cargo run --locked --bin ferrite-client -- 127.0.0.1:4000 PlayerOne
-```
-
-```sh
-FERRITE_METRICS_PATH=player-one.jsonl cargo run --locked --bin ferrite-client -- 127.0.0.1:4000 PlayerOne
-```
-
-JSONL records contain replay-aligned position error in metres, whether a correction
-exceeds 1 cm, pending inputs, discontinuities, and matched fire-command-to-HUD
-timings. Human hit events carry the source command sequence. Older v2 events
-without that optional field are accepted but cannot produce matched latency.
-
-The graphical tools require Linux, Xvfb, xdotool, ImageMagick `import`, and working
-software OpenGL. They run two actual graphical clients and apply XTest controls:
-
-```sh
-cargo build --locked --bins
-python3 scripts/graphical_soak.py --duration 600 --output verification/soak --require-combat
-python3 scripts/client_metrics_lab.py
-python3 scripts/summarize_metrics.py verification/soak
-```
-
-Use `--xvfb` and `--xdotool` if those executables are outside PATH. The matrix uses
-0/50/100/200 ms **added RTT**, split equally between uplink and downlink, and
-independent 0/2/5% loss on each leg. Seeds fix loss decisions; OS scheduling and
-rendering mean repeated measured timings will vary. `scripts/network_lab.py` is
-an additional headless clear-lane probe, with an analytic one-axis predictor;
-its results are separate from the graphical client's telemetry.
-
-## Remaining limits
-
-- UDP source address identifies a session. No authentication, encryption,
-  session tokens, NAT rebinding, or Internet-facing abuse protection. LAN/VPN only.
-- No input-clock synchronization: the server can repeat a held command or
-  coalesce incoming commands. Prediction can drift under loss and jitter.
-- No shot rewind. Moving-target and high-ping combat fairness need more work.
-- Combat events last one snapshot window. A dropped snapshot can lose feedback.
-- Snapshot JSON is not optimized for bandwidth or IP fragmentation.
-- Bots have simple steering and may get stuck on cover. Movement is horizontal;
-  there is no jumping, vehicles, destruction, sound, or finished art.
-- Software-rendered, scripted Linux checks do not establish subjective game feel,
-  Windows runtime correctness, monitor latency, or production-scale capacity.
-
-License: MIT. No EA code or assets are included.
+License: MIT.
