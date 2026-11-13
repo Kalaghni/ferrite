@@ -1,5 +1,7 @@
 # FERRITE 0.3
 
+![A COBALT soldier advancing on point B through the valley](docs/screenshot.png)
+
 An original low-poly multiplayer FPS in Rust. Two teams of twelve, EMBER and COBALT, fight over five control points strung across a valley. Only the front line can be contested, so the battle has a shape: it masses, breaks, and moves.
 
 v0.3 is a from-scratch rewrite. Nothing from the v0.2 prototype is reused (it remains in git history).
