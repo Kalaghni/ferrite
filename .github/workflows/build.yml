@@ -1,0 +1,115 @@
+name: build
+
+# Every push to main and every pull request: test and build on all three
+# platforms. Pushing a tag like v0.3.1 also publishes the builds as a release.
+# "Run workflow" with a tag attaches fresh builds to that release.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Attach the builds to this release tag (created if missing). Leave empty to only build."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || (startsWith(github.ref, 'refs/tags/v') && github.ref_name || '') }}
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-latest
+          - name: linux-x64
+            os: ubuntu-22.04 # older glibc, so the build runs on more distros
+          - name: macos-universal
+            os: macos-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.name == 'macos-universal' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev
+
+      - name: Test
+        run: cargo test --workspace --release
+
+      - name: Build
+        run: |
+          mkdir -p out
+          if [ "${{ matrix.name }}" = "macos-universal" ]; then
+            for t in aarch64-apple-darwin x86_64-apple-darwin; do
+              cargo build --release --target "$t" -p ferrite -p ferrite-server
+            done
+            for b in ferrite ferrite-server; do
+              lipo -create -output "out/$b" "target/aarch64-apple-darwin/release/$b" "target/x86_64-apple-darwin/release/$b"
+            done
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            cargo build --release -p ferrite -p ferrite-server
+            cp target/release/ferrite.exe target/release/ferrite-server.exe out/
+          else
+            cargo build --release -p ferrite -p ferrite-server
+            cp target/release/ferrite target/release/ferrite-server out/
+          fi
+
+      - name: Package
+        id: package
+        run: |
+          version="${RELEASE_TAG:-dev-${GITHUB_SHA::7}}"
+          dir="ferrite-${version}-${{ matrix.name }}"
+          mkdir "$dir"
+          cp out/* packaging/README.txt "$dir/"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cp packaging/start-server.bat "$dir/"
+            7z a -tzip "$dir.zip" "$dir" > /dev/null
+            echo "file=$dir.zip" >> "$GITHUB_OUTPUT"
+          else
+            cp packaging/start-server.sh "$dir/"
+            chmod +x "$dir/ferrite" "$dir/ferrite-server" "$dir/start-server.sh"
+            tar -czf "$dir.tar.gz" "$dir"
+            echo "file=$dir.tar.gz" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Smoke-test the packaged server
+        run: |
+          dir="${{ steps.package.outputs.file }}"
+          dir="${dir%.zip}"; dir="${dir%.tar.gz}"
+          "./$dir/ferrite-server" --bench 120 --bots 12
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ steps.package.outputs.file }}
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: env.RELEASE_TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            # Another platform's job may create it at the same moment; that is fine.
+            gh release create "$RELEASE_TAG" --title "FERRITE $RELEASE_TAG" --generate-notes --target "$GITHUB_SHA" || gh release view "$RELEASE_TAG" > /dev/null
+          fi
+          gh release upload "$RELEASE_TAG" "${{ steps.package.outputs.file }}" --clobber
