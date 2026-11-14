@@ -3,7 +3,7 @@ use ferrite_shared::map::{HALF_X, HALF_Z};
 use ferrite_shared::proto::*;
 use ferrite_shared::rng::Rng;
 use ferrite_shared::sim;
-use ferrite_shared::{eligible, NEUTRAL};
+use ferrite_shared::{eligible, vec3, NEUTRAL};
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
@@ -23,7 +23,7 @@ fn random_cmd(rng: &mut Rng, seq: u32, yaw: &mut f32) -> Cmd {
     if rng.chance(0.2) {
         buttons |= btn::FIRE;
     }
-    Cmd { seq, mx: rng.below(3) as i8 - 1, mz: if rng.chance(0.8) { 1 } else { -1 }, buttons, yaw: *yaw, pitch: rng.range(-0.3, 0.3), interp: 0.0 }
+    Cmd { seq, mx: rng.below(3) as i8 - 1, mz: if rng.chance(0.8) { 1 } else { -1 }, buttons, more: (seq % 37 == 0) as u8, yaw: *yaw, pitch: rng.range(-0.3, 0.3), interp: 0.0 }
 }
 
 /// The client predicts by running the same `sim::step`. With no loss the
@@ -188,11 +188,13 @@ fn udp_round_trip() {
     let mut buf = [0u8; 8192];
 
     // wrong protocol version is refused with a reason
-    sock.send(&encode(&C2S::Hello { proto: PROTO + 1, name: "old".into(), spectator: false, team: 2 })).unwrap();
+    sock.send(&encode(&C2S::Hello { proto: PROTO + 1, name: "old".into(), spectator: false, team: 2, uuid: [0; 16], icon: Vec::new() })).unwrap();
     let n = sock.recv(&mut buf).unwrap();
     assert!(matches!(decode::<S2C>(&buf[..n]), Some(S2C::Reject(_))));
 
-    sock.send(&encode(&C2S::Hello { proto: PROTO, name: "net-test".into(), spectator: false, team: 2 })).unwrap();
+    // An id and a 16 x 16 icon go up with the hello.
+    let icon: Vec<u8> = (0..ICON_BYTES).map(|k| (k * 7 % 251) as u8).collect();
+    sock.send(&encode(&C2S::Hello { proto: PROTO, name: "net-test".into(), spectator: false, team: 2, uuid: [7; 16], icon: icon.clone() })).unwrap();
     let (mut id, mut seed, mut first_team) = (SPECTATOR_ID, 0, 0u8);
     for _ in 0..10 {
         let n = sock.recv(&mut buf).unwrap();
@@ -211,6 +213,8 @@ fn udp_round_trip() {
     let mut last_send = Instant::now() - Duration::from_secs(1);
     let mut history: Vec<Cmd> = Vec::new();
     let (mut asked_switch, mut roster_team) = (false, first_team);
+    let (mut parts, mut got_total) = (Vec::new(), 0usize);
+    let (mut ack_chat, mut heard, mut icon_listed, mut icon_back) = (0u32, Vec::new(), false, false);
     sock.set_read_timeout(Some(Duration::from_millis(4))).unwrap();
     while start.elapsed() < Duration::from_millis(1500) {
         if last_send.elapsed() >= Duration::from_micros(16_666) {
@@ -218,7 +222,14 @@ fn udp_round_trip() {
             seq += 1;
             history.push(Cmd { seq, mz: 1, yaw: 1.0, ..Default::default() });
             let recent: Vec<Cmd> = history.iter().rev().take(3).rev().copied().collect();
-            sock.send(&encode(&C2S::Cmds { cmds: recent, ack_feed: 0, kit: 1, prim: 1, side: 4, skin: 2 })).unwrap();
+            sock.send(&encode(&C2S::Cmds { cmds: recent, ack_feed: 0, kit: 1, prim: 1, side: 4, skin: 2, wskin: [0, 0], ack_chat })).unwrap();
+            // Said three times, heard once.
+            if seq == 20 || seq == 21 || seq == 22 {
+                sock.send(&encode(&C2S::Chat { id: 1, team: false, text: "hello  there\u{7}".into() })).unwrap();
+            }
+            if seq == 30 {
+                sock.send(&encode(&C2S::WantIcon(id))).unwrap();
+            }
         }
         if !asked_switch && start.elapsed() > Duration::from_millis(600) {
             asked_switch = true;
@@ -233,12 +244,34 @@ fn udp_round_trip() {
                         saw_self |= me.alive;
                     }
                 }
-                Some(S2C::Roster(r)) => {
-                    in_roster |= r.iter().any(|e| e.id == id && e.name == "net-test" && !e.bot);
-                    if let Some(e) = r.iter().find(|e| e.id == id) {
-                        roster_team = e.team;
+                Some(S2C::Roster { at, total, entries }) => {
+                    assert!(entries.len() <= ROSTER_PART);
+                    assert!(n < 1200, "a roster part of {n} bytes");
+                    if at == 0 {
+                        parts.clear();
+                    }
+                    if at as usize == parts.len() {
+                        parts.extend(entries);
+                    }
+                    if parts.len() == total as usize {
+                        got_total = parts.len();
+                        let r = &parts;
+                        in_roster |= r.iter().any(|e| e.id == id && e.name == "net-test" && !e.bot);
+                        if let Some(e) = r.iter().find(|e| e.id == id) {
+                            roster_team = e.team;
+                        }
                     }
                 }
+                Some(S2C::Chat(lines)) => {
+                    for l in lines {
+                        if l.seq > ack_chat {
+                            ack_chat = l.seq;
+                            heard.push(l);
+                        }
+                    }
+                }
+                Some(S2C::Icons(list)) => icon_listed |= list.contains(&(id, icon_hash(&icon))),
+                Some(S2C::Icon { id: who, hash, rgba }) => icon_back |= who == id && hash == icon_hash(&icon) && rgba == icon,
                 _ => {}
             }
         }
@@ -246,6 +279,11 @@ fn udp_round_trip() {
     assert!(snaps >= 30, "only {snaps} snapshots in 1.5 s (expected ~45)");
     assert!(max_ack + 12 >= seq, "server acked {max_ack} of {seq}");
     assert!(saw_self && in_roster);
+    assert_eq!(got_total, 8, "the roster arrives whole, in parts");
+    let said: Vec<_> = heard.iter().filter(|l| l.from == id).collect();
+    assert_eq!(said.len(), 1, "{heard:?}");
+    assert_eq!((said[0].text.as_str(), said[0].name.as_str(), said[0].all), ("hello  there", "net-test", true));
+    assert!(icon_listed && icon_back, "icon listed {icon_listed}, sent back {icon_back}");
     sock.send(&encode(&C2S::Bye)).unwrap();
     assert_eq!(roster_team, 1 - first_team, "team change request was applied");
     server.stop();
@@ -817,7 +855,184 @@ fn rounds_and_player_records_are_kept() {
     let back = fresh.join("tester").unwrap();
     assert_eq!(fresh.roster()[back].total, total);
     assert!(fresh.history.is_empty());
+    // That record was kept by name, from before players had ids. Whoever
+    // next brings an id under that name takes it over...
+    fresh.leave(back);
+    let id_a = [0xA1; 16];
+    let a = fresh.join_as("tester", 2, id_a, &[]).unwrap();
+    assert_eq!(fresh.roster()[a].total, total);
+    fresh.players[a].kills = 3;
+    fresh.players[a].score = 300;
+    let grown = fresh.totals(a);
+    assert_eq!(grown.kills, total.kills + 3);
+    // ...and keeps it under a new callsign,
+    fresh.leave(a);
+    let a = fresh.join_as("renamed", 2, id_a, &[]).unwrap();
+    assert_eq!(fresh.roster()[a].total, grown);
+    // while someone else using the old callsign starts from nothing.
+    let b = fresh.join_as("tester", 2, [0xB2; 16], &[]).unwrap();
+    assert_eq!(fresh.roster()[b].total, Totals::default());
+    fresh.players[b].deaths = 1;
+    fresh.leave(a);
+    fresh.leave(b);
+    // The file carries the ids, and they survive a restart.
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(text.lines().any(|l| l.starts_with("renamed ") && l.ends_with(&uuid_text(&id_a))), "{text}");
+    assert_eq!(uuid_parse(&uuid_text(&id_a)), Some(id_a));
+    assert_eq!(uuid_parse("not-an-id"), None);
+    let mut third = Game::new(conf());
+    let a = third.join_as("again", 2, id_a, &[]).unwrap();
+    assert_eq!(third.roster()[a].total, grown);
+    let b = third.join_as("tester", 2, [0xB2; 16], &[]).unwrap();
+    assert_eq!(third.roster()[b].total.deaths, 1);
     let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn chat_reaches_the_right_people() {
+    let mut g = Game::new(cfg(3));
+    let a = g.join_team("ann", 0).unwrap();
+    let b = g.join_team("bob", 1).unwrap();
+    let c = g.join_team("cy", 0).unwrap();
+    let start = g.chat_seq; // three "joined" notices
+    assert_eq!(start, 3);
+    assert!(g.chat_for(Some(b), 0).iter().all(|l| l.from == SPECTATOR_ID && l.all));
+    assert!(g.say(a, false, "  good luck all  "));
+    assert!(g.say(a, true, "push B"));
+    assert!(!g.say(a, false, " \n\t "), "nothing to say");
+    let bot = g.players.iter().position(|p| p.bot.is_some()).unwrap();
+    assert!(!g.say(bot, false, "beep"), "bots do not chat");
+    let long = "x".repeat(500);
+    assert!(g.say(b, false, &long));
+    let texts = |g: &Game, who: Option<usize>| g.chat_for(who, start).into_iter().map(|l| (l.name, l.text, l.all)).collect::<Vec<_>>();
+    // A teammate hears both, the other side and a spectator only what was said to all.
+    let mine = texts(&g, Some(c));
+    assert_eq!(mine[0], ("ann".to_string(), "good luck all".to_string(), true));
+    assert_eq!(mine[1], ("ann".to_string(), "push B".to_string(), false));
+    assert_eq!(mine[2].1.len(), CHAT_MAX);
+    for who in [Some(b), None] {
+        let t = texts(&g, who);
+        assert_eq!(t.len(), 2, "{t:?}");
+        assert!(t.iter().all(|l| l.2));
+    }
+    // Acknowledged lines are not sent again.
+    assert!(g.chat_for(Some(c), g.chat_seq).is_empty());
+    // A full backlog comes a few lines at a time, never more than a packet.
+    for k in 0..30 {
+        g.say(b, false, &format!("{k} {long}"));
+    }
+    let mut ack = start;
+    let mut got = 0;
+    loop {
+        let lines = g.chat_for(Some(a), ack);
+        if lines.is_empty() {
+            break;
+        }
+        assert!(encode(&S2C::Chat(lines.clone())).len() < 1300);
+        got += lines.len();
+        ack = lines.last().unwrap().seq;
+    }
+    assert_eq!(got, 33);
+    g.leave(c);
+    assert_eq!(g.chat.last().unwrap().text, "cy left");
+}
+
+#[test]
+fn melee_hits_close_and_kills_from_behind() {
+    use ferrite_shared::sim::{MELEE_DAMAGE, MELEE_TICKS, MELEE_WEAPON};
+    let mut g = Game::new(cfg(2));
+    let me = g.join_team("stabber", 0).unwrap();
+    for _ in 0..200 {
+        g.tick();
+    }
+    let foe = g.players.iter().position(|p| p.team == 1).unwrap();
+    let mut seq = g.players[me].last_seq;
+    // Put the two face to face on open ground, `gap` metres apart, the
+    // target facing `facing` (0 = toward us).
+    let stage = |g: &mut Game, gap: f32, facing: f32| {
+        let base = g.world.points[2] + vec3(0.0, 0.0, 14.0);
+        for (k, i) in [me, foe].into_iter().enumerate() {
+            let p = &mut g.players[i];
+            let x = base.x + k as f32 * gap;
+            p.st = sim::PState::spawn(vec3(x, 0.0, base.z), 0);
+            p.alive = true;
+            p.hp = 100.0;
+            p.protect_until = 0;
+        }
+        for i in [me, foe] {
+            let (x, z) = (g.players[i].st.pos.x, g.players[i].st.pos.z);
+            g.players[i].st.pos.y = g.world.height(x, z);
+        }
+        g.players[foe].yaw = -std::f32::consts::FRAC_PI_2 + facing;
+        g.tick = g.tick.max(1);
+    };
+    let mut act = |g: &mut Game, buttons: u8, more: u8| {
+        seq += 1;
+        g.players[me].credits = 5.0;
+        g.apply_cmd(me, Cmd { seq, buttons, more, yaw: std::f32::consts::FRAC_PI_2, interp: g.tick as f64, ..Default::default() });
+    };
+    let mut swing = |g: &mut Game| act(g, 0, btn2::MELEE);
+    // In reach, from the front: hurt, not dead.
+    stage(&mut g, 1.6, 0.0);
+    let feed0 = g.feed.len();
+    swing(&mut g);
+    assert_eq!(g.players[foe].hp, 100.0 - MELEE_DAMAGE);
+    assert!(g.players[foe].alive);
+    assert_eq!(g.players[me].st.melee, MELEE_TICKS);
+    assert!(matches!(g.fx.iter().rev().find(|f| matches!(f.1, Fx::Swing { .. })), Some((_, Fx::Swing { hit: true, .. }))));
+    // Mid-swing nothing else happens: no second blow, no shot.
+    let ammo = g.players[me].st.ammo;
+    swing(&mut g);
+    swing(&mut g);
+    assert_eq!(g.players[foe].hp, 100.0 - MELEE_DAMAGE);
+    assert_eq!(g.players[me].st.ammo, ammo);
+    // Out of reach: a miss.
+    stage(&mut g, 3.2, 0.0);
+    swing(&mut g);
+    assert_eq!(g.players[foe].hp, 100.0);
+    assert!(matches!(g.fx.iter().rev().find(|f| matches!(f.1, Fx::Swing { .. })), Some((_, Fx::Swing { hit: false, .. }))));
+    // Behind us: a miss too.
+    stage(&mut g, -1.6, 0.0);
+    swing(&mut g);
+    assert_eq!(g.players[foe].hp, 100.0);
+    // From behind them: dead, and the feed says how.
+    stage(&mut g, 1.6, std::f32::consts::PI);
+    swing(&mut g);
+    assert!(!g.players[foe].alive);
+    assert!(g.feed[feed0..].iter().any(|f| matches!(f, Feed::Kill { killer, victim, weapon, .. } if *killer == me as u8 && *victim == foe as u8 && *weapon == MELEE_WEAPON)));
+    assert_eq!(sim::weapon_def(MELEE_WEAPON).name, "Melee");
+    // A swing interrupts a reload.
+    stage(&mut g, 9.0, 0.0);
+    g.players[me].st.reload = 60;
+    swing(&mut g);
+    assert_eq!(g.players[me].st.reload, 0);
+}
+
+#[test]
+fn weapon_finishes_are_validated() {
+    use ferrite_shared::sim::{fix_weapon_skin, weapon_skin, weapon_skins_for, WEAPONS, WEAPON_SKINS};
+    // The factory finish fits every weapon and is always first.
+    for wid in 0..WEAPONS.len() as u8 {
+        let fits = weapon_skins_for(wid);
+        assert_eq!(fits[0], 0);
+        for s in 0..=255u8 {
+            let fixed = fix_weapon_skin(wid, s);
+            assert!(fits.contains(&fixed));
+            assert_eq!(fixed == s, fits.contains(&s));
+        }
+    }
+    assert!(WEAPON_SKINS[0].weapons.is_empty() && WEAPON_SKINS[0].body.is_none());
+    assert_eq!(weapon_skin(200).name, WEAPON_SKINS[200 % WEAPON_SKINS.len()].name);
+    // What a client asks for is checked when the weapons are issued.
+    let mut g = Game::new(cfg(2));
+    let me = g.join("tester").unwrap();
+    g.players[me].next_wskin = [200, 201];
+    for _ in 0..120 {
+        g.tick();
+    }
+    assert!(g.players[me].alive);
+    let e = &g.roster()[me];
+    assert_eq!(e.wskin, [fix_weapon_skin(e.prim, 200), fix_weapon_skin(e.side, 201)]);
 }
 
 #[test]

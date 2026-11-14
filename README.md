@@ -1,4 +1,4 @@
-# FERRITE 0.6
+# FERRITE 0.7
 
 ![The FERRITE launcher: host, join or change settings](docs/launcher.png)
 
@@ -19,15 +19,22 @@ v0.5 adds a lobby before every round (map vote, loadouts, ready-up countdown), t
 
 v0.6 adds a new launcher and lobby look (key art, palette and typeface from the FERRITE UI kit), launcher and lobby music, a pause overlay, 3D models of every gun in the loadout picker, a bot difficulty selector, and a camera that follows whoever eliminated you while you wait to redeploy.
 
+v0.7 adds text chat, a melee strike, a killcam, player icons, callsigns backed by a player id (your record follows you when you rename), a kill feed that puts people ahead of bots, the plumbing for weapon finishes (none ship yet), a Windows installer, and updates from inside the launcher.
+
 ## Download
 
-Windows, Linux and macOS builds of the client and the dedicated server are on the [releases page](../../releases). Unpack and run `ferrite`.
+Windows, Linux and macOS builds of the client and the dedicated server are on the [releases page](../../releases).
+
+- **Windows installer:** `ferrite-vX.Y.Z-windows-x64-setup.exe`. It installs for the current user (no administrator prompt), adds Start menu entries for the game and the dedicated server, and can be removed from *Installed apps*. Windows SmartScreen may warn that it is unrecognised: the build is not code-signed.
+- **Portable:** the `.zip` / `.tar.gz` for your system. Unpack anywhere and run `ferrite`.
+
+Either way the game keeps itself current: the launcher checks this repository's releases when it opens and shows **UPDATE & RESTART** when there is a newer one (SETTINGS > VIDEO > CHECK FOR UPDATES turns the check off; `ferrite --update` does it from a terminal). Everyone in a match needs the same release, so update together.
 
 **macOS:** the build is not signed with an Apple Developer ID, so a copy downloaded in a browser is blocked by Gatekeeper. The simplest way round it is to download from Terminal, which does not get flagged:
 
 ```sh
-curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.6.0/ferrite-v0.6.0-macos-universal.tar.gz | tar xz
-./ferrite-v0.6.0-macos-universal/ferrite
+curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.7.0/ferrite-v0.7.0-macos-universal.tar.gz | tar xz
+./ferrite-v0.7.0-macos-universal/ferrite
 ```
 
 If you already downloaded it in a browser, run `xattr -dr com.apple.quarantine .` in the unpacked folder once.
@@ -72,7 +79,8 @@ Each human replaces a bot. Pick EMBER, COBALT or AUTO on the home screen (AUTO j
 | L | loadout (1-3 class, 4 / 5 next primary / sidearm) | M | change team |
 | Tab | scoreboard | F3 | fps / ping / prediction stats |
 | Esc | release mouse | Q | leave match (only while mouse is released) |
-| - / = | mouse sensitivity (remembered) | | |
+| - / = | mouse sensitivity (remembered) | V / middle mouse | melee |
+| Enter / Y | chat to everyone | U | chat to your team |
 
 Crouch while sprinting to slide. Hold Space while pushing into a ledge to climb it.
 
@@ -80,6 +88,13 @@ Useful flags: `--name`, `--team ember|cobalt|auto`, `--bots N` (players per team
 
 ## The game
 
+- **Chat.** ENTER (or Y) opens a line to everyone, U to your own side; TAB switches between the two while you type, ENTER sends, ESC cancels. It works in the lobby, in a match, while you wait to redeploy and on the pause overlay. The server keeps messages to 120 characters and one every second and a half (four in a burst), and announces who joins and leaves. In the lobby R is now the ready key.
+- **Melee.** V (or the middle mouse button) strikes with the weapon in hand: 75 damage to whoever is within arm's reach in front of you, and a kill outright from behind. It takes about half a second, during which you cannot fire, and it interrupts a reload. It makes no gunshot, so it does not put you on the enemy's minimap. Bots use it when you get close enough.
+- **Killcam.** A moment after you go down, the three seconds before it are replayed through the eyes of whoever got you - their weapon, their sight picture, you marked YOU - rebuilt from the snapshots your client already had, so it costs the server nothing. SPACE or a click skips it; then the camera follows them live as before.
+- **Callsigns and ids.** On first launch the game makes a random id and keeps it in `ferrite-client.txt`. Servers file your record under that id rather than your callsign, so renaming keeps your kills and someone borrowing your name does not get them. The id is sent to the servers you join and never shown to other players. It is an identity, not a login: there is still no authentication (see below). Records from before v0.7 were kept by name; the first player to come back under that name takes theirs over.
+- **Player icons.** A 16 x 16 icon sits beside your callsign in the kill feed, the scoreboard, chat, the lobby and above your head for teammates. Pick one of nine emblems in eight colours on the home screen, or use your own picture: drop a PNG on the launcher window (or leave one beside the game as `icon.png`) and it is cropped square and shrunk to fit. Other players' clients fetch it from the server the first time they see you.
+- **Kill feed.** A kill by or of a person is a full-size line with icons that stays eight seconds, and yours are outlined in gold; bots shooting bots are small, dim, and gone in four.
+- **Weapon finishes.** The code is in, the finishes are not: `WEAPON_SKINS` in `crates/shared/src/sim.rs` holds only FACTORY. A finish names replacement colours for a weapon's body, furniture, accent strip and small parts, and which weapons it fits. Append one and it shows up on the loadout panel for those weapons (click the big model, or 7 / 8), is remembered per weapon, checked by the server, and drawn in first person, on other soldiers and in the loadout. Bots pick among them at random.
 - **One front.** Points A-E must be taken in order from your side. You can only push a point that touches ground you hold, so both teams always know where the fight is - and flanking means going around it, not ignoring it.
 - **Numbers matter.** Capture speed scales with how many more of you are on the point (up to 3). Lone wolves stall; squads take ground.
 - **Surge.** Capturing a point gives the whole team eight seconds of faster movement and half-time reloads. A capture is the moment to push the next point, not to rest.
@@ -120,18 +135,24 @@ crates/client   window, renderer, prediction, effects, synthesised audio, HUD, l
 - **Bots are clients.** A bot produces the same command struct as a human and goes through the same validation. They navigate with precomputed flow fields (three lane preferences per objective), follow a shared team push order, and have reaction time and aim error that settles while tracking. They wait for the squad before stepping onto a point, turn toward fire that hits a squadmate, go and look where a target vanished, back off to reload, keep long rifles outside the point, fight at the range their weapon is good at, save grenades for bunched enemies, and hop or climb what is in the way.
 - **Rendering.** macroquad provides the window, input, audio and 2D HUD; the 3D scene uses raw miniquad pipelines with one custom shader: flat shading, a single sun shadow map covering the whole valley (depth packed into an RGBA target, so it needs nothing beyond GLSL 100), four short-lived point lights, and fog. Chosen over Bevy for a 15-second rebuild and a small, stable API surface; the cost is no post-processing.
 - **Finding games.** Servers, hosted or dedicated, answer a discovery query sent to multicast group 239.255.70.82 on UDP 27499 (and to the broadcast address, for networks that drop multicast) with their name, map, player count and port. The home screen asks about once a second. It is LAN-only by nature; across the Internet or a VPN that does not carry multicast, type the address. `--name` names a dedicated server and `--no-discovery` hides it.
-- **Simple by choice.** Axis-aligned collision boxes on a heightfield; no player-player collision (keeps prediction exact); UDP source address is the session identity with no encryption or authentication - LAN/VPN only, not Internet-hardened.
+- **Simple by choice.** Axis-aligned collision boxes on a heightfield; no player-player collision (keeps prediction exact); UDP source address is the session identity with no encryption or authentication - LAN/VPN only, not Internet-hardened. A player id is taken on trust: whoever runs a server you join could reuse it elsewhere.
+- **Chat, icons and the roster.** Chat lines are numbered and resent with each snapshot until the client acknowledges them; what a client says goes up three times under one id and is said once. Icons are 1 kB each: the server lists who has which (by hash) once a second and a client asks for the ones it lacks. The roster now goes out twelve players to a datagram, so a full 16v16 server no longer relies on IP fragmentation.
+- **Updates.** The launcher reads the redirect of this repository's `/releases/latest` to learn the newest tag, and if it is newer downloads that release's archive for the platform over HTTPS, unpacks it, and swaps the files in beside the executable (the running ones are renamed `*.old` and removed at the next start; settings, records and an edited `start-server` script are left alone). It uses the `curl` and `tar` that Windows 10+, macOS and Linux include rather than carrying a TLS stack; without them there is just no update notice. Builds run from a cargo `target` folder never update themselves.
 
 ## Verification
 
 ```sh
-cargo test --workspace                                            # 24 integration tests
+cargo test --workspace                                            # 27 integration tests, 3 for the updater
 cargo run --release -p ferrite-server -- --bench 900              # headless 15-minute bot war + timing
 cargo run --release -p ferrite -- --spectate                      # watch a match
 cargo run --release -p ferrite -- --auto --quit-at 30             # scripted client, prints session stats
 ```
 
-The tests cover: prediction equals server state exactly over 900 random commands; replay after delayed delivery converges; command-flood rate limiting; NaN/out-of-range/replayed input and malformed packets; a five-minute 12v12 soak asserting territory stays contiguous, nobody leaves the map or falls through terrain, and snapshots stay under 1400 bytes; a real UDP join / drive / acknowledge / leave round trip; and the newer mechanics - crouch, sidearm, team switching, slide, climbing (a 1.9 m ledge yes, a 3.2 m wall no), spread bloom, assists, loadout validation, map rotation, burst fire, the lobby, and delivery of effects raised between ticks (the bug that used to eat hit markers).
+The tests cover: prediction equals server state exactly over 900 random commands; replay after delayed delivery converges; command-flood rate limiting; NaN/out-of-range/replayed input and malformed packets; a five-minute 12v12 soak asserting territory stays contiguous, nobody leaves the map or falls through terrain, and snapshots stay under 1400 bytes; a real UDP join / drive / acknowledge / leave round trip; and the newer mechanics - crouch, sidearm, team switching, slide, climbing (a 1.9 m ledge yes, a 3.2 m wall no), spread bloom, assists, loadout validation, map rotation, burst fire, the lobby, and delivery of effects raised between ticks (the bug that used to eat hit markers). New in v0.7: chat reaching only the people it should, in packet-sized pieces; melee reach, facing, the kill from behind and the lock-out while swinging; records following a player id through a rename, a name clash and a server restart; finish validation; and, over real UDP, the roster arriving in parts, a chat line said three times and heard once, and an icon going up with the hello and coming back on request.
+
+Scripted-run aids added for these: `--seek` (the scripted player walks to the front line, so it gets shot), `--shot-killcam`, `--say TEXT`, `--icon N`, `--vm-melee 0.75`, and `--update --pretend-version 0.5.0` to exercise the updater against a real release.
+
+To build the Windows installer: `.\packaging\build-installer.ps1` (needs Inno Setup 6: `winget install JRSoftware.InnoSetup`). It writes `dist\ferrite-vX.Y.Z-windows-x64-setup.exe`; the GitHub workflow builds and attaches the same thing on a tagged release.
 
 Every client prints a line on exit with frame times, ping, snapshot count, bandwidth and the number of prediction corrections over 1 cm. `--shot file.png --shot-at SECS` saves a frame.
 
@@ -147,4 +168,4 @@ License: MIT.
 
 ## Licence
 
-The source code is under the MIT licence (`LICENSE`). The music and artwork in `crates/client/assets/` are **not**: they are all rights reserved and may only be used as part of FERRITE. See `crates/client/assets/LICENSE.md`.
+The source code is under the MIT licence (`LICENSE`). The music and artwork in `crates/client/assets/` (and the icon made from it, `packaging/ferrite.ico`) are **not**: they are all rights reserved and may only be used as part of FERRITE. See `crates/client/assets/LICENSE.md`.

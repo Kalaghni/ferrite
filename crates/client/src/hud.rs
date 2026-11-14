@@ -47,6 +47,129 @@ fn text_r(s: &str, rx: f32, y: f32, size: f32, c: Color) {
     text(s, rx - w, y, size, c);
 }
 
+/// A player icon, `s` pixels square.
+fn pic(t: &macroquad::prelude::Texture2D, x: f32, y: f32, s: f32, a: f32) {
+    use macroquad::prelude::{draw_texture_ex, vec2, DrawTextureParams};
+    draw_texture_ex(t, x.round(), y.round(), Color::new(1.0, 1.0, 1.0, a), DrawTextureParams { dest_size: Some(vec2(s, s)), ..Default::default() });
+}
+
+/// Break `s` into lines: the first at most `first` pixels wide, the rest
+/// `rest`. Words too long for a line are cut.
+fn wrap(s: &str, size: f32, first: f32, rest: f32) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let room = |n: usize| if n == 0 { first } else { rest };
+    for word in s.split(' ') {
+        let mut word = word.to_string();
+        loop {
+            let trial = if cur.is_empty() { word.clone() } else { format!("{cur} {word}") };
+            if crate::ui::width(&trial, size) <= room(lines.len()) {
+                cur = trial;
+                break;
+            }
+            if !cur.is_empty() {
+                lines.push(std::mem::take(&mut cur));
+                continue;
+            }
+            // One word wider than the line: put down what fits.
+            let mut cut = word.chars().count().max(1);
+            while cut > 1 && crate::ui::width(&word.chars().take(cut).collect::<String>(), size) > room(lines.len()) {
+                cut -= 1;
+            }
+            lines.push(word.chars().take(cut).collect());
+            word = word.chars().skip(cut).collect();
+            if word.is_empty() {
+                break;
+            }
+        }
+    }
+    if !cur.is_empty() || lines.is_empty() {
+        lines.push(cur);
+    }
+    lines
+}
+
+/// The chat log and, while typing, the line being written. It sits bottom
+/// left in a match, above the panel when one is up, beside the menu in the
+/// pause overlay, and in the roster panel of the lobby.
+fn draw_chat(app: &App, w: f32, h: f32, now: f64) {
+    use crate::ui::color as th;
+    let k = pause_scale(w, h);
+    let pw = (w - 40.0).min(1080.0);
+    let x0 = w / 2.0 - pw / 2.0;
+    let dead = !app.alive && !app.spectator;
+    let (x, bottom, cw, max_rows) = if app.lobby {
+        (x0 + pw * 0.64, loadout_top(h) - 18.0, pw * 0.36 - 6.0, ((loadout_top(h) - 18.0 - 246.0) / 18.0).floor().max(2.0) as usize)
+    } else if app.team_pick {
+        return;
+    } else if app.paused() {
+        (500.0 * k, h - 34.0, (w - 500.0 * k - 480.0 * k).max(280.0), 10)
+    } else if app.loadout_shown() || (dead && app.kc.is_none()) {
+        (24.0, loadout_top(h) - 14.0, 460.0, 8)
+    } else if app.kc.is_some() {
+        (24.0, h - 130.0, 460.0, 6)
+    } else {
+        (24.0, h - 104.0, 460.0, 8)
+    };
+    let size = 16.0;
+    let lh = 19.0;
+    let mut y = bottom;
+    if app.chat_open {
+        let edge = if app.chat_team { team_col(app.my_team) } else { [0.412, 0.678, 1.0] };
+        crate::ui::plate(x - 6.0, y - 19.0, cw + 12.0, 27.0, th::GLASS_STRONG, col(edge, 1.0));
+        let tag = if app.chat_team { "TEAM" } else { "ALL" };
+        draw_text(tag, x, y, size, col(edge, 1.0));
+        let tx = x + crate::ui::width("TEAM", size) + 10.0;
+        if app.chat_buf.is_empty() {
+            draw_text("ENTER send    TAB all / team    ESC cancel", tx, y, 14.0, th::QUIET);
+        }
+        // A long line scrolls: the end of it stays in view.
+        let mut shown = app.chat_buf.clone();
+        while crate::ui::width(&shown, size) > x + cw - tx - 8.0 && !shown.is_empty() {
+            shown.remove(0);
+        }
+        draw_text(&shown, tx, y, size, th::WHITE);
+        if (now * 2.0) as i64 % 2 == 0 {
+            draw_rectangle(tx + crate::ui::width(&shown, size) + 2.0, y - 14.0, 2.0, 17.0, col(edge, 1.0));
+        }
+        y -= 32.0;
+    }
+    // Newest at the bottom; a message fades after a while unless the box
+    // is open or we are standing in the lobby.
+    let mut rows = 0;
+    for m in app.chat.iter().rev() {
+        let age = (now - m.at) as f32;
+        let a = if app.chat_open || app.lobby { 1.0 } else { (12.0 - age).clamp(0.0, 1.0) };
+        if a <= 0.0 {
+            break;
+        }
+        let tag = if m.all || m.system { "" } else { "(TEAM) " };
+        let head = if m.system { String::new() } else { format!("{tag}{}: ", m.name) };
+        let iw = if m.icon.is_some() { 18.0 } else { 0.0 };
+        let hw = crate::ui::width(&head, size);
+        let lines = wrap(&m.text, size, (cw - hw - iw).max(60.0), cw - 14.0);
+        if rows + lines.len() > max_rows {
+            break;
+        }
+        rows += lines.len();
+        y -= lh * (lines.len() as f32 - 1.0);
+        for (n, line) in lines.iter().enumerate() {
+            let ly = y + n as f32 * lh;
+            let (lx, lw) = if n == 0 { (x + iw + hw, iw + hw + crate::ui::width(line, size)) } else { (x + 14.0, 14.0 + crate::ui::width(line, size)) };
+            draw_rectangle(x - 6.0, ly - 15.0, lw + 12.0, lh, col(DARK, 0.5 * a));
+            if n == 0 && !m.system {
+                if let Some(t) = &m.icon {
+                    pic(t, x, ly - 13.0, 15.0, a);
+                }
+                text(&head, x + iw, ly, size, col(team_col(m.team), a));
+            }
+            let c = if m.system { th::MUTED } else { th::WHITE };
+            text(line, lx, ly, size, Color::new(c.r, c.g, c.b, a * if m.system { 0.85 } else { 1.0 }));
+        }
+        y -= lh;
+    }
+}
+
 fn project(vp: &Mat4, p: Vec3, w: f32, h: f32) -> Option<(f32, f32, f32)> {
     let c = *vp * Vec4::new(p.x, p.y, p.z, 1.0);
     if c.w < 0.2 {
@@ -73,7 +196,7 @@ pub fn loadout_top(h: f32) -> f32 {
 /// Clickable rows of the loadout panel: (column, row, x, y, w, h).
 /// Columns are class, primary (for class `kit`) and sidearm; shared with
 /// the click handler.
-pub fn loadout_rects(w: f32, h: f32, kit: u8) -> Vec<(u8, u8, f32, f32, f32, f32)> {
+pub fn loadout_rects(w: f32, h: f32, kit: u8, prim: u8, side: u8) -> Vec<(u8, u8, f32, f32, f32, f32)> {
     let y0 = loadout_top(h) + 106.0;
     let rows = [3, sim::kit(kit).prims.len(), sim::SIDEARMS.len()];
     let mut v = Vec::new();
@@ -86,7 +209,22 @@ pub fn loadout_rects(w: f32, h: f32, kit: u8) -> Vec<(u8, u8, f32, f32, f32, f32
     // Under the classes: the look worn. One row; a click moves to the next.
     let (x, cw) = loadout_col(w, 0);
     v.push((3, 0, x + 4.0, y0 + 4.0 * 38.0, cw - 8.0, 35.0));
+    // The big models at the top: where a weapon has more than one finish,
+    // a click moves to the next (columns 4 and 5).
+    for (k, wid) in [prim, side].into_iter().enumerate() {
+        if sim::weapon_skins_for(wid).len() > 1 {
+            let (bx, bw) = big_gun_box(w, k);
+            v.push((4 + k as u8, 0, bx, loadout_top(h) + 4.0, bw, 84.0));
+        }
+    }
     v
+}
+
+/// Left edge and width of the big model of the primary (0) or sidearm (1).
+fn big_gun_box(w: f32, k: usize) -> (f32, f32) {
+    let pw = (w - 40.0).min(1080.0);
+    let bw = (pw * 0.27).min(290.0);
+    (if k == 0 { w / 2.0 - pw / 2.0 + 8.0 } else { w / 2.0 + pw / 2.0 - 8.0 - bw }, bw)
 }
 
 /// Left edge and width of a loadout column. The weapon columns are wider:
@@ -105,6 +243,8 @@ fn loadout_col(w: f32, c: u8) -> (f32, f32) {
 /// centred on (`cx`, `cy`), in screen pixels.
 pub struct GunIcon {
     pub wid: u8,
+    /// Finish: index into `sim::WEAPON_SKINS`.
+    pub skin: u8,
     pub cx: f32,
     pub cy: f32,
     pub w: f32,
@@ -128,7 +268,10 @@ fn draw_loadout(app: &App, w: f32, h: f32, icons: &mut Vec<GunIcon>) {
     // Pointing at a row shows that weapon instead.
     let (_, prim, side) = app.loadout();
     let mut big = [prim, side];
-    for (c, r, x, y, rw, rh) in loadout_rects(w, h, app.kit_choice) {
+    for (c, r, x, y, rw, rh) in loadout_rects(w, h, app.kit_choice, prim, side) {
+        if c >= 4 {
+            continue; // the big models, drawn below
+        }
         let (name, blurb, sel, stats) = match c {
             0 => {
                 let k = sim::kit(r);
@@ -158,7 +301,7 @@ fn draw_loadout(app: &App, w: f32, h: f32, icons: &mut Vec<GunIcon>) {
         if c == 1 || c == 2 {
             let id = if c == 1 { kd.prims[r as usize] } else { sim::SIDEARMS[r as usize] };
             draw_rectangle(x + 5.0, y + 2.0, ICON_W, rh - 4.0, col(DARK, 0.45));
-            icons.push(GunIcon { wid: id, cx: x + 5.0 + ICON_W / 2.0, cy: y + rh / 2.0, w: ICON_W - 10.0, h: rh - 10.0, turn: false });
+            icons.push(GunIcon { wid: id, skin: app.wskins[id as usize % 20], cx: x + 5.0 + ICON_W / 2.0, cy: y + rh / 2.0, w: ICON_W - 10.0, h: rh - 10.0, turn: false });
             tx = x + ICON_W + 12.0;
             if over {
                 big[c as usize - 1] = id;
@@ -168,12 +311,16 @@ fn draw_loadout(app: &App, w: f32, h: f32, icons: &mut Vec<GunIcon>) {
         text_r(&stats, x + rw - 8.0, y + 15.0, 14.0, col(WHITE, if sel { 0.9 } else { 0.55 }));
         text(blurb, tx, y + 30.0, 14.0, col(WHITE, if sel { 0.85 } else { 0.55 }));
     }
-    let pw = (w - 40.0).min(1080.0);
-    let bw = (pw * 0.27).min(290.0);
     for (k, id) in big.into_iter().enumerate() {
-        let bx = if k == 0 { w / 2.0 - pw / 2.0 + 8.0 } else { w / 2.0 + pw / 2.0 - 8.0 - bw };
+        let (bx, bw) = big_gun_box(w, k);
         text(&sim::weapon_def(id).name.to_uppercase(), bx + 4.0, top + 20.0, 16.0, col(tc, 0.95));
-        icons.push(GunIcon { wid: id, cx: bx + bw / 2.0, cy: top + 54.0, w: bw - 30.0, h: 64.0, turn: true });
+        // Its finish, where it has a choice of them.
+        let skin = sim::fix_weapon_skin(id, app.wskins[id as usize % 20]);
+        if sim::weapon_skins_for(id).len() > 1 {
+            let over = mx >= bx && mx < bx + bw && my >= top + 4.0 && my < top + 88.0;
+            text_r(&format!("{} FINISH   {} or click", sim::weapon_skin(skin).name, 7 + k), bx + bw - 4.0, top + 20.0, 14.0, col(WHITE, if over { 1.0 } else { 0.7 }));
+        }
+        icons.push(GunIcon { wid: id, skin, cx: bx + bw / 2.0, cy: top + 54.0, w: bw - 30.0, h: 64.0, turn: true });
     }
 }
 
@@ -204,7 +351,7 @@ fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
     text("PRE-MATCH BRIEFING", hx, 36.0, 15.0, Color::new(0.718, 0.863, 1.0, 1.0));
     text(&status, hx, 66.0, 30.0, col(if soon { WARNING } else { WHITE }, 1.0));
     text("Vote for the next map and choose a loadout. It starts early once everyone is ready.", hx, 90.0, 17.0, col(WHITE, 0.75));
-    text("M change team      ENTER ready      Q leave", x0, 113.0, 17.0, col(WHITE, 0.7));
+    text("M change team      R ready      ENTER chat      Q leave", x0, 113.0, 17.0, col(WHITE, 0.7));
     if let Some(t) = &app.now_playing {
         text_r(&format!("now playing: {t}"), x0 + pw, 113.0, 17.0, col(WHITE, 0.7));
     }
@@ -242,21 +389,35 @@ fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
     let y0 = 236.0;
     draw_rectangle(x0 - 12.0, y0 - 24.0, pw + 24.0, loadout_top(h) - (y0 - 24.0) - 8.0, col(DARK, 0.72));
     draw_rectangle(x0 - 12.0, loadout_top(h), pw + 24.0, LOADOUT_H, col(DARK, 0.82));
+    // The teams take the left of the panel, the chat the right. People
+    // come first, bright, with their icons; bots are dim; ready is green.
     for t in 0..2u8 {
-        let tx = x0 + t as f32 * pw * 0.5;
+        let tx = x0 + t as f32 * pw * 0.31;
         text(TEAM_NAMES[t as usize], tx, y0, 22.0, col(team_col(t), 1.0));
-        for (k, r) in app.net.roster.iter().filter(|r| r.team == t).enumerate() {
-            let (nx, ny) = (tx + (k % 3) as f32 * (pw / 6.0), y0 + 24.0 + (k / 3) as f32 * 18.0);
-            let a = if r.id == app.my_id { 1.0 } else if r.bot { 0.4 } else { 0.85 };
-            let label = if r.bot {
-                format!("{} (bot)", r.name)
-            } else if r.ready {
-                format!("{} - ready", r.name)
-            } else {
-                r.name.clone()
-            };
-            text(&label, nx, ny, 16.0, col(if r.ready && !r.bot { SUCCESS } else { WHITE }, a));
+        let mut team: Vec<_> = app.net.roster.iter().filter(|r| r.team == t).collect();
+        team.sort_by_key(|r| r.bot);
+        for (k, r) in team.iter().enumerate() {
+            let (mut nx, ny) = (tx + (k % 2) as f32 * (pw * 0.155), y0 + 24.0 + (k / 2) as f32 * 18.0);
+            if ny > loadout_top(h) - 14.0 {
+                break;
+            }
+            let a = if r.id == app.my_id { 1.0 } else if r.bot { 0.4 } else { 0.9 };
+            if let Some(tex) = app.icon(r.id) {
+                pic(tex, nx, ny - 13.0, 15.0, 1.0);
+                nx += 19.0;
+            }
+            let ready = r.ready && !r.bot;
+            text(&r.name, nx, ny, 16.0, col(if ready { SUCCESS } else { WHITE }, a));
+            if ready {
+                text("READY", nx + crate::ui::width(&r.name, 16.0) + 8.0, ny, 12.0, col(SUCCESS, 0.8));
+            }
         }
+    }
+    let chat_x = x0 + pw * 0.64;
+    draw_line(chat_x - 14.0, y0 - 14.0, chat_x - 14.0, loadout_top(h) - 18.0, 1.0, Color::new(0.706, 0.761, 0.882, 0.38));
+    text("CHAT", chat_x, y0 - 4.0, 15.0, col(WHITE, 0.6));
+    if !app.chat_open && !app.spectator {
+        text_r("ENTER to type", x0 + pw, y0 - 4.0, 14.0, col(WHITE, 0.45));
     }
 }
 
@@ -452,7 +613,10 @@ fn draw_pause(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
         if me {
             draw_rectangle(ix - 6.0 * k, ry, iw + 12.0 * k, 26.0 * k, col(WHITE, 0.08));
         }
-        draw_circle(ix + 8.0 * k, ry + 13.0 * k, 5.0 * k, if r.bot { th::QUIET } else { th::SUCCESS });
+        match app.icon(r.id) {
+            Some(t) => pic(t, ix, ry + 4.0 * k, 18.0 * k, 1.0),
+            None => draw_circle(ix + 8.0 * k, ry + 13.0 * k, 5.0 * k, if r.bot { th::QUIET } else { th::SUCCESS }),
+        }
         draw_text(&r.name, ix + 30.0 * k, ry + 20.0 * k, sz(19.0), if r.bot { th::MUTED } else { th::WHITE });
         let tag = if me { "YOU" } else if r.bot { "BOT" } else { "" };
         crate::ui::text_r(tag, ix + iw, ry + 20.0 * k, sz(15.0), if me { th::EMBER_BRIGHT } else { th::QUIET });
@@ -468,8 +632,8 @@ fn draw_pause(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
     crate::ui::plate(px, qy, pw, qh, th::GLASS_STRONG, th::STROKE);
     draw_text("CONTROLS", ix, qy + 32.0 * k, sz(17.0), th::MUTED);
     let keys = [
-        [("ESC", "resume"), ("L", "loadout"), ("M", "change team"), ("TAB", "scoreboard"), ("Q", "leave (here)")],
-        [("T", "change sight"), ("G", "frag grenade"), ("F", "sidearm"), ("C", "crouch / slide"), ("- =", "sensitivity")],
+        [("ESC", "resume"), ("L", "loadout"), ("ENTER", "chat (U: team)"), ("TAB", "scoreboard"), ("Q", "leave (here)")],
+        [("T", "change sight"), ("G", "frag grenade"), ("F", "sidearm"), ("C", "crouch / slide"), ("V", "melee")],
     ];
     for (c, column) in keys.iter().enumerate() {
         for (r, (key, what)) in column.iter().enumerate() {
@@ -479,7 +643,7 @@ fn draw_pause(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
                 break;
             }
             crate::ui::plate(kx, ky, 52.0 * k, 28.0 * k, col(DARK, 0.6), th::STROKE);
-            crate::ui::text_c(key, kx + 26.0 * k, ky + 21.0 * k, sz(16.0), th::WHITE);
+            crate::ui::text_c(key, kx + 26.0 * k, ky + 21.0 * k, if key.len() > 3 { sz(12.0) } else { sz(16.0) }, th::WHITE);
             draw_text(what, kx + 62.0 * k, ky + 21.0 * k, sz(16.0), th::MUTED);
         }
     }
@@ -576,9 +740,14 @@ fn draw_scoreboard(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h:
             if !wide {
                 name.truncate(9);
             }
-            text(&name, x, y, 17.0, c);
+            // A column for icons, once anyone here has one.
+            let ic = if app.icons.is_empty() { 0.0 } else { 20.0 };
+            if let Some(t) = app.icon(r.id) {
+                pic(t, x, y - 14.0, 16.0, 1.0);
+            }
+            text(&name, x + ic, y, 17.0, c);
             if wide {
-                text(&sim::kit(r.kit).name[..3], x + 150.0, y, 13.0, th::QUIET);
+                text(&sim::kit(r.kit).name[..3], x + ic + 150.0, y, 13.0, th::QUIET);
             }
             let cell = |s: String, off: f32, c: Color| crate::ui::text_r(&s, right - off, y, 16.0, c);
             cell(r.kills.to_string(), c_k, c);
@@ -651,12 +820,22 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
         let head = v.pos + Vec3::new(0.0, 2.05, 0.0);
         let Some((sx, sy, d)) = project(vp, head, w, h) else { continue };
         let c = team_col(v.team);
-        if friendly || app.spectator {
+        if app.kc.is_some() {
+            // The killcam shows what the killer saw; only we are pointed out.
+            if v.id == app.my_id {
+                draw_triangle(Vec2::new(sx - 7.0, sy - 10.0), Vec2::new(sx + 7.0, sy - 10.0), Vec2::new(sx, sy), col(WHITE, 0.95));
+                text_c("YOU", sx, sy - 15.0, 16.0, col(WHITE, 0.95));
+            }
+        } else if friendly || app.spectator {
             if d < 70.0 {
                 let s = (7.0 - d * 0.04).max(3.5);
                 draw_triangle(Vec2::new(sx - s, sy - s * 1.4), Vec2::new(sx + s, sy - s * 1.4), Vec2::new(sx, sy), col(c, 0.9));
                 if d < 28.0 {
-                    text_c(&app.name(v.id), sx, sy - s * 1.4 - 5.0, 15.0, col(WHITE, 0.85));
+                    let name = app.name(v.id);
+                    text_c(&name, sx, sy - s * 1.4 - 5.0, 15.0, col(WHITE, 0.85));
+                    if let Some(t) = app.icon(v.id) {
+                        pic(t, sx - crate::ui::width(&name, 15.0) / 2.0 - 18.0, sy - s * 1.4 - 17.0, 14.0, 0.9);
+                    }
                 }
             }
         } else if v.flags & flag::MARKED != 0 {
@@ -863,22 +1042,49 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
     }
 
     // ---- kill feed ----
-    for (i, k) in app.feed.iter().rev().enumerate() {
+    // A kill by or of a person stands out and stays; bots shooting bots
+    // are small print that soon goes.
+    let mut fy = 92.0;
+    for k in app.feed.iter().rev() {
         let age = (now - k.at) as f32;
-        if age > 7.0 {
+        let life = if k.mine { 9.0 } else if k.human { 8.0 } else { 4.5 };
+        if age > life {
             continue;
         }
-        let a = (1.0 - (age - 6.0).max(0.0)).clamp(0.0, 1.0);
-        let y = 92.0 + i as f32 * 24.0;
-        let mid = if k.head { format!(" [{} HS] ", k.weapon) } else { format!(" [{}] ", k.weapon) };
-        let wv = measure_text(&k.victim, None, 18, 1.0).width;
-        let wm = measure_text(&mid, None, 18, 1.0).width;
-        let wk = measure_text(&k.killer, None, 18, 1.0).width;
-        let x = w - 18.0 - wv - wm - wk;
-        draw_rectangle(x - 8.0, y - 17.0, wv + wm + wk + 16.0, 22.0, col(if k.mine { [0.3, 0.26, 0.12] } else { DARK }, 0.6 * a));
-        text(&k.killer, x, y, 18.0, col(team_col(k.kteam), a));
-        text(&mid, x + wk, y, 18.0, col(WHITE, 0.8 * a));
-        text(&k.victim, x + wk + wm, y, 18.0, col(team_col(k.vteam), a));
+        let a = (life - age).clamp(0.0, 1.0);
+        let (size, row, dim) = if k.human { (19.0, 28.0, 1.0) } else { (15.0, 19.0, 0.55) };
+        let isz = size - 3.0;
+        let mid = if k.head { format!("  [{} HS]  ", k.weapon) } else { format!("  [{}]  ", k.weapon) };
+        let iw = |i: &Option<macroquad::prelude::Texture2D>| if i.is_some() { isz + 5.0 } else { 0.0 };
+        let (wk, wm, wv) = (crate::ui::width(&k.killer, size), crate::ui::width(&mid, size), crate::ui::width(&k.victim, size));
+        let total = iw(&k.kicon) + wk + wm + iw(&k.vicon) + wv;
+        let x = w - 18.0 - total;
+        let y = fy + size - 4.0;
+        if k.human {
+            let back = if k.mine { [0.34, 0.27, 0.08] } else { DARK };
+            draw_rectangle(x - 12.0, fy - 3.0, total + 22.0, row - 3.0, col(back, 0.78 * a));
+            draw_rectangle(x - 12.0, fy - 3.0, 4.0, row - 3.0, col(team_col(k.kteam), a));
+            if k.mine {
+                draw_rectangle_lines(x - 12.0, fy - 3.0, total + 22.0, row - 3.0, 2.0, col(WARNING, 0.9 * a));
+            }
+        } else {
+            draw_rectangle(x - 8.0, fy - 2.0, total + 16.0, row - 2.0, col(DARK, 0.3 * a));
+        }
+        let mut tx = x;
+        if let Some(t) = &k.kicon {
+            pic(t, tx, y - isz + 2.0, isz, a);
+            tx += isz + 5.0;
+        }
+        text(&k.killer, tx, y, size, col(team_col(k.kteam), a * dim));
+        tx += wk;
+        text(&mid, tx, y, size, col(WHITE, 0.8 * a * dim));
+        tx += wm;
+        if let Some(t) = &k.vicon {
+            pic(t, tx, y - isz + 2.0, isz, a);
+            tx += isz + 5.0;
+        }
+        text(&k.victim, tx, y, size, col(team_col(k.vteam), a * dim));
+        fy += row;
     }
 
     // ---- minimap ----
@@ -1006,7 +1212,23 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
     if app.lobby {
         draw_lobby(app, snap, w, h);
     }
-    if dead || panel {
+    if let Some(k) = app.kc.as_ref().filter(|_| !app.lobby) {
+        // Killcam: say whose eyes these are, and how long is left to wait.
+        let title = format!("KILLCAM   {}  -  {}", app.name(k.killer), sim::weapon_def(k.weapon).name);
+        let tw = crate::ui::width(&title, 26.0);
+        draw_rectangle(cx - tw / 2.0 - 24.0, 146.0, tw + 48.0, 40.0, col(DARK, 0.72));
+        draw_rectangle(cx - tw / 2.0 - 24.0, 146.0, 6.0, 40.0, Color::new(1.0, 0.25, 0.15, 1.0));
+        text_c(&title, cx, 175.0, 26.0, col(team_col(app.team(k.killer)), 1.0));
+        if let Some(t) = app.icon(k.killer) {
+            pic(t, cx + tw / 2.0 + 30.0, 154.0, 24.0, 1.0);
+        }
+        let rs = if app.respawn_in > 0.05 { format!("Reinforcing in {:.1}s", app.respawn_in) } else { "Deploying...".to_string() };
+        let line = format!("{rs}      SPACE or click to skip");
+        let lw = crate::ui::width(&line, 20.0);
+        draw_rectangle(cx - lw / 2.0 - 16.0, h - 92.0, lw + 32.0, 32.0, col(DARK, 0.6));
+        text_c(&line, cx, h - 70.0, 20.0, col(WHITE, 0.9));
+    }
+    if (dead && app.kc.is_none()) || panel {
         let y0 = loadout_top(h);
         if app.lobby {
             if panel {
@@ -1061,7 +1283,7 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
     }
 
     // ---- scoreboard ----
-    if is_key_down(KeyCode::Tab) || snap.phase == 1 || app.demo_scores {
+    if (is_key_down(KeyCode::Tab) && !app.chat_open) || snap.phase == 1 || app.demo_scores {
         icons.clear(); // the scoreboard covers the panel
         let top = if over { (h * 0.1).max(66.0) + 124.0 } else { (h * 0.1).max(66.0) };
         draw_scoreboard(app, snap, w, h, top);
@@ -1092,5 +1314,6 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
     if now - app.net.last_recv > 2.0 {
         text_c("CONNECTION LOST - waiting for server", cx, cy - 60.0, 30.0, Color::new(1.0, 0.4, 0.2, 1.0));
     }
+    draw_chat(app, w, h, now);
     icons
 }

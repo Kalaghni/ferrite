@@ -11,7 +11,17 @@ PLAY
   Pick your team (or AUTO) next to your callsign; press M in a match to
   change sides.
   Your callsign, team, mouse sensitivity and saved servers are kept in
-  ferrite-client.txt next to the game.
+  ferrite-client.txt next to the game, along with your player id: servers
+  keep your record under that id, so it follows you if you change callsign.
+
+  PLAYER ICON: pick an emblem and a colour on the home screen, or drop a PNG
+  on the launcher window to use your own picture (it is shrunk to 16 x 16).
+
+UPDATES
+  The launcher looks for a newer release when it opens and shows UPDATE &
+  RESTART when there is one. SETTINGS > VIDEO > CHECK FOR UPDATES turns that
+  off. "ferrite --update" updates from a terminal. Everyone in a match must
+  be on the same release.
 
 RUN A DEDICATED SERVER
   Run start-server.bat (Windows) or ./start-server.sh (Linux, macOS).
@@ -48,6 +58,9 @@ CONTROLS
   LMB fire       RMB aim          R reload        G grenade
   Q/F/wheel swap to sidearm       T change sight  L loadout
   M change team  Tab scoreboard   F3 net stats    -/= mouse sensitivity
+  V or middle mouse: melee (a kill from behind)
+  Enter or Y: chat to everyone    U: chat to your team    (Tab switches)
+  In the lobby, R is the ready key.
   Esc release mouse, then Q to leave the match
 
 GRAPHICS

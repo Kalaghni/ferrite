@@ -9,7 +9,7 @@ use crate::sim::PState;
 use bincode::Options;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-pub const PROTO: u32 = 12;
+pub const PROTO: u32 = 13;
 pub const DEFAULT_PORT: u16 = 27500;
 pub const SPECTATOR_ID: u8 = 255;
 
@@ -69,11 +69,54 @@ pub mod flag {
     pub const SIDEARM: u8 = 128;
 }
 
+/// Second button byte (`Cmd::more`).
+pub mod btn2 {
+    pub const MELEE: u8 = 1;
+}
+
 /// Second flag byte: animation state for other players.
 pub mod flag2 {
     pub const RELOAD: u8 = 1;
     pub const SLIDE: u8 = 2;
     pub const DRAW: u8 = 4;
+    pub const MELEE: u8 = 8;
+}
+
+/// Player icons are this many pixels square, sent as RGBA8.
+pub const ICON_PX: usize = 16;
+pub const ICON_BYTES: usize = ICON_PX * ICON_PX * 4;
+/// Longest chat message, in characters.
+pub const CHAT_MAX: usize = 120;
+/// Roster entries per datagram: a full server's roster is sent in parts
+/// so no part outgrows one packet.
+pub const ROSTER_PART: usize = 12;
+
+/// Identifies an icon's pixels (FNV-1a). Never 0: that means "no icon".
+pub fn icon_hash(rgba: &[u8]) -> u32 {
+    let mut h: u32 = 0x811C_9DC5;
+    for b in rgba {
+        h = (h ^ *b as u32).wrapping_mul(0x0100_0193);
+    }
+    h.max(1)
+}
+
+/// A player id as text: 32 hex digits in the usual 8-4-4-4-12 groups.
+pub fn uuid_text(id: &[u8; 16]) -> String {
+    let h: String = id.iter().map(|b| format!("{b:02x}")).collect();
+    format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
+}
+
+/// Reads what `uuid_text` writes (hyphens optional). All zeros is not an id.
+pub fn uuid_parse(s: &str) -> Option<[u8; 16]> {
+    let h: Vec<u8> = s.trim().bytes().filter(|b| *b != b'-').collect();
+    if h.len() != 32 {
+        return None;
+    }
+    let mut id = [0u8; 16];
+    for (k, pair) in h.chunks(2).enumerate() {
+        id[k] = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    (id != [0u8; 16]).then_some(id)
 }
 
 /// One 60 Hz tick of player intent.
@@ -83,6 +126,8 @@ pub struct Cmd {
     pub mx: i8,
     pub mz: i8,
     pub buttons: u8,
+    /// More buttons: `btn2`.
+    pub more: u8,
     pub yaw: f32,
     pub pitch: f32,
     /// Server tick-time the client was displaying remote players at when
@@ -93,22 +138,38 @@ pub struct Cmd {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum C2S {
     /// `team`: 0 or 1 to ask for a side, anything else for auto-balance.
-    Hello { proto: u32, name: String, spectator: bool, team: u8 },
-    /// `kit`, `prim`, `side`: the loadout wanted at the next deploy.
-    Cmds { cmds: Vec<Cmd>, ack_feed: u32, kit: u8, prim: u8, side: u8, skin: u8 },
+    /// `uuid`: who this is, whatever callsign they use today (all zeros =
+    /// nobody in particular). `icon`: empty, or `ICON_BYTES` of RGBA.
+    Hello { proto: u32, name: String, spectator: bool, team: u8, uuid: [u8; 16], icon: Vec<u8> },
+    /// `kit`, `prim`, `side`: the loadout wanted at the next deploy, and
+    /// `wskin` the finish on the primary and the sidearm. `ack_chat`: the
+    /// newest chat line received.
+    Cmds { cmds: Vec<Cmd>, ack_feed: u32, kit: u8, prim: u8, side: u8, skin: u8, wskin: [u8; 2], ack_chat: u32 },
     Bye,
     /// Ask to change sides mid-match.
     Team(u8),
     /// In the lobby: the map voted for (255 = no vote) and whether ready.
     Lobby { vote: u8, ready: bool },
+    /// Say something, to everyone or to our own side. `id` goes up by one
+    /// per message, so a repeat of the same datagram is said only once.
+    Chat { id: u32, team: bool, text: String },
+    /// Ask for a player's icon (answered with `S2C::Icon`).
+    WantIcon(u8),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum S2C {
     Welcome { id: u8, team: u8, seed: u64, map: u8, feed_id: u32, tick: u32 },
     Snap(Snapshot),
-    Roster(Vec<RosterEntry>),
+    /// The roster, `ROSTER_PART` entries at a time: `at` is the index of
+    /// the first entry here, `total` how many there are in all.
+    Roster { at: u8, total: u8, entries: Vec<RosterEntry> },
     Reject(String),
+    /// Chat lines the client has not acknowledged yet, oldest first.
+    Chat(Vec<ChatLine>),
+    /// Who wears an icon: (player id, icon hash). Anyone absent has none.
+    Icons(Vec<(u8, u32)>),
+    Icon { id: u8, hash: u32, rgba: Vec<u8> },
     /// Rounds won by each team since the server started, and the most
     /// recent finished rounds, oldest first.
     Rounds { wins: [u16; 2], rounds: Vec<RoundResult> },
@@ -167,6 +228,22 @@ pub enum Fx {
     Boom { pos: [f32; 3] },
     CrateBreak { pos: [f32; 3] },
     Throw { who: u8 },
+    /// A melee swing, and whether it landed.
+    Swing { who: u8, hit: bool },
+}
+
+/// One line of chat. `seq` counts up across the whole server.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ChatLine {
+    pub seq: u32,
+    /// Who said it, or `SPECTATOR_ID` for a notice from the server.
+    pub from: u8,
+    /// The speaker's side when they said it.
+    pub team: u8,
+    /// Said to everyone, rather than to the speaker's side only.
+    pub all: bool,
+    pub name: String,
+    pub text: String,
 }
 
 /// Reliable: resent every snapshot until the client acknowledges the id.
@@ -232,6 +309,8 @@ pub struct RosterEntry {
     pub total: Totals,
     /// Look of the soldier: index into `sim::SKINS`.
     pub skin: u8,
+    /// Finish on the primary and the sidearm: index into `sim::WEAPON_SKINS`.
+    pub wskin: [u8; 2],
 }
 
 /// What a player has done on one server, under one name.

@@ -6,10 +6,12 @@ mod audio;
 mod fx;
 mod gfx;
 mod hud;
+mod ident;
 mod menu;
 mod net;
 mod scene;
 mod ui;
+mod update;
 
 use audio::{Audio, Music, Scene, Sfx};
 use ferrite_shared::glam::{vec3, Mat4, Vec3};
@@ -22,6 +24,20 @@ use net::Net;
 use scene::PlayerView;
 use std::collections::VecDeque;
 use std::net::ToSocketAddrs;
+
+/// True while the chat box has the keyboard: the game's own keys are
+/// ignored until it closes.
+static TYPING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn typing() -> bool {
+    TYPING.load(std::sync::atomic::Ordering::Relaxed)
+}
+fn pressed(k: mq::KeyCode) -> bool {
+    !typing() && mq::is_key_pressed(k)
+}
+fn down(k: mq::KeyCode) -> bool {
+    !typing() && mq::is_key_down(k)
+}
 
 pub struct Args {
     connect: Option<String>,
@@ -68,6 +84,19 @@ pub struct Args {
     shot_dead: bool,
     /// Verification aid: launcher page to open on.
     menu_page: u8,
+    /// Verification aids: freeze the first-person melee strike here; say
+    /// this in chat a moment into a scripted run; wear this built-in icon;
+    /// take the picture while the killcam is playing.
+    vm_melee: Option<f32>,
+    say: Option<String>,
+    icon: Option<u8>,
+    shot_killcam: bool,
+    /// Verification aid: the scripted player heads for the front line.
+    seek: bool,
+    /// Do not look for a newer release; and, for trying the updater out,
+    /// a version to take this build for.
+    no_update: bool,
+    pretend_version: Option<String>,
 }
 
 fn parse_args() -> Args {
@@ -105,6 +134,13 @@ fn parse_args() -> Args {
         no_music: false,
         shot_dead: false,
         menu_page: 0,
+        vm_melee: None,
+        say: None,
+        icon: None,
+        shot_killcam: false,
+        seek: false,
+        no_update: false,
+        pretend_version: None,
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -190,6 +226,23 @@ fn parse_args() -> Args {
                 used = 1;
             }
             "--vm-reload" => a.vm_reload = val.parse().ok(),
+            "--vm-melee" => a.vm_melee = val.parse().ok(),
+            "--say" => a.say = Some(val),
+            "--icon" => a.icon = val.parse().ok(),
+            "--shot-killcam" => {
+                a.shot_killcam = true;
+                used = 1;
+            }
+            "--seek" => {
+                a.seek = true;
+                used = 1;
+            }
+            "--no-update" => {
+                a.no_update = true;
+                used = 1;
+            }
+            "--pretend-version" => a.pretend_version = Some(val),
+            "--update" => used = 1, // handled before the window opens
             "--shadows" => {
                 a.shadows = match val.as_str() {
                     "off" | "0" => 0,
@@ -207,7 +260,7 @@ fn parse_args() -> Args {
             }
             "--fullscreen" => used = 1,
             "-h" | "--help" => {
-                println!("ferrite [--connect host[:port]] [--host] [--team ember|cobalt|auto] [--name N] [--map NAME] [--no-rotate] [--lobby 30] [--bots 12] [--max-bots N] [--port 27500] [--seed N] [--tickets 250] [--difficulty recruit|regular|veteran|elite]\n        [--volume 0.7] [--no-music] [--shadows high|low|off] [--fullscreen] [--spectate] [--auto] [--shot file.png --shot-at SECS] [--quit-at SECS]");
+                println!("ferrite [--connect host[:port]] [--host] [--team ember|cobalt|auto] [--name N] [--map NAME] [--no-rotate] [--lobby 30] [--bots 12] [--max-bots N] [--port 27500] [--seed N] [--tickets 250] [--difficulty recruit|regular|veteran|elite]\n        [--volume 0.7] [--no-music] [--shadows high|low|off] [--fullscreen] [--update] [--no-update] [--spectate] [--auto] [--shot file.png --shot-at SECS] [--quit-at SECS]");
                 std::process::exit(0);
             }
             other => {
@@ -221,6 +274,12 @@ fn parse_args() -> Args {
 }
 
 fn window_conf() -> mq::Conf {
+    // `ferrite --update`: update from the command line, no window at all.
+    let argv: Vec<String> = std::env::args().collect();
+    if argv.iter().any(|a| a == "--update") {
+        let pretend = argv.iter().position(|a| a == "--pretend-version").and_then(|i| argv.get(i + 1));
+        std::process::exit(update::run_cli(pretend.map(|s| s.as_str())));
+    }
     mq::Conf {
         window_title: "FERRITE".to_string(),
         window_width: 1280,
@@ -228,6 +287,12 @@ fn window_conf() -> mq::Conf {
         fullscreen: std::env::args().any(|a| a == "--fullscreen"),
         sample_count: 4,
         high_dpi: false,
+        // The FERRITE mark, for the title bar and the taskbar.
+        icon: Some(macroquad::miniquad::conf::Icon {
+            small: *include_bytes!("../assets/icon-16.rgba"),
+            medium: *include_bytes!("../assets/icon-32.rgba"),
+            big: *include_bytes!("../assets/icon-64.rgba"),
+        }),
         ..Default::default()
     }
 }
@@ -240,7 +305,43 @@ pub struct KillLine {
     pub weapon: &'static str,
     pub head: bool,
     pub mine: bool,
+    /// A person killed or was killed (not one bot shooting another).
+    pub human: bool,
+    pub kicon: Option<mq::Texture2D>,
+    pub vicon: Option<mq::Texture2D>,
     pub at: f64,
+}
+
+/// A line in the chat log.
+pub struct ChatMsg {
+    pub team: u8,
+    /// Said to everyone, not just the speaker's side.
+    pub all: bool,
+    /// A notice from the server rather than something a player said.
+    pub system: bool,
+    pub name: String,
+    pub text: String,
+    pub icon: Option<mq::Texture2D>,
+    pub at: f64,
+}
+
+/// The killcam: the last seconds before our death, replayed through the
+/// eyes of whoever did it, out of the snapshots we already have.
+pub struct KillCam {
+    pub killer: u8,
+    pub weapon: u8,
+    /// Server tick and local time of the death.
+    death_tick: u32,
+    death_now: f64,
+    /// Local time the replay began; the tick-times it runs between.
+    start_now: f64,
+    from: f64,
+    to: f64,
+    /// Tick-time being shown, and up to where effects have been replayed.
+    pub rt: f64,
+    fx_tick: f64,
+    /// The killer's aim, eased, for the sight picture.
+    ads: f32,
 }
 
 #[derive(Default)]
@@ -384,9 +485,42 @@ pub struct App {
     pub stats: Stats,
     pub hosting: Option<String>,
     pub start: f64,
+    /// Chat: the log, and the line being typed.
+    pub chat: Vec<ChatMsg>,
+    pub chat_open: bool,
+    pub chat_team: bool,
+    pub chat_buf: String,
+    /// Icons of the players here: id -> (hash, picture).
+    pub icons: std::collections::HashMap<u8, (u32, mq::Texture2D)>,
+    icon_ask: f64,
+    /// Finish chosen for each weapon id.
+    pub wskins: [u8; 20],
+    melee_latch: bool,
+    /// Scripted runs: walk to the nearest point we do not hold.
+    seek: bool,
+    rmelee: [f32; 64],
+    /// A death waiting for its killcam (tick, time, killer, weapon), and
+    /// the killcam once it is playing.
+    kc_armed: Option<(u32, f64, u8, u8)>,
+    pub kc: Option<KillCam>,
 }
 
 impl App {
+    pub fn icon(&self, id: u8) -> Option<&mq::Texture2D> {
+        self.icons.get(&id).map(|i| &i.1)
+    }
+    pub fn is_bot(&self, id: u8) -> bool {
+        self.net.roster.iter().find(|r| r.id == id).map_or(true, |r| r.bot)
+    }
+    /// Finish worn by a player's primary, or their sidearm.
+    pub fn wskin_of(&self, id: u8, side: bool) -> u8 {
+        self.net.roster.iter().find(|r| r.id == id).map_or(0, |r| r.wskin[side as usize])
+    }
+    /// Finishes asked for at the next deploy: primary, sidearm.
+    pub fn wskin_choice(&self) -> [u8; 2] {
+        let (_, prim, side) = self.loadout();
+        [self.wskins[prim as usize % 20], self.wskins[side as usize % 20]]
+    }
     pub fn name(&self, id: u8) -> String {
         self.net.roster.iter().find(|r| r.id == id).map_or_else(|| "?".to_string(), |r| r.name.clone())
     }
@@ -410,13 +544,21 @@ impl App {
     }
     /// The loadout panel is on screen and takes clicks.
     pub fn loadout_shown(&self) -> bool {
-        self.demo_panel || (!self.spectator && !self.auto && !self.team_pick && (self.lobby || (self.captured && (!self.alive || self.loadout_open))))
+        self.demo_panel || (!self.spectator && !self.auto && !self.team_pick && (self.lobby || (self.captured && ((!self.alive && self.kc.is_none()) || self.loadout_open))))
     }
     /// Choose row `row` of column `col` (0 class, 1 primary, 2 sidearm);
-    /// column 3 moves on to the next look.
+    /// column 3 moves on to the next look, 4 and 5 to the next finish for
+    /// the primary and the sidearm.
     pub fn pick_loadout(&mut self, col: u8, row: u8) {
         let prims = sim::kit(self.kit_choice).prims;
         match col {
+            4 | 5 => {
+                let (_, prim, side) = self.loadout();
+                let wid = if col == 4 { prim } else { side };
+                let fits = sim::weapon_skins_for(wid);
+                let at = fits.iter().position(|&s| s == self.wskins[wid as usize % 20]).unwrap_or(0);
+                self.wskins[wid as usize % 20] = fits[(at + 1) % fits.len()];
+            }
             0 => self.kit_choice = row.min(2),
             1 => self.prims[self.kit_choice as usize % 3] = prims[row as usize % prims.len()],
             3 => self.skin_choice = (self.skin_choice + 1) % sim::SKINS.len() as u8,
@@ -453,11 +595,16 @@ impl App {
         }
     }
 
-    fn handle_fx(&mut self, f: &Fx, listener: Vec3, now: f64) {
+    /// `replay`: the effect is being shown again by the killcam, so it is
+    /// only looked at and listened to - our own shots included.
+    fn handle_fx(&mut self, f: &Fx, listener: Vec3, now: f64, replay: bool) {
+        if replay && !matches!(f, Fx::Shot { .. } | Fx::Boom { .. } | Fx::Swing { .. }) {
+            return;
+        }
         match *f {
             Fx::Shot { who, from, to, hit } => {
                 let (from, to) = (Vec3::from(from), Vec3::from(to));
-                let mine = who == self.my_id && !self.spectator;
+                let mine = who == self.my_id && !self.spectator && !replay;
                 let team = self.team(who);
                 if !mine {
                     let len = (to - from).length();
@@ -467,7 +614,7 @@ impl App {
                     let i = who as usize % 64;
                     self.rfire[i] = 1.0;
                     // A round that passes close by cracks in your ear.
-                    if team != self.my_team && !self.spectator && self.alive && len > 8.0 {
+                    if team != self.my_team && !self.spectator && self.alive && len > 8.0 && !replay {
                         let t = (listener - from).dot(d).clamp(0.0, len);
                         let near = from + d * t;
                         if t > 6.0 && (near - listener).length() < 2.4 {
@@ -480,7 +627,11 @@ impl App {
                     }
                     if now - self.last_shot_snd[i] > 0.03 {
                         self.last_shot_snd[i] = now;
-                        self.fx.muzzle(from + d * 0.9 - vec3(0.0, 0.14, 0.0));
+                        // kc_eye: the killcam is looking down this very barrel.
+                        let kc_eye = replay && self.kc.as_ref().is_some_and(|k| k.killer == who);
+                        if !kc_eye {
+                            self.fx.muzzle(from + d * 0.9 - vec3(0.0, 0.14, 0.0));
+                        }
                         let side = self.views.iter().any(|v| v.id == who && v.flags & flag::SIDEARM != 0);
                         let s = audio::shot_sfx(self.wid_of(who, side));
                         self.audio.play_at(s, from, listener, 0.55, 28.0);
@@ -529,6 +680,16 @@ impl App {
                 let p = self.last_pos[who as usize % 64];
                 self.audio.play_at(Sfx::Throw, p, listener, 0.5, 14.0);
             }
+            Fx::Swing { who, hit } => {
+                // Our own swing was heard when we made it.
+                if who != self.my_id || self.spectator || replay {
+                    let p = self.last_pos[who as usize % 64];
+                    self.audio.play_at(Sfx::Throw, p, listener, 0.55, 12.0);
+                    if hit {
+                        self.audio.play_at(Sfx::Crate, p, listener, 0.5, 12.0);
+                    }
+                }
+            }
         }
     }
 
@@ -558,6 +719,12 @@ impl App {
                 }
                 if victim == self.my_id {
                     self.stats.my_deaths += 1;
+                    // Killed by someone else: their view of it is replayed.
+                    if !self.spectator && killer != self.my_id {
+                        let tick = self.net.latest().map_or(0, |s| s.tick);
+                        self.kc_armed = Some((tick, now, killer, weapon));
+                        self.kc = None;
+                    }
                 }
                 let weapon = sim::weapon_def(weapon).name;
                 self.feed.push(KillLine {
@@ -567,11 +734,16 @@ impl App {
                     vteam,
                     weapon,
                     head,
-                    mine: killer == self.my_id || victim == self.my_id,
+                    mine: (killer == self.my_id || victim == self.my_id) && !self.spectator,
+                    human: !self.is_bot(killer) || !self.is_bot(victim),
+                    kicon: self.icon(killer).cloned(),
+                    vicon: self.icon(victim).cloned(),
                     at: now,
                 });
-                if self.feed.len() > 6 {
-                    self.feed.remove(0);
+                // Room for a few lines: bots shooting bots go first.
+                if self.feed.len() > 7 {
+                    let drop = self.feed.iter().position(|k| !k.human).unwrap_or(0);
+                    self.feed.remove(drop);
                 }
             }
             Feed::Capture { point, team } => {
@@ -651,6 +823,17 @@ impl App {
 
     fn build_cmd(&mut self, now: f64) -> Cmd {
         self.seq += 1;
+        if self.auto && self.seek && self.alive {
+            // Face the first point along the line that is not ours yet.
+            let order: Vec<usize> = if self.my_team == 0 { (0..5).collect() } else { (0..5).rev().collect() };
+            let goal = self.net.latest().and_then(|s| order.into_iter().find(|&k| s.points[k].owner != self.my_team));
+            if let Some(k) = goal {
+                let to = self.world.points[k] - self.st.pos;
+                if to.x * to.x + to.z * to.z > 9.0 {
+                    self.yaw = to.x.atan2(to.z);
+                }
+            }
+        }
         let (yaw, pitch) = self.aim();
         let mut c = Cmd { seq: self.seq, yaw, pitch, interp: self.net.render_tick(now), ..Default::default() };
         if self.auto {
@@ -681,14 +864,17 @@ impl App {
             if t % 6.0 < 0.02 {
                 c.buttons |= btn::SWAP;
             }
+            if t % 4.0 > 3.97 {
+                c.more |= btn2::MELEE;
+            }
         } else if self.captured {
-            let k = |a, b| mq::is_key_down(a) || mq::is_key_down(b);
+            let k = |a, b| down(a) || down(b);
             c.mz = k(mq::KeyCode::W, mq::KeyCode::Up) as i8 - k(mq::KeyCode::S, mq::KeyCode::Down) as i8;
             c.mx = k(mq::KeyCode::D, mq::KeyCode::Right) as i8 - k(mq::KeyCode::A, mq::KeyCode::Left) as i8;
-            if mq::is_key_down(mq::KeyCode::Space) || self.jump_latch {
+            if down(mq::KeyCode::Space) || self.jump_latch {
                 c.buttons |= btn::JUMP;
             }
-            if mq::is_key_down(mq::KeyCode::LeftShift) {
+            if down(mq::KeyCode::LeftShift) {
                 c.buttons |= btn::SPRINT;
             }
             if mq::is_mouse_button_down(mq::MouseButton::Left) && !self.loadout_open {
@@ -709,7 +895,11 @@ impl App {
             if self.swap_latch {
                 c.buttons |= btn::SWAP;
             }
+            if self.melee_latch {
+                c.more |= btn2::MELEE;
+            }
         }
+        self.melee_latch = false;
         self.jump_latch = false;
         self.reload_latch = false;
         self.gren_latch = false;
@@ -781,6 +971,9 @@ impl App {
             if out.threw {
                 self.audio.play(Sfx::Throw, 0.6);
             }
+            if out.melee {
+                self.audio.play(Sfx::Throw, 0.7);
+            }
             if out.landed {
                 self.audio.play(Sfx::Step, 0.7);
                 self.step_y -= 0.12;
@@ -796,7 +989,7 @@ impl App {
         // Each command rides in three consecutive packets.
         let n = self.pending.len();
         let recent: Vec<Cmd> = self.pending.iter().skip(n.saturating_sub(3)).copied().collect();
-        self.net.send_cmds(&recent, self.loadout(), self.skin_choice, now);
+        self.net.send_cmds(&recent, self.loadout(), self.skin_choice, self.wskin_choice(), now);
     }
 }
 
@@ -820,6 +1013,7 @@ async fn main() {
     // Scripted and command-line launches go straight into a match.
     let direct = args.connect.is_some() || args.host || args.auto || args.spectate || args.shot.is_some() || args.quit_at.is_some();
     let art = ui::init();
+    update::clean_old(); // what the last update left behind
     menu::Menu::apply_saved_audio_device();
     let scripted = args.auto || args.spectate || args.shot.is_some() || args.quit_at.is_some();
     if direct {
@@ -833,7 +1027,18 @@ async fn main() {
         let mut music = if scripted || args.no_music || args.volume <= 0.0 { Music::silent() } else { Music::new(0.5) };
         let mut volume = args.volume;
         let prefs = menu::Prefs { shadows: args.shadows, ..Default::default() };
-        let (_, msg) = play(&args, &args.name, args.team, choice, &mut sens, &mut loadout, &mut volume, &mut music, &art, &prefs).await;
+        // Who we are comes from the settings file even on a direct launch.
+        // A scripted run reads it but leaves the file alone.
+        let saved = menu::Menu::load(&args.name, args.port, args.per_team);
+        if !scripted {
+            saved.persist();
+        }
+        let icon = match args.icon {
+            Some(k) => ident::preset(k, k),
+            None => saved.icon_rgba(),
+        };
+        let mut wskins = saved.wskins;
+        let (_, msg) = play(&args, &args.name, args.team, choice, &mut sens, &mut loadout, &mut volume, &mut music, &art, &prefs, saved.uuid, &icon, &mut wskins).await;
         if let Some(m) = msg {
             eprintln!("{m}");
             for _ in 0..240 {
@@ -845,6 +1050,15 @@ async fn main() {
         return;
     }
     let mut menu = menu::Menu::load(&args.name, args.port, args.per_team);
+    if args.menu_shot.is_none() {
+        menu.persist(); // a first launch has just been given its id
+    }
+    if let Some(k) = args.icon {
+        menu.icon_kind = k + 1;
+        menu.icon_colour = k;
+    }
+    let look = menu.updates && !args.no_update && (args.menu_shot.is_none() || args.pretend_version.is_some());
+    menu.updater = update::Updater::new(look, args.pretend_version.as_deref());
     if let Some(m) = args.map {
         menu.map = m;
     }
@@ -870,7 +1084,8 @@ async fn main() {
         };
         let name = menu.name();
         let prefs = menu.prefs.clone();
-        let (joined, msg) = play(&args, &name, menu.team, choice, &mut menu.sens, &mut menu.loadout, &mut menu.volume, &mut music, &art, &prefs).await;
+        let (uuid, icon) = (menu.uuid, menu.icon_rgba());
+        let (joined, msg) = play(&args, &name, menu.team, choice, &mut menu.sens, &mut menu.loadout, &mut menu.volume, &mut music, &art, &prefs, uuid, &icon, &mut menu.wskins).await;
         if music.available() {
             menu.music_vol = music.vol;
             menu.music_in_match = music.in_match;
@@ -886,7 +1101,7 @@ async fn main() {
 /// Run one match. Returns whether we got into the match, and a message for
 /// the home screen if it ended for a reason other than the player leaving.
 #[allow(clippy::too_many_arguments)]
-async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mut f32, loadout: &mut [u8; 6], volume: &mut f32, music: &mut Music, art: &ui::Art, prefs: &menu::Prefs) -> (bool, Option<String>) {
+async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mut f32, loadout: &mut [u8; 6], volume: &mut f32, music: &mut Music, art: &ui::Art, prefs: &menu::Prefs, uuid: [u8; 16], icon: &[u8], wskins: &mut [u8; 20]) -> (bool, Option<String>) {
     let mut server = None;
     let addr = match choice {
         menu::Choice::Join(a) => {
@@ -936,7 +1151,7 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         mq::next_frame().await;
     }
 
-    let (net, welcome) = match Net::connect(addr, name, args.spectate, team) {
+    let (net, welcome) = match Net::connect(addr, name, args.spectate, team, uuid, icon) {
         Ok(x) => x,
         Err(e) => return (false, Some(format!("Could not join {addr}: {e}"))),
     };
@@ -1064,6 +1279,18 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         stats: Stats::default(),
         hosting,
         start,
+        chat: Vec::new(),
+        chat_open: false,
+        chat_team: false,
+        chat_buf: String::new(),
+        icons: std::collections::HashMap::new(),
+        icon_ask: 0.0,
+        wskins: *wskins,
+        melee_latch: false,
+        seek: args.seek,
+        rmelee: [0.0; 64],
+        kc_armed: None,
+        kc: None,
     };
     app.team_pick = args.pick_team;
     app.banner = Some((map_name.to_string(), scene::NEUTRAL_COL, start + 0.5));
@@ -1079,6 +1306,8 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
     let mut lobby_sent = 0.0f64;
     let mut sway = (0.0f32, 0.0f32);
     let mut ended: Option<String> = None;
+    let mut chat_repeat = 0.0f64;
+    let mut said = false;
 
     loop {
         let now = mq::get_time();
@@ -1099,11 +1328,58 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         music.update(if app.lobby { Scene::Lobby } else { Scene::Match }, dt).await;
         app.now_playing = music.now_playing().map(|t| t.to_string());
 
+        // ---- chat: while the box is open it has the keyboard ----
+        TYPING.store(app.chat_open, std::sync::atomic::Ordering::Relaxed);
+        {
+            use macroquad::input::{is_key_down as kd, is_key_pressed as kp};
+            use mq::KeyCode as K;
+            if app.chat_open {
+                while let Some(c) = mq::get_char_pressed() {
+                    // (some systems report arrow keys as private-use characters)
+                    if !c.is_control() && !(0xE000..=0xF8FF).contains(&(c as u32)) && app.chat_buf.chars().count() < CHAT_MAX {
+                        app.chat_buf.push(c);
+                    }
+                }
+                if kp(K::Backspace) {
+                    app.chat_buf.pop();
+                    chat_repeat = now + 0.4;
+                } else if kd(K::Backspace) && now > chat_repeat {
+                    app.chat_buf.pop();
+                    chat_repeat = now + 0.04;
+                }
+                if kp(K::Tab) {
+                    app.chat_team = !app.chat_team;
+                }
+                if kp(K::Enter) || kp(K::KpEnter) {
+                    let text = app.chat_buf.trim().to_string();
+                    if !text.is_empty() {
+                        app.net.say(app.chat_team, &text);
+                    }
+                    app.chat_open = false;
+                    app.chat_buf.clear();
+                } else if kp(K::Escape) {
+                    app.chat_open = false;
+                    app.chat_buf.clear();
+                }
+            } else if !app.spectator && !app.auto && !app.team_pick && (kp(K::Enter) || kp(K::KpEnter) || kp(K::Y) || kp(K::U)) {
+                app.chat_open = true;
+                app.chat_team = kp(K::U);
+                app.chat_buf.clear();
+                while mq::get_char_pressed().is_some() {}
+                // The key that opened the box is not also a game key.
+                TYPING.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        if let (false, true, Some(text)) = (said, app.auto && now - start > 2.0, &args.say) {
+            said = true;
+            app.net.say(false, text);
+        }
+
         // ---- input: mouse capture, look, edge-triggered keys ----
         // Team picker: M opens it; click a side, or M / Esc to cancel.
         let mut picked = false;
         if app.team_pick {
-            if mq::is_key_pressed(mq::KeyCode::M) || mq::is_key_pressed(mq::KeyCode::Escape) {
+            if pressed(mq::KeyCode::M) || pressed(mq::KeyCode::Escape) {
                 app.team_pick = false;
                 picked = true; // swallow this Esc
             } else if mq::is_mouse_button_pressed(mq::MouseButton::Left) {
@@ -1119,7 +1395,7 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
                 }
                 picked = true; // this click chose a team, it does not deploy
             }
-        } else if mq::is_key_pressed(mq::KeyCode::M) && !app.spectator && !app.auto {
+        } else if pressed(mq::KeyCode::M) && !app.spectator && !app.auto {
             app.team_pick = true;
             app.captured = false;
         }
@@ -1127,10 +1403,10 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         // row, or use the number keys.
         if !app.alive {
             app.loadout_open = false;
-        } else if app.loadout_open && mq::is_key_pressed(mq::KeyCode::Escape) {
+        } else if app.loadout_open && pressed(mq::KeyCode::Escape) {
             app.loadout_open = false;
             picked = true; // swallow this Esc
-        } else if mq::is_key_pressed(mq::KeyCode::L) && app.captured && !app.spectator && !app.auto && !app.team_pick {
+        } else if pressed(mq::KeyCode::L) && app.captured && !app.spectator && !app.auto && !app.team_pick {
             app.loadout_open = !app.loadout_open;
         }
         // Lobby: vote for a map, say when you are ready.
@@ -1146,7 +1422,7 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         }
         if app.lobby && !app.spectator && !app.team_pick {
             let before = (app.vote, app.ready);
-            if mq::is_key_pressed(mq::KeyCode::Enter) {
+            if pressed(mq::KeyCode::R) {
                 app.ready = !app.ready;
             }
             if !picked && mq::is_mouse_button_pressed(mq::MouseButton::Left) {
@@ -1175,7 +1451,8 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         }
         if app.loadout_shown() && !picked && mq::is_mouse_button_pressed(mq::MouseButton::Left) {
             let (mx, my) = mq::mouse_position();
-            for (c, r, x, y, w, h) in hud::loadout_rects(mq::screen_width(), mq::screen_height(), app.kit_choice) {
+            let (kit, prim, side) = app.loadout();
+            for (c, r, x, y, w, h) in hud::loadout_rects(mq::screen_width(), mq::screen_height(), kit, prim, side) {
                 if mx >= x && mx < x + w && my >= y && my < y + h {
                     app.pick_loadout(c, r);
                     picked = true;
@@ -1184,15 +1461,15 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         }
         let mut leave = false;
         if picked || app.team_pick {
-        } else if mq::is_key_pressed(mq::KeyCode::Escape) && app.captured {
+        } else if pressed(mq::KeyCode::Escape) && app.captured {
             app.captured = false;
             app.pause_settings = false;
         } else if app.paused() {
             // Pause overlay: its buttons, or the keys it lists.
             let mut act = None;
-            if mq::is_key_pressed(mq::KeyCode::Escape) {
+            if pressed(mq::KeyCode::Escape) {
                 act = Some(if app.pause_settings { 18 } else { 0 });
-            } else if mq::is_key_pressed(mq::KeyCode::L) {
+            } else if pressed(mq::KeyCode::L) {
                 act = Some(1);
             } else if mq::is_mouse_button_pressed(mq::MouseButton::Left) {
                 let (mx, my) = mq::mouse_position();
@@ -1239,7 +1516,7 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
             mq::show_mouse(!grabbed);
             app.last_mouse = mq::mouse_position();
         }
-        if leave || !app.team_pick && !picked && (!app.captured || app.spectator) && (mq::is_key_pressed(mq::KeyCode::Q) || (app.spectator && mq::is_key_pressed(mq::KeyCode::Escape))) {
+        if leave || !app.team_pick && !picked && (!app.captured || app.spectator) && (pressed(mq::KeyCode::Q) || (app.spectator && pressed(mq::KeyCode::Escape))) {
             break;
         }
         let m = mq::mouse_position();
@@ -1252,10 +1529,11 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
             app.pitch = (app.pitch - mdy * s).clamp(-1.5, 1.5);
             sway.0 = (sway.0 - mdx * 0.00004).clamp(-0.02, 0.02);
             sway.1 = (sway.1 + mdy * 0.00004).clamp(-0.02, 0.02);
-            app.jump_latch |= mq::is_key_pressed(mq::KeyCode::Space);
-            app.reload_latch |= mq::is_key_pressed(mq::KeyCode::R);
-            app.gren_latch |= mq::is_key_pressed(mq::KeyCode::G);
-            app.swap_latch |= mq::is_key_pressed(mq::KeyCode::Q) || mq::is_key_pressed(mq::KeyCode::F) || mq::mouse_wheel().1 != 0.0;
+            app.jump_latch |= pressed(mq::KeyCode::Space);
+            app.reload_latch |= pressed(mq::KeyCode::R);
+            app.gren_latch |= pressed(mq::KeyCode::G);
+            app.swap_latch |= pressed(mq::KeyCode::Q) || pressed(mq::KeyCode::F) || mq::mouse_wheel().1 != 0.0;
+            app.melee_latch |= pressed(mq::KeyCode::V) || mq::is_mouse_button_pressed(mq::MouseButton::Middle);
         }
         if app.spectator && mq::is_mouse_button_pressed(mq::MouseButton::Left) {
             app.spec_since = -100.0;
@@ -1263,13 +1541,23 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         sway.0 *= 1.0 - (10.0 * dt).min(1.0);
         sway.1 *= 1.0 - (10.0 * dt).min(1.0);
         // 1-3 class, 4 next primary, 5 next sidearm, 6 next look.
-        if mq::is_key_pressed(mq::KeyCode::Key6) && !app.spectator {
+        if pressed(mq::KeyCode::Key6) && !app.spectator {
             app.pick_loadout(3, 0);
             app.sub_banner = Some((format!("LOOK: {}", sim::SKINS[app.skin_choice as usize % sim::SKINS.len()].0), now));
         }
         use mq::KeyCode as K;
+        // 7 / 8: next finish for the primary / sidearm, where there is one.
+        for (col, key) in [(4u8, K::Key7), (5, K::Key8)] {
+            let (_, prim, side) = app.loadout();
+            let wid = if col == 4 { prim } else { side };
+            if pressed(key) && !app.spectator && sim::weapon_skins_for(wid).len() > 1 {
+                app.pick_loadout(col, 0);
+                let fin = sim::weapon_skin(app.wskins[wid as usize % 20]).name;
+                app.sub_banner = Some((format!("{} FINISH: {}", sim::weapon_def(wid).name.to_uppercase(), fin), now));
+            }
+        }
         for (k, key) in [K::Key1, K::Key2, K::Key3, K::Key4, K::Key5].into_iter().enumerate() {
-            if mq::is_key_pressed(key) && !app.spectator {
+            if pressed(key) && !app.spectator {
                 let (kit, prim, side) = app.loadout();
                 match k {
                     3 => {
@@ -1287,7 +1575,7 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
                 app.sub_banner = Some((format!("NEXT DEPLOY: {} - {} - {}", sim::kit(kit).name, sim::weapon_def(prim).name, sim::weapon_def(side).name), now));
             }
         }
-        if mq::is_key_pressed(mq::KeyCode::T) && app.alive && !app.spectator {
+        if pressed(mq::KeyCode::T) && app.alive && !app.spectator {
             // Cycle the sight on the weapon in hand.
             let w = sim::wid(&app.st);
             let opts = scene::sights_for(w);
@@ -1297,13 +1585,13 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
             app.sub_banner = Some((format!("{}  -  {}", sim::weapon_def(w).name, scene::SIGHT_NAMES[next as usize]), now));
             app.audio.play(Sfx::Step, 0.5);
         }
-        if mq::is_key_pressed(mq::KeyCode::F3) {
+        if pressed(mq::KeyCode::F3) {
             app.show_net = !app.show_net;
         }
-        if mq::is_key_pressed(mq::KeyCode::Minus) {
+        if pressed(mq::KeyCode::Minus) {
             app.sens = (app.sens * 0.9).max(0.0004);
         }
-        if mq::is_key_pressed(mq::KeyCode::Equal) {
+        if pressed(mq::KeyCode::Equal) {
             app.sens = (app.sens * 1.1).min(0.01);
         }
 
@@ -1330,13 +1618,19 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
                 app.fx = fx::Fx::new();
                 app.corpses.clear();
                 app.pending.clear();
+                app.kc = None;
+                app.kc_armed = None;
             }
         }
         let fresh = std::mem::take(&mut app.net.fresh);
         for s in &fresh {
             app.dmask = s.dmask;
             for f in &s.fx {
-                app.handle_fx(f, listener, now);
+                // While the killcam plays, what is seen and heard is the
+                // past; the present is only kept track of.
+                if app.kc.is_none() || matches!(f, Fx::Hit { .. }) {
+                    app.handle_fx(f, listener, now, false);
+                }
             }
             for (id, f) in &s.feed {
                 if *id == app.net.ack_feed + 1 {
@@ -1347,6 +1641,31 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         }
         if let Some(s) = fresh.last() {
             app.reconcile(s);
+        }
+        // Chat that has arrived, and the icons of whoever is here.
+        for (id, hash, px) in std::mem::take(&mut app.net.icon_in) {
+            if let Some(t) = ident::texture(&px) {
+                app.icons.insert(id, (hash, t));
+            }
+        }
+        let listed = app.net.icon_ids.clone();
+        app.icons.retain(|id, v| listed.iter().any(|(i, h)| i == id && *h == v.0));
+        if now - app.icon_ask > 0.15 {
+            if let Some((id, _)) = listed.iter().find(|(i, h)| app.icons.get(i).map(|v| v.0) != Some(*h)) {
+                app.net.want_icon(*id);
+                app.icon_ask = now;
+            }
+        }
+        for l in std::mem::take(&mut app.net.chat_in) {
+            let system = l.from == SPECTATOR_ID;
+            let icon = app.icon(l.from).cloned();
+            app.chat.push(ChatMsg { team: l.team, all: l.all, system, name: l.name, text: l.text, icon, at: now });
+            if !system {
+                app.audio.play(Sfx::Step, 0.4);
+            }
+        }
+        if app.chat.len() > 60 {
+            app.chat.drain(..20);
         }
         // The roster is the authority on which side we are on.
         if !app.spectator {
@@ -1420,12 +1739,52 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
             }
         }
 
+        // ---- killcam ----
+        // A moment after we fall, the seconds before it are played back as
+        // the killer saw them. It ends with the redeploy, or on a click.
+        if app.alive || app.lobby || app.spectator {
+            app.kc = None;
+            app.kc_armed = None;
+        }
+        if let Some((tick, at, killer, weapon)) = app.kc_armed {
+            if now - at > 0.8 {
+                app.kc_armed = None;
+                // From where the killer is first on record, up to 3.2 s back.
+                let from = tick as f64 - 3.2 * 60.0;
+                let first = app.net.snaps.iter().find(|s| s.tick as f64 >= from && s.players.iter().any(|p| p.id == killer)).map(|s| s.tick as f64);
+                if let Some(first) = first.filter(|f| *f < tick as f64 - 40.0) {
+                    app.kc = Some(KillCam { killer, weapon, death_tick: tick, death_now: at, start_now: now, from: first, to: tick as f64 + 20.0, rt: first, fx_tick: first, ads: 0.0 });
+                    app.last_seen = [-10.0; 64]; // everyone snaps to where they were
+                }
+            }
+        }
+        let skip = !app.auto && !picked && (macroquad::input::is_key_pressed(mq::KeyCode::Space) && !typing() || mq::is_mouse_button_pressed(mq::MouseButton::Left));
+        let mut replayed: Vec<Fx> = Vec::new();
+        if let Some(k) = app.kc.as_mut() {
+            k.rt = k.from + (now - k.start_now) * 60.0;
+            if k.rt > k.to || skip {
+                app.kc = None;
+                app.last_seen = [-10.0; 64];
+            } else {
+                // Shots and explosions from those seconds, as their moment comes round.
+                for s in app.net.snaps.iter().filter(|s| (s.tick as f64) > k.fx_tick && (s.tick as f64) <= k.rt) {
+                    replayed.extend(s.fx.iter().copied());
+                }
+                k.fx_tick = k.rt;
+            }
+        }
+        for f in &replayed {
+            app.handle_fx(f, listener, now, true);
+        }
+        let replay = app.kc.as_ref().map(|k| (k.rt, k.killer));
+
         // ---- remote players ----
-        let rt = app.net.render_tick(now);
+        let rt = replay.map_or(app.net.render_tick(now), |r| r.0);
         app.views.clear();
-        let roster: Vec<(u8, u8, u8, u8)> = app.net.roster.iter().map(|r| (r.id, r.team, r.kit, r.prim)).collect();
-        for (id, team, kit, prim) in roster {
-            if id == app.my_id && !app.spectator {
+        let roster: Vec<(u8, u8, u8, u8, [u8; 2])> = app.net.roster.iter().map(|r| (r.id, r.team, r.kit, r.prim, r.wskin)).collect();
+        for (id, team, kit, prim, wskin) in roster {
+            // (in the killcam we are one of the soldiers on screen)
+            if id == app.my_id && !app.spectator && replay.is_none() {
                 continue;
             }
             let Some(r) = app.net.remote(id, rt) else { continue };
@@ -1451,6 +1810,7 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
                 app.rair[i] += (air_t - app.rair[i]) * k(10.0);
                 app.rslide[i] += (slide_t - app.rslide[i]) * k(12.0);
                 app.rreload[i] += (reload_t - app.rreload[i]) * k(9.0);
+                app.rmelee[i] += (on(r.flags2 & flag2::MELEE != 0) - app.rmelee[i]) * k(16.0);
                 if r.hp < app.rhp[i] {
                     app.rhurt[i] = 1.0;
                 }
@@ -1461,6 +1821,7 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
                 app.rair[i] = air_t;
                 app.rslide[i] = slide_t;
                 app.rreload[i] = reload_t;
+                app.rmelee[i] = 0.0;
                 app.rhurt[i] = 0.0;
                 app.rstep[i] = 0.0;
             }
@@ -1479,7 +1840,8 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
                     if near < if enemy { 14.0 } else { 6.0 } {
                         app.audio.play_at(Sfx::Step, r.pos, listener, if enemy { 0.45 } else { 0.16 }, 6.0);
                     }
-                    if near < 40.0 {
+                    // (not under the killcam's own feet: it would fill the view)
+                    if near < 40.0 && replay.map(|r| r.1) != Some(id) {
                         app.fx.dust(r.pos, 0.5);
                     }
                 }
@@ -1498,6 +1860,8 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
                 kit,
                 gun: sim::weapon_def(prim).arch,
                 skin: app.skin_of(id),
+                wskin: wskin[(r.flags & flag::SIDEARM != 0) as usize],
+                melee: app.rmelee[i],
                 phase: app.walk[i],
                 moving: (speed / 3.0).min(1.0),
                 crouch: app.rcrouch[i],
@@ -1511,12 +1875,17 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
                 sink: 0.0,
             };
             app.last_view[i] = view;
-            app.views.push(view);
+            // The killcam looks through the killer's eyes: no body to draw.
+            if replay.map(|r| r.1) != Some(id) {
+                app.views.push(view);
+            }
         }
 
         // ---- camera ----
         let aspect = mq::screen_width() / mq::screen_height().max(1.0);
         let shake = vec3((now as f32 * 61.0).sin(), (now as f32 * 47.0).sin(), 0.0) * app.shake * 0.12;
+        // The killer's weapon, for the killcam: (weapon, sight, aim, state).
+        let mut kc_vm: Option<(u8, u8, f32, net::Remote)> = None;
         let (eye, dir) = if app.spectator {
             if now - app.spec_since > 10.0 || !app.views.iter().any(|v| v.id == app.spec_target) {
                 let firing: Vec<u8> = app.views.iter().filter(|v| v.flags & flag::FIRING != 0).map(|v| v.id).collect();
@@ -1544,6 +1913,21 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
             let kick = app.recoil * wd.recoil * 0.6;
             let (yaw, pitch) = app.aim();
             (p + vec3(0.0, app.eye + app.step_y, 0.0) + shake, sim::view_dir(yaw, pitch + kick))
+        } else if let Some((kv, kid)) = replay.and_then(|(rt, kid)| app.net.remote(kid, rt).map(|r| (r, kid))) {
+            // Killcam: the killer's eyes, their weapon, their sight picture.
+            app.dead_for += dt;
+            let wid = app.wid_of(kid, kv.flags & flag::SIDEARM != 0);
+            let sight = scene::sights_for(wid)[0];
+            let zoomed = scene::sight_fov(wid, sight) * app.base_fov / 66.0;
+            let aiming = if kv.flags & flag::ADS != 0 && kv.flags2 & flag2::RELOAD == 0 { 1.0 } else { 0.0 };
+            if let Some(k) = app.kc.as_mut() {
+                k.ads += (aiming - k.ads) * (14.0 * dt).min(1.0);
+                app.fov = app.base_fov + (zoomed - app.base_fov) * k.ads;
+                kc_vm = Some((wid, sight, k.ads, kv));
+            }
+            let crouch = app.rcrouch[kid as usize % 64];
+            let h = sim::EYE + (sim::EYE_CROUCH - sim::EYE) * crouch;
+            (kv.pos + vec3(0.0, h, 0.0), sim::view_dir(kv.yaw, kv.pitch))
         } else if let Some(v) = {
             // A moment on the spot where you fell, then follow whoever got you.
             app.dead_for += dt;
@@ -1602,8 +1986,13 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
             scene::soldier(&mut opaque, &mut alpha, &app.world, v, time, blob);
         }
         app.corpses.retain(|c| now - c.1 < 7.0);
+        // In the killcam the clock is back before we fell: no body yet.
+        let cnow = app.kc.as_ref().map_or(now, |k| k.death_now - (k.death_tick as f64 - k.rt) / 60.0);
         for (v, at) in &app.corpses {
-            let age = (now - at) as f32;
+            if *at > cnow {
+                continue;
+            }
+            let age = (cnow - at) as f32;
             let mut v = *v;
             v.fall = (age / 0.5).min(1.0);
             v.sink = ((age - 5.5) / 1.5).clamp(0.0, 1.0) * 0.7;
@@ -1620,13 +2009,15 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
             app.trail_acc = 0.0;
         }
         scene::crates(&mut opaque, &app.world, app.dmask);
-        let nades: Vec<Vec3> = app.net.latest().map_or(Vec::new(), |s| s.grenades.iter().map(|g| Vec3::from(g.pos)).collect());
+        // The world as it stands - or, in the killcam, as it stood.
+        let at_rt = replay.and_then(|(rt, _)| app.net.snaps.iter().rev().find(|s| s.tick as f64 <= rt)).or(app.net.latest());
+        let nades: Vec<Vec3> = at_rt.map_or(Vec::new(), |s| s.grenades.iter().map(|g| Vec3::from(g.pos)).collect());
         if trail {
             for p in &nades {
                 app.fx.trail(*p);
             }
         }
-        if let Some(s) = app.net.latest() {
+        if let Some(s) = at_rt {
             let owners: Vec<(u8, f32, bool)> =
                 s.points.iter().map(|p| (p.owner, p.progress as f32 / 100.0, p.n[0] > 0 && p.n[1] > 0)).collect();
             scene::beacons(&mut opaque, &mut alpha, &mut add, &app.world, &owners, time);
@@ -1674,10 +2065,47 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
                     time,
                     seq: app.shot_seq,
                     preview: None,
+                    skin: app.wskin_of(app.my_id, app.st.slot == 1),
+                    melee: args.vm_melee.unwrap_or(app.st.melee as f32 / sim::MELEE_TICKS as f32),
+                },
+            );
+        } else if let (Some((wid, ksight, kads, kv)), Some((_, kid))) = (kc_vm, replay) {
+            // The killer's weapon, posed from what the snapshots say of them.
+            let i = kid as usize % 64;
+            let kwd = sim::weapon_def(wid);
+            let speed = (app.rvel[i].0 * app.rvel[i].0 + app.rvel[i].1 * app.rvel[i].1).sqrt();
+            scene::viewmodel(
+                &mut vm_opaque,
+                &mut vm_add,
+                &scene::ViewModel {
+                    sight: ksight,
+                    kit: kwd.arch,
+                    wid,
+                    team: app.team(kid),
+                    ads: kads,
+                    recoil: app.rfire[i],
+                    bob: app.walk[i] * 1.35,
+                    bob_amt: (speed / sim::WALK).min(1.5),
+                    reload: if kv.flags2 & flag2::RELOAD != 0 { 0.4 } else { -1.0 },
+                    draw: if kv.flags2 & flag2::DRAW != 0 { 0.5 } else { 0.0 },
+                    cycle: 0.0,
+                    sway: (0.0, 0.0),
+                    flash: app.rfire[i],
+                    sprint: ((speed - 6.4) / 1.6).clamp(0.0, 1.0) * (1.0 - app.rfire[i]),
+                    land: 0.0,
+                    strafe: (app.rvel[i].1 / sim::WALK).clamp(-1.0, 1.0),
+                    slide: app.rslide[i],
+                    air: app.rair[i],
+                    mantle: 0.0,
+                    time,
+                    seq: (now * 20.0) as u32,
+                    preview: None,
+                    skin: app.wskin_of(kid, kv.flags & flag::SIDEARM != 0),
+                    melee: if kv.flags2 & flag2::MELEE != 0 { 0.72 } else { 0.0 },
                 },
             );
         }
-        let scoped = playing && sight >= scene::SCOPE4 && app.ads > 0.85;
+        let scoped = (playing && sight >= scene::SCOPE4 && app.ads > 0.85) || kc_vm.is_some_and(|k| k.1 >= scene::SCOPE4 && k.2 > 0.85);
         let empty = gfx::Mesh::default();
         gpu.render(&gfx::Frame {
             vp,
@@ -1705,14 +2133,15 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
             let sh = mq::screen_height();
             for ic in &icons {
                 let turn = if ic.turn { (now as f32 * 0.8).sin() * 0.6 } else { 0.3 };
-                scene::gun_icon(&mut over_mesh, ic.wid, app.my_team, ic.cx, sh - ic.cy, ic.w, ic.h, turn);
+                scene::gun_icon(&mut over_mesh, ic.wid, app.my_team, ic.skin, ic.cx, sh - ic.cy, ic.w, ic.h, turn);
             }
             gpu.overlay(&over_mesh, mq::screen_width(), sh);
         }
 
         let t = now - app.start;
         if let Some(path) = &args.shot {
-            if !shot_done && t >= args.shot_at && (!args.shot_dead || (app.spec_killer && app.dead_for > 2.2)) {
+            let kc_ok = !args.shot_killcam || app.kc.as_ref().is_some_and(|k| k.rt > k.from + 110.0);
+            if !shot_done && t >= args.shot_at && kc_ok && (!args.shot_dead || (app.spec_killer && app.dead_for > 2.2)) {
                 shot_done = true;
                 let img = mq::get_screen_data();
                 img.export_png(path);
@@ -1739,6 +2168,7 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
     *sens = app.sens;
     *volume = app.audio.volume;
     *loadout = [app.kit_choice, app.prims[0], app.prims[1], app.prims[2], app.side_choice, app.skin_choice];
+    *wskins = app.wskins;
 
     app.net.bye();
     let s = &app.stats;

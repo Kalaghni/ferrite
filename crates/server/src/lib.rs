@@ -102,6 +102,16 @@ pub struct Player {
     pub benched: bool,
     /// Look of the soldier: index into `sim::SKINS`.
     pub skin: u8,
+    /// Who this is across callsigns and sessions; all zeros for a bot or
+    /// a client that sent none.
+    pub uuid: [u8; 16],
+    /// Their icon (`ICON_BYTES` of RGBA, or empty) and its hash (0 = none).
+    pub icon: Vec<u8>,
+    pub icon_hash: u32,
+    /// Finish asked for on the primary and the sidearm, and the pair the
+    /// weapons in hand are wearing.
+    pub next_wskin: [u8; 2],
+    pub wskin: [u8; 2],
     pub marked_until: u32,
     pub surge_until: u32,
     pub firing_until: u32,
@@ -129,6 +139,33 @@ pub struct Grenade {
     pub fuse: i32,
     pub owner: usize,
     pub team: u8,
+}
+
+/// Whose record: a bot's goes by its name, a player's by their id. `Name`
+/// is a player without an id (a record from before ids, or a client that
+/// sent none).
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub enum Who {
+    Bot(String),
+    Id([u8; 16]),
+    Name(String),
+}
+
+/// A record and the callsign last seen with it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Record {
+    pub name: String,
+    pub totals: Totals,
+}
+
+fn who(p: &Player) -> Who {
+    if p.bot.is_some() {
+        Who::Bot(p.name.clone())
+    } else if p.uuid != [0u8; 16] {
+        Who::Id(p.uuid)
+    } else {
+        Who::Name(p.name.clone())
+    }
 }
 
 #[derive(Default, Clone, Debug)]
@@ -168,8 +205,11 @@ pub struct Game {
     pub wins: [u16; 2],
     round_start: u32,
     /// Every player's record on this server, banked whenever their round
-    /// counters are reset. Keyed by (is a bot, name).
-    pub records: std::collections::HashMap<(bool, String), Totals>,
+    /// counters are reset. A player's follows their id, not their callsign.
+    pub records: std::collections::HashMap<Who, Record>,
+    /// Recent chat, oldest first, and the number of the newest line.
+    pub chat: Vec<ChatLine>,
+    pub chat_seq: u32,
     /// Each team's current push target (bots mostly follow it).
     pub orders: [usize; 2],
     rng: Rng,
@@ -209,6 +249,8 @@ impl Game {
             wins: [0; 2],
             round_start: 0,
             records: load_records(cfg.stats_file.as_deref()),
+            chat: Vec::new(),
+            chat_seq: 0,
             orders: [1, 3],
             rng: Rng::new(cfg.seed ^ 0x5EED),
             cfg,
@@ -217,43 +259,7 @@ impl Game {
         let n = (g.cfg.per_team * 2).min(64);
         for i in 0..n {
             let team = (i % 2) as u8;
-            let mut p = Player {
-                id: i as u8,
-                name: String::new(),
-                team,
-                next_kit: 0,
-                next_prim: 0,
-                next_side: sim::SIDEARM_ID,
-                vote: 255,
-                ready: false,
-                st: PState::spawn(Vec3::ZERO, 0),
-                yaw: 0.0,
-                pitch: 0.0,
-                hp: 0.0,
-                alive: false,
-                respawn_at: 0,
-                last_dmg_tick: 0,
-                last_seq: 0,
-                last_cmd_tick: 0,
-                credits: 0.0,
-                ads: false,
-                kills: 0,
-                deaths: 0,
-                score: 0,
-                heads: 0,
-                bot: None,
-                benched: false,
-                skin: 0,
-                marked_until: 0,
-                surge_until: 0,
-                firing_until: 0,
-                protect_until: 0,
-                spawn_count: 0,
-                spawn_yaw: 0.0,
-                killer: SPECTATOR_ID,
-                hits: Vec::new(),
-                hist: [Vec3::ZERO; HIST],
-            };
+            let mut p = Player { id: i as u8, team, ..dummy() };
             g.make_bot(&mut p);
             g.players.push(p);
         }
@@ -279,8 +285,16 @@ impl Game {
         p.next_side = if self.rng.below(2) == 0 { sim::SIDEARM_ID } else { sim::SIDEARMS[self.rng.below(sim::SIDEARMS.len() as u32) as usize] };
         p.vote = 255;
         p.ready = false;
-        // Bots turn out in a mix of looks.
+        // Bots turn out in a mix of looks, and of finishes where a weapon
+        // has more than one.
         p.skin = self.rng.below(sim::SKINS.len() as u32) as u8;
+        for (k, wid) in [p.next_prim, p.next_side].into_iter().enumerate() {
+            let fits = sim::weapon_skins_for(wid);
+            p.next_wskin[k] = if fits.len() > 1 { fits[self.rng.below(fits.len() as u32) as usize] } else { 0 };
+        }
+        p.uuid = [0; 16];
+        p.icon = Vec::new();
+        p.icon_hash = 0;
         let skill = self.cfg.bot_skill * self.rng.range(0.7, 1.15);
         p.bot = Some(Bot::new(self.cfg.seed ^ (i as u64 * 977 + 13), skill, i));
         p.kills = 0;
@@ -350,6 +364,12 @@ impl Game {
     /// As `join`, but honours a requested side (0 or 1) while that side
     /// still has a bot to replace. Friends may stack one team against bots.
     pub fn join_team(&mut self, name: &str, want: u8) -> Option<usize> {
+        self.join_as(name, want, [0; 16], &[])
+    }
+
+    /// As `join_team`, for a player with an id and perhaps an icon. Their
+    /// record on this server follows the id, whatever they call themselves.
+    pub fn join_as(&mut self, name: &str, want: u8, uuid: [u8; 16], icon: &[u8]) -> Option<usize> {
         let humans = |t: u8, g: &Game| g.players.iter().filter(|p| p.team == t && p.bot.is_none()).count();
         let team = if want < 2 {
             want
@@ -384,7 +404,24 @@ impl Game {
         p.alive = false;
         p.benched = false;
         p.skin = 0;
+        p.next_wskin = [0; 2];
         p.respawn_at = t + 20;
+        p.uuid = uuid;
+        p.icon = if icon.len() == ICON_BYTES { icon.to_vec() } else { Vec::new() };
+        p.icon_hash = if p.icon.is_empty() { 0 } else { icon_hash(&p.icon) };
+        let (name, team) = (p.name.clone(), p.team);
+        if uuid != [0u8; 16] {
+            // A record kept under this callsign before ids existed is theirs.
+            if !self.records.contains_key(&Who::Id(uuid)) {
+                if let Some(r) = self.records.remove(&Who::Name(name.clone())) {
+                    self.records.insert(Who::Id(uuid), r);
+                }
+            }
+            if let Some(r) = self.records.get_mut(&Who::Id(uuid)) {
+                r.name = name.clone();
+            }
+        }
+        self.notice(format!("{name} joined {}", ferrite_shared::TEAM_NAMES[team as usize % 2]));
         self.balance_bots();
         Some(slot)
     }
@@ -421,6 +458,7 @@ impl Game {
         }
         self.bank(i);
         self.save_records();
+        self.notice(format!("{} left", self.players[i].name));
         let mut p = std::mem::replace(&mut self.players[i], dummy());
         self.make_bot(&mut p);
         p.benched = false;
@@ -435,7 +473,9 @@ impl Game {
     fn bank(&mut self, i: usize) {
         let p = &mut self.players[i];
         if !p.name.is_empty() && (p.kills > 0 || p.deaths > 0 || p.score > 0) {
-            let r = self.records.entry((p.bot.is_some(), p.name.clone())).or_default();
+            let rec = self.records.entry(who(p)).or_default();
+            rec.name = p.name.clone();
+            let r = &mut rec.totals;
             r.kills += p.kills as u32;
             r.deaths += p.deaths as u32;
             r.score += p.score;
@@ -450,7 +490,7 @@ impl Game {
     /// A player's record on this server, the round in progress included.
     pub fn totals(&self, i: usize) -> Totals {
         let p = &self.players[i];
-        let mut r = self.records.get(&(p.bot.is_some(), p.name.clone())).copied().unwrap_or_default();
+        let mut r = self.records.get(&who(p)).map(|r| r.totals).unwrap_or_default();
         r.kills += p.kills as u32;
         r.deaths += p.deaths as u32;
         r.score += p.score;
@@ -466,10 +506,11 @@ impl Game {
             self.wins[w as usize] += 1;
         }
         for p in self.players.iter().filter(|p| !p.name.is_empty()) {
-            let r = self.records.entry((p.bot.is_some(), p.name.clone())).or_default();
-            r.rounds += 1;
+            let rec = self.records.entry(who(p)).or_default();
+            rec.name = p.name.clone();
+            rec.totals.rounds += 1;
             if p.team == w {
-                r.wins += 1;
+                rec.totals.wins += 1;
             }
         }
         let mvp = self.players.iter().max_by_key(|p| p.score);
@@ -498,22 +539,79 @@ impl Game {
     /// Bots are left out: theirs last only as long as the server runs.
     pub fn save_records(&self) {
         let Some(path) = &self.cfg.stats_file else { return };
-        let mut all: std::collections::HashMap<&str, Totals> =
-            self.records.iter().filter(|(k, _)| !k.0).map(|(k, v)| (k.1.as_str(), *v)).collect();
+        let mut all: std::collections::HashMap<Who, Record> =
+            self.records.iter().filter(|(k, _)| !matches!(k, Who::Bot(_))).map(|(k, v)| (k.clone(), v.clone())).collect();
         for (i, p) in self.players.iter().enumerate().filter(|(_, p)| p.bot.is_none() && !p.name.is_empty()) {
-            all.insert(p.name.as_str(), self.totals(i));
+            all.insert(who(p), Record { name: p.name.clone(), totals: self.totals(i) });
         }
-        let mut rows: Vec<_> = all.into_iter().collect();
-        rows.sort_by(|a, b| b.1.score.cmp(&a.1.score).then(a.0.cmp(b.0)));
-        let mut out = String::from("# FERRITE player records: name kills deaths score headshots rounds wins\n");
-        for (name, r) in rows {
-            out += &format!("{name} {} {} {} {} {} {}\n", r.kills, r.deaths, r.score, r.heads, r.rounds, r.wins);
+        let mut rows: Vec<_> = all.into_iter().filter(|(_, r)| !r.name.is_empty()).collect();
+        let id = |k: &Who| match k {
+            Who::Id(u) => uuid_text(u),
+            _ => String::new(),
+        };
+        rows.sort_by(|a, b| b.1.totals.score.cmp(&a.1.totals.score).then(a.1.name.cmp(&b.1.name)).then(id(&a.0).cmp(&id(&b.0))));
+        let mut out = String::from("# FERRITE player records: name kills deaths score headshots rounds wins id\n");
+        for (k, rec) in rows {
+            let r = rec.totals;
+            out += format!("{} {} {} {} {} {} {} {}", rec.name, r.kills, r.deaths, r.score, r.heads, r.rounds, r.wins, id(&k)).trim_end();
+            out.push('\n');
         }
         if let Err(e) = std::fs::write(path, out) {
             if self.cfg.log {
                 println!("could not write {}: {e}", path.display());
             }
         }
+    }
+
+    fn push_chat(&mut self, mut line: ChatLine) {
+        self.chat_seq += 1;
+        line.seq = self.chat_seq;
+        self.chat.push(line);
+        if self.chat.len() > 80 {
+            self.chat.drain(..20);
+        }
+    }
+
+    /// Player `i` says something, to everyone or to their own side.
+    /// Returns false if there was nothing to say.
+    pub fn say(&mut self, i: usize, team_only: bool, text: &str) -> bool {
+        let clean: String = text.chars().filter(|c| !c.is_control()).take(CHAT_MAX).collect();
+        let clean = clean.trim();
+        if clean.is_empty() || i >= self.players.len() || self.players[i].bot.is_some() {
+            return false;
+        }
+        let p = &self.players[i];
+        let line = ChatLine { seq: 0, from: i as u8, team: p.team, all: !team_only, name: p.name.clone(), text: clean.to_string() };
+        self.push_chat(line);
+        true
+    }
+
+    /// A line from the server itself, shown to everyone.
+    pub fn notice(&mut self, text: String) {
+        self.push_chat(ChatLine { seq: 0, from: SPECTATOR_ID, team: NEUTRAL, all: true, name: String::new(), text });
+    }
+
+    /// Chat newer than line `after` that `me` may read: everything said to
+    /// all, and what their own side said among themselves. A few lines at
+    /// a time, so the reply fits one packet.
+    pub fn chat_for(&self, me: Option<usize>, after: u32) -> Vec<ChatLine> {
+        let team = me.map(|i| self.players[i].team);
+        let mut bytes = 0;
+        self.chat
+            .iter()
+            .filter(|l| l.seq > after && (l.all || Some(l.team) == team))
+            .take(4)
+            .take_while(|l| {
+                bytes += l.text.len() + l.name.len() + 24;
+                bytes <= 1100
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// Who wears an icon.
+    pub fn icons_msg(&self) -> S2C {
+        S2C::Icons(self.players.iter().filter(|p| p.icon_hash != 0 && !p.benched).map(|p| (p.id, p.icon_hash)).collect())
     }
 
     pub fn owners(&self) -> [u8; NUM_POINTS] {
@@ -596,6 +694,47 @@ impl Game {
             self.next_gren = self.next_gren.wrapping_add(1);
             self.grenades.push(g);
             self.push_fx(Fx::Throw { who: i as u8 });
+        }
+        if out.melee {
+            self.melee(i, &cmd);
+        }
+    }
+
+    /// A melee swing: it lands on the nearest enemy within reach and
+    /// roughly in front, judged (like a shot) against where they were on
+    /// the attacker's screen. From behind it kills outright.
+    fn melee(&mut self, i: usize, cmd: &Cmd) {
+        let t = self.tick;
+        let (team, origin, human) = {
+            let p = &self.players[i];
+            (p.team, p.st.pos + vec3(0.0, sim::eye_h(p.st.crouch), 0.0), p.bot.is_none())
+        };
+        let dir = sim::view_dir(cmd.yaw, cmd.pitch);
+        let rewind = if human { cmd.interp.clamp(t as f64 - MAX_REWIND, t as f64) } else { t as f64 };
+        let mut best: Option<(usize, f32, Vec3)> = None;
+        for (j, p) in self.players.iter().enumerate() {
+            if !p.alive || p.team == team || p.protect_until > t {
+                continue;
+            }
+            let pos = self.pos_at(j, rewind);
+            let chest = pos + vec3(0.0, if p.st.crouch { 0.6 } else { 1.0 }, 0.0);
+            let to = chest - origin;
+            let d = to.length();
+            if d > sim::MELEE_REACH || (d > 0.7 && to.dot(dir) / d < 0.5) {
+                continue;
+            }
+            if best.map_or(true, |(_, bd, _)| d < bd) && self.world.los(origin, chest, self.dmask) {
+                best = Some((j, d, pos));
+            }
+        }
+        self.players[i].protect_until = 0;
+        self.push_fx(Fx::Swing { who: i as u8, hit: best.is_some() });
+        if let Some((j, _, pos)) = best {
+            // Behind them: the blow comes from the direction they face away from.
+            let mut h = pos - self.players[i].st.pos;
+            h.y = 0.0;
+            let behind = h.normalize_or_zero().dot(sim::view_dir(self.players[j].yaw, 0.0)) > 0.35;
+            self.damage(j, Some(i), if behind { sim::MELEE_BACKSTAB } else { sim::MELEE_DAMAGE }, false, sim::MELEE_WEAPON);
         }
     }
 
@@ -792,6 +931,7 @@ impl Game {
         let front = self.world.points[self.orders[team as usize].min(NUM_POINTS - 1)];
         let p = &mut self.players[i];
         p.st = PState::spawn_with(pos, p.next_kit, p.next_prim, p.next_side);
+        p.wskin = [sim::fix_weapon_skin(p.st.prim, p.next_wskin[0]), sim::fix_weapon_skin(p.st.side, p.next_wskin[1])];
         p.hp = sim::kit(p.next_kit).hp;
         p.alive = true;
         p.protect_until = t + 2 * TICK_HZ;
@@ -1191,6 +1331,9 @@ impl Game {
                 if p.st.swap > 0 {
                     flags2 |= flag2::DRAW;
                 }
+                if p.st.melee > 0 {
+                    flags2 |= flag2::MELEE;
+                }
                 NetPlayer {
                     id: p.id,
                     pos: p.st.pos.to_array(),
@@ -1292,23 +1435,34 @@ impl Game {
                 heads: p.heads,
                 total: self.totals(i),
                 skin: p.skin,
+                wskin: p.wskin,
             })
             .collect()
     }
 }
 
-/// Read a stats file written by `Game::save_records`. Anything that does
-/// not parse is skipped.
-fn load_records(path: Option<&std::path::Path>) -> std::collections::HashMap<(bool, String), Totals> {
+/// Read a stats file written by `Game::save_records`: a callsign, six
+/// figures, and the player's id. A line without an id (from before ids)
+/// is kept under its name until that player comes back. Anything that
+/// does not parse is skipped.
+fn load_records(path: Option<&std::path::Path>) -> std::collections::HashMap<Who, Record> {
     let mut m = std::collections::HashMap::new();
     let Some(text) = path.and_then(|p| std::fs::read_to_string(p).ok()) else { return m };
     for line in text.lines().filter(|l| !l.starts_with('#')) {
-        let mut f = line.split_whitespace();
-        let Some(name) = f.next() else { continue };
-        let n: Vec<u32> = f.filter_map(|x| x.parse().ok()).collect();
-        if n.len() == 6 && name.len() <= 14 {
-            m.insert((false, name.to_string()), Totals { kills: n[0], deaths: n[1], score: n[2], heads: n[3], rounds: n[4], wins: n[5] });
+        let f: Vec<&str> = line.split_whitespace().collect();
+        if f.len() < 7 || f[0].len() > 14 {
+            continue;
         }
+        let n: Vec<u32> = f[1..7].iter().filter_map(|x| x.parse().ok()).collect();
+        if n.len() != 6 {
+            continue;
+        }
+        let key = match f.get(7).and_then(|s| uuid_parse(s)) {
+            Some(id) => Who::Id(id),
+            None => Who::Name(f[0].to_string()),
+        };
+        let totals = Totals { kills: n[0], deaths: n[1], score: n[2], heads: n[3], rounds: n[4], wins: n[5] };
+        m.insert(key, Record { name: f[0].to_string(), totals });
     }
     m
 }
@@ -1341,6 +1495,11 @@ fn dummy() -> Player {
         bot: None,
         benched: false,
         skin: 0,
+        uuid: [0; 16],
+        icon: Vec::new(),
+        icon_hash: 0,
+        next_wskin: [0; 2],
+        wskin: [0; 2],
         marked_until: 0,
         surge_until: 0,
         firing_until: 0,

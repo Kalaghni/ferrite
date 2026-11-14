@@ -91,6 +91,19 @@ jobs:
             echo "file=$dir.tar.gz" >> "$GITHUB_OUTPUT"
           fi
 
+      # Windows also gets an installer (Start menu entries, uninstaller).
+      - name: Windows installer
+        id: installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ISCC.exe -ErrorAction SilentlyContinue) -and -not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+          $version = if ($env:RELEASE_TAG) { $env:RELEASE_TAG.TrimStart('v') } else { "0.0.0-dev" }
+          ./packaging/build-installer.ps1 -SkipBuild -Version $version
+          "file=dist/ferrite-v$version-windows-x64-setup.exe" >> $env:GITHUB_OUTPUT
+
       - name: Smoke-test the packaged server
         run: |
           dir="${{ steps.package.outputs.file }}"
@@ -103,6 +116,13 @@ jobs:
           path: ${{ steps.package.outputs.file }}
           if-no-files-found: error
 
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Windows'
+        with:
+          name: windows-x64-setup
+          path: ${{ steps.installer.outputs.file }}
+          if-no-files-found: error
+
       - name: Attach to release
         if: env.RELEASE_TAG != ''
         env:
@@ -113,3 +133,6 @@ jobs:
             gh release create "$RELEASE_TAG" --title "FERRITE $RELEASE_TAG" --generate-notes --target "$GITHUB_SHA" || gh release view "$RELEASE_TAG" > /dev/null
           fi
           gh release upload "$RELEASE_TAG" "${{ steps.package.outputs.file }}" --clobber
+          if [ -n "${{ steps.installer.outputs.file }}" ]; then
+            gh release upload "$RELEASE_TAG" "${{ steps.installer.outputs.file }}" --clobber
+          fi

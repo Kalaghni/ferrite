@@ -4,7 +4,7 @@
 //! when replaying unacknowledged commands after a snapshot.
 
 use crate::map::{Block, World, HALF_X, HALF_Z};
-use crate::proto::{btn, Cmd};
+use crate::proto::{btn, btn2, Cmd};
 use crate::rng::Rng;
 use crate::DT;
 use glam::{vec3, Vec3};
@@ -42,6 +42,14 @@ pub const MANTLE_V: f32 = 4.6;
 pub const SLIDE_TICKS: u8 = 42;
 pub const HEAT_MAX: u8 = 100;
 pub const GRENADE_WEAPON: u8 = 3;
+/// Weapon id a melee kill is reported under.
+pub const MELEE_WEAPON: u8 = 17;
+/// A swing: how long before another (or a shot), how far it reaches from
+/// the eye, and what it does from the front. From behind it kills.
+pub const MELEE_TICKS: u8 = 34;
+pub const MELEE_REACH: f32 = 2.4;
+pub const MELEE_DAMAGE: f32 = 75.0;
+pub const MELEE_BACKSTAB: f32 = 250.0;
 
 pub struct WeaponDef {
     pub name: &'static str,
@@ -101,12 +109,56 @@ pub static KITS: [KitDef; 3] = [
     KitDef { name: "MARKSMAN", blurb: "90 HP - 1 frag - its rifles mark targets", prims: &[2, 9, 15, 5], hp: 90.0, grenades: 1, speed: 1.0 },
 ];
 
-/// Default sidearm. Weapon ids index `WEAPONS`; 3 is the frag grenade.
+/// A finish for a weapon: colours that replace the gun's own. `None`
+/// leaves that part as the weapon comes. Purely cosmetic.
+pub struct WeaponSkinDef {
+    pub name: &'static str,
+    pub blurb: &'static str,
+    /// Weapon ids it fits; empty = every weapon.
+    pub weapons: &'static [u8],
+    /// Receiver and barrel.
+    pub body: Option<[f32; 3]>,
+    /// Stock, grip and handguard (wood or polymer).
+    pub furniture: Option<[f32; 3]>,
+    /// The strip that normally carries the team colour.
+    pub accent: Option<[f32; 3]>,
+    /// Small dark parts: sights, trigger, magazine.
+    pub detail: Option<[f32; 3]>,
+}
+
+/// Every finish. Index 0 is the gun as it comes and fits everything; add
+/// more below it and they appear in the loadout panel for the weapons
+/// they list. Ids travel over the wire, so only ever append.
+pub static WEAPON_SKINS: [WeaponSkinDef; 1] =
+    [WeaponSkinDef { name: "FACTORY", blurb: "As issued", weapons: &[], body: None, furniture: None, accent: None, detail: None }];
+
+pub fn weapon_skin(id: u8) -> &'static WeaponSkinDef {
+    &WEAPON_SKINS[id as usize % WEAPON_SKINS.len()]
+}
+
+/// Finishes weapon `wid` can wear, the factory one first.
+pub fn weapon_skins_for(wid: u8) -> Vec<u8> {
+    (0..WEAPON_SKINS.len() as u8)
+        .filter(|&s| s == 0 || WEAPON_SKINS[s as usize].weapons.is_empty() || WEAPON_SKINS[s as usize].weapons.contains(&wid))
+        .collect()
+}
+
+/// Clamp a requested finish to one the weapon can wear.
+pub fn fix_weapon_skin(wid: u8, skin: u8) -> u8 {
+    if weapon_skins_for(wid).contains(&skin) {
+        skin
+    } else {
+        0
+    }
+}
+
+/// Default sidearm. Weapon ids index `WEAPONS`; 3 is the frag grenade and
+/// 17 the melee strike, neither of which is carried as a gun.
 pub const SIDEARM_ID: u8 = 4;
 /// Sidearms any class may carry.
 pub const SIDEARMS: [u8; 4] = [4, 10, 11, 16];
 
-pub static WEAPONS: [WeaponDef; 17] = [
+pub static WEAPONS: [WeaponDef; 18] = [
     WeaponDef {
         name: "Carbine",
         blurb: "Automatic rifle - steady all-rounder",
@@ -481,6 +533,28 @@ pub static WEAPONS: [WeaponDef; 17] = [
         burst: 0,
         burst_gap: 0,
     },
+    WeaponDef {
+        name: "Melee",
+        blurb: "Close-quarters strike",
+        arch: 0,
+        damage: MELEE_DAMAGE,
+        pellets: 1,
+        interval: MELEE_TICKS,
+        mag: 1,
+        reload: 1,
+        spread_hip: 0.0,
+        spread_ads: 0.0,
+        head_mult: 1.0,
+        falloff: (1.0, 2.0, 1.0),
+        recoil: 0.0,
+        ads_fov: 60.0,
+        semi: true,
+        heat: 0,
+        bloom: 0.0,
+        mobility: 1.0,
+        burst: 0,
+        burst_gap: 0,
+    },
 ];
 
 pub fn weapon_def(wid: u8) -> &'static WeaponDef {
@@ -543,6 +617,8 @@ pub struct PState {
     pub heat: u8,
     /// Rounds still to come in the burst being fired.
     pub burst: u8,
+    /// Ticks left of a melee swing; no shooting or reloading until 0.
+    pub melee: u8,
 }
 
 impl PState {
@@ -575,6 +651,7 @@ impl PState {
             slide_cd: 0,
             heat: 0,
             burst: 0,
+            melee: 0,
         }
     }
 }
@@ -589,6 +666,8 @@ pub struct StepOut {
     pub swapped: bool,
     pub slid: bool,
     pub mantle: bool,
+    /// A melee swing started this tick.
+    pub melee: bool,
     /// Barrel heat the shot was fired with (before this shot heated it).
     pub heat: u8,
 }
@@ -840,6 +919,15 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
         out.swapped = true;
         wd = weapon_def(wid(s));
     }
+    // Melee: a quick strike with the weapon in hand. It interrupts a
+    // reload, and nothing else can be done until the swing is over.
+    s.melee = s.melee.saturating_sub(1);
+    if c.more & btn2::MELEE != 0 && s.melee == 0 && s.swap == 0 {
+        s.melee = MELEE_TICKS;
+        s.reload = 0;
+        s.burst = 0;
+        out.melee = true;
+    }
     if s.reload > 0 {
         s.reload -= 1;
         if s.reload == 0 {
@@ -847,7 +935,7 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
         }
     }
     let want_reload = (c.buttons & btn::RELOAD != 0 && s.ammo < wd.mag) || s.ammo == 0;
-    if s.reload == 0 && want_reload {
+    if s.reload == 0 && want_reload && s.melee == 0 {
         s.reload = if s.surge { wd.reload / 2 } else { wd.reload };
         out.reload_started = true;
     }
@@ -856,7 +944,7 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
     }
     // A burst, once started, finishes on its own.
     let pull = (fire_btn && (!wd.semi || !s.trig)) || s.burst > 0;
-    if pull && s.reload == 0 && s.cooldown == 0 && s.swap == 0 && s.ammo > 0 {
+    if pull && s.reload == 0 && s.cooldown == 0 && s.swap == 0 && s.melee == 0 && s.ammo > 0 {
         s.ammo -= 1;
         s.cooldown = wd.interval;
         if wd.burst > 0 {

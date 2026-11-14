@@ -6,7 +6,9 @@
 use ferrite_shared::map::{map_by_name, MAPS};
 use ferrite_shared::proto::{decode_info, ServerInfo, DEFAULT_PORT, DISCOVERY_GROUP, DISCOVERY_PORT, DISCOVERY_QUERY, PROTO};
 use crate::audio::{Music, Scene};
-use crate::{gfx, scene};
+use crate::update::{self, State as Up};
+use crate::{gfx, ident, scene};
+use ferrite_shared::proto::{icon_hash, uuid_parse, uuid_text};
 use ferrite_shared::glam::{vec3, Mat4, Vec3};
 use ferrite_shared::map::World;
 use crate::ui::{self, color as th};
@@ -64,6 +66,22 @@ pub struct Menu {
     pub rotate: bool,
     /// Class, the primary chosen for each class, and the sidearm.
     pub loadout: [u8; 6],
+    /// Look for a newer release when the launcher opens, and what came of it.
+    pub updates: bool,
+    pub updater: update::Updater,
+    /// Finish chosen for each weapon id.
+    pub wskins: [u8; 20],
+    /// Who we are on every server, whatever the callsign says.
+    pub uuid: [u8; 16],
+    /// Icon: 0 none, 1.. a built-in emblem (in `icon_colour`), or
+    /// `ident::CUSTOM` for the picture in `custom`.
+    pub icon_kind: u8,
+    pub icon_colour: u8,
+    custom: Option<Vec<u8>>,
+    /// The last files dropped on the window (path, size, hash).
+    last_drop: Vec<(Option<std::path::PathBuf>, usize, u32)>,
+    /// The icon as drawn on the home page, and what it was made from.
+    icon_tex: Option<((u8, u8, u32), Option<mq::Texture2D>)>,
     /// Bot difficulty when hosting: index into `ferrite_server::DIFFICULTIES`.
     pub difficulty: u8,
     /// Sound effects and music volume, 0..1, and the music switch.
@@ -242,6 +260,15 @@ impl Menu {
             map: 0,
             rotate: true,
             loadout: [0, 0, 1, 2, 4, 0],
+            updates: true,
+            updater: update::Updater::new(false, None),
+            wskins: [0; 20],
+            uuid: [0; 16],
+            icon_kind: 0,
+            icon_colour: 0,
+            custom: None,
+            last_drop: Vec::new(),
+            icon_tex: None,
             difficulty: 1,
             volume: 0.7,
             music_vol: 0.5,
@@ -292,11 +319,93 @@ impl Menu {
                             m.loadout[k] = n.trim().parse().unwrap_or(m.loadout[k]);
                         }
                     }
+                    "weapon_skins" => {
+                        for (k, n) in v.split(',').take(20).enumerate() {
+                            m.wskins[k] = n.trim().parse().unwrap_or(0);
+                        }
+                    }
+                    "updates" => m.updates = v != "0",
+                    "id" => m.uuid = uuid_parse(v).unwrap_or([0; 16]),
+                    "icon" => m.icon_kind = v.parse::<u8>().unwrap_or(0),
+                    "icon_colour" => m.icon_colour = v.parse::<u8>().unwrap_or(0) % ident::COLOURS.len() as u8,
+                    "icon_data" => m.custom = ident::from_hex(v),
                     _ => {}
                 }
             }
         }
+        // First launch: this is who we are from now on. (It is written to
+        // the settings file the next time they are saved.)
+        if m.uuid == [0; 16] {
+            m.uuid = ident::new_uuid();
+        }
+        // A picture left beside the game as icon.png becomes the icon.
+        if m.custom.is_none() {
+            if let Some(px) = std::fs::read(cfg_path().with_file_name("icon.png")).ok().and_then(|b| ident::from_image_bytes(&b)) {
+                m.custom = Some(px);
+                m.icon_kind = ident::CUSTOM;
+            }
+        }
+        if !m.icon_kinds().contains(&m.icon_kind) {
+            m.icon_kind = 0;
+        }
         m
+    }
+
+    /// Icon kinds on offer: none, the emblems, and our own picture if
+    /// there is one.
+    fn icon_kinds(&self) -> Vec<u8> {
+        let mut v: Vec<u8> = (0..=ident::SHAPES.len() as u8).collect();
+        if self.custom.is_some() {
+            v.push(ident::CUSTOM);
+        }
+        v
+    }
+
+    /// The icon to wear: `ICON_BYTES` of RGBA, or nothing.
+    pub fn icon_rgba(&self) -> Vec<u8> {
+        match self.icon_kind {
+            0 => Vec::new(),
+            ident::CUSTOM => self.custom.clone().unwrap_or_default(),
+            k => ident::preset(k - 1, self.icon_colour),
+        }
+    }
+
+    fn icon_texture(&mut self) -> Option<mq::Texture2D> {
+        let px = self.icon_rgba();
+        let key = (self.icon_kind, self.icon_colour, if px.is_empty() { 0 } else { icon_hash(&px) });
+        if self.icon_tex.as_ref().map(|t| t.0) != Some(key) {
+            self.icon_tex = Some((key, ident::texture(&px)));
+        }
+        self.icon_tex.as_ref().and_then(|t| t.1.clone())
+    }
+
+    /// A file was dropped on the window: if it is a picture, wear it.
+    /// The window system is asked directly: on Windows the drop is
+    /// recorded but never announced, so macroquad's own list stays empty.
+    /// What it holds stays there, so a drop is "new" when it differs from
+    /// the last one seen.
+    fn take_dropped(&mut self) {
+        use macroquad::miniquad::window as win;
+        let n = win::dropped_file_count();
+        let drop: Vec<(Option<std::path::PathBuf>, Option<Vec<u8>>)> = (0..n).map(|i| (win::dropped_file_path(i), win::dropped_file_bytes(i))).collect();
+        let key: Vec<(Option<std::path::PathBuf>, usize, u32)> =
+            drop.iter().map(|(p, b)| (p.clone(), b.as_ref().map_or(0, |b| b.len()), b.as_ref().map_or(0, |b| icon_hash(b)))).collect();
+        if key == self.last_drop {
+            return;
+        }
+        self.last_drop = key;
+        for (path, bytes) in drop {
+            let bytes = bytes.or_else(|| path.as_ref().and_then(|p| std::fs::read(p).ok())).unwrap_or_default();
+            match ident::from_image_bytes(&bytes) {
+                Some(px) => {
+                    self.custom = Some(px);
+                    self.icon_kind = ident::CUSTOM;
+                    self.error = None;
+                    self.save();
+                }
+                None => self.error = Some("That file is not a picture the game can read. Use a PNG.".to_string()),
+            }
+        }
     }
 
     fn save(&self) {
@@ -311,6 +420,11 @@ impl Menu {
         }
         let l = self.loadout;
         out += &format!("loadout={},{},{},{},{},{}\n", l[0], l[1], l[2], l[3], l[4], l[5]);
+        out += &format!("weapon_skins={}\n", self.wskins.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(","));
+        out += &format!("id={}\nicon={}\nicon_colour={}\nupdates={}\n", uuid_text(&self.uuid), self.icon_kind, self.icon_colour, self.updates as u8);
+        if let Some(px) = &self.custom {
+            out += &format!("icon_data={}\n", ident::to_hex(px));
+        }
         if !self.f[F_MAXBOTS].is_empty() {
             out += &format!("max_bots={}\n", self.f[F_MAXBOTS]);
         }
@@ -553,7 +667,15 @@ impl Menu {
                 ui::backdrop(&art.launcher, sw, sh);
             }
             self.typing(now);
+            self.take_dropped();
             self.lan.poll(now);
+            self.updater.poll();
+            if matches!(self.updater.state, Up::Installed(_)) {
+                // The new version is in place: start it.
+                self.drop_map();
+                self.save();
+                update::restart();
+            }
             let mut out: Option<Choice> = None;
 
             // The art carries the logo at the top left; the page hangs under it.
@@ -592,7 +714,46 @@ impl Menu {
                             self.team = id;
                         }
                     }
-                    y += 56.0;
+                    y += 62.0;
+                    // Player icon: shown beside the callsign in a match.
+                    {
+                        ui::text("PLAYER ICON", x, y - 8.0, 18.0, th::MUTED);
+                        ui::plate(x, y, 38.0, 38.0, th::GLASS_STRONG, th::STROKE);
+                        match self.icon_texture() {
+                            Some(t) => mq::draw_texture_ex(&t, x + 3.0, y + 3.0, mq::WHITE, mq::DrawTextureParams { dest_size: Some(mq::vec2(32.0, 32.0)), ..Default::default() }),
+                            None => ui::text_c("-", x + 19.0, y + 26.0, 20.0, th::QUIET),
+                        }
+                        let kinds = self.icon_kinds();
+                        let at = kinds.iter().position(|k| *k == self.icon_kind).unwrap_or(0) as i32;
+                        let step = button(x + 244.0, y, 34.0, 38.0, ">", None, 20.0) as i32 - button(x + 46.0, y, 34.0, 38.0, "<", None, 20.0) as i32;
+                        if step != 0 {
+                            self.icon_kind = kinds[(at + step).rem_euclid(kinds.len() as i32) as usize];
+                        }
+                        let label = match self.icon_kind {
+                            0 => "NONE",
+                            ident::CUSTOM => "YOUR PICTURE",
+                            k => ident::SHAPES[(k as usize - 1) % ident::SHAPES.len()],
+                        };
+                        ui::plate(x + 84.0, y, 156.0, 38.0, th::GLASS_STRONG, th::STROKE);
+                        ui::text_c(label, x + 162.0, y + 26.0, 18.0, th::WHITE);
+                        let mut hx = x + 290.0;
+                        if self.icon_kind != 0 && self.icon_kind != ident::CUSTOM {
+                            // Colour of the emblem: click for the next one.
+                            let c = ident::COLOURS[self.icon_colour as usize % ident::COLOURS.len()].1;
+                            let over = hit(hx, y, 38.0, 38.0);
+                            mq::draw_rectangle(hx + 5.0, y + 5.0, 28.0, 28.0, mq::Color::from_rgba(c[0], c[1], c[2], 255));
+                            mq::draw_rectangle_lines(hx, y, 38.0, 38.0, 2.0, if over { th::WHITE } else { th::STROKE });
+                            if over && clicked() {
+                                self.icon_colour = (self.icon_colour + 1) % ident::COLOURS.len() as u8;
+                            }
+                            hx += 48.0;
+                        }
+                        if hx + 150.0 < x + w {
+                            ui::text("or drop a PNG", hx, y + 17.0, 15.0, th::QUIET);
+                            ui::text("on this window", hx, y + 33.0, 15.0, th::QUIET);
+                        }
+                        y += 56.0;
+                    }
                     if let Some(e) = &self.error {
                         ui::plate(x, y, w, 34.0, th::GLASS_STRONG, th::DANGER);
                         ui::text(e, x + 12.0, y + 23.0, 18.0, th::DANGER);
@@ -604,7 +765,7 @@ impl Menu {
                         1 => "1 GAME ON YOUR NETWORK".to_string(),
                         n => format!("{n} GAMES ON YOUR NETWORK"),
                     };
-                    let bh = 70.0;
+                    let bh = if sh < 800.0 { 58.0 } else { 70.0 };
                     if big_button(x, y, w, bh, "HOST & PLAY", "CREATE A MATCH  -  BOTS FILL THE EMPTY SLOTS", true) {
                         self.go(2);
                     }
@@ -888,6 +1049,10 @@ impl Menu {
                             if row("SHOW FPS AND PING", on_off(self.prefs.show_fps), y) != 0 {
                                 self.prefs.show_fps = !self.prefs.show_fps;
                             }
+                            y += 54.0;
+                            if row("CHECK FOR UPDATES", on_off(self.updates), y) != 0 {
+                                self.updates = !self.updates;
+                            }
                             y += 72.0;
                             ui::text("Field of view is vertical, in degrees. Aiming down a sight narrows it.", x, y, 18.0, th::QUIET);
                             ui::text("Lower the shadows on an older graphics card. F3 shows FPS in a match.", x, y + 24.0, 18.0, th::QUIET);
@@ -909,7 +1074,8 @@ impl Menu {
                             let keys = [
                                 "WASD move    SHIFT sprint    SPACE jump / climb    CTRL or C crouch",
                                 "LMB fire    RMB aim    R reload    Q / F / wheel sidearm    G grenade",
-                                "T sight    L loadout    M team    TAB scoreboard    ESC pause",
+                                "V melee    T sight    L loadout    M team    TAB scoreboard    ESC pause",
+                                "ENTER chat to all    U chat to your team    (TAB switches while typing)",
                                 "Crouch while sprinting to slide.    - / = change sensitivity in a match.",
                             ];
                             for (i, l) in keys.iter().enumerate() {
@@ -918,6 +1084,27 @@ impl Menu {
                         }
                     }
                     ui::text("ESC back", x, sh - 20.0, 18.0, th::QUIET);
+                }
+            }
+
+            // A newer release, top right: one click downloads it, puts
+            // it in place and starts it.
+            {
+                let (line, c, act) = match &self.updater.state {
+                    Up::Available(tag) => (format!("UPDATE AVAILABLE   {tag}"), th::WARNING, true),
+                    Up::Installing(tag) => (format!("DOWNLOADING {tag}{}", [".", "..", "..."][(now * 2.0) as usize % 3]), th::COBALT_BRIGHT, false),
+                    Up::Failed(e) => (format!("UPDATE FAILED: {e}"), th::DANGER, false),
+                    _ => (String::new(), th::WHITE, false),
+                };
+                if !line.is_empty() {
+                    let bw = if act { 190.0 } else { 0.0 };
+                    let pw = (ui::width(&line, 18.0) + 36.0 + bw).min(sw - 48.0);
+                    let (px, py) = (sw - pw - 40.0, 30.0);
+                    ui::plate(px, py, pw, 44.0, th::GLASS_STRONG, c);
+                    ui::text(&line, px + 16.0, py + 29.0, 18.0, c);
+                    if act && button(px + pw - bw - 4.0, py + 5.0, bw, 34.0, "UPDATE & RESTART", Some(th::EMBER), 18.0) {
+                        self.updater.install();
+                    }
                 }
             }
 

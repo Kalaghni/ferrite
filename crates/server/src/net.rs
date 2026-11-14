@@ -16,6 +16,23 @@ struct Conn {
     ack_feed: u32,
     fx_sent: u32,
     team_switch: Instant,
+    /// Newest chat line the client has, the id of the last thing it said,
+    /// and how many more messages it may send right now.
+    chat_ack: u32,
+    chat_id: u32,
+    chat_budget: f32,
+    chat_at: Instant,
+    icon_at: Instant,
+}
+
+/// The roster, cut into datagrams.
+fn roster_msgs(game: &Game) -> Vec<Vec<u8>> {
+    let r = game.roster();
+    let total = r.len() as u8;
+    if r.is_empty() {
+        return vec![encode(&S2C::Roster { at: 0, total: 0, entries: Vec::new() })];
+    }
+    r.chunks(ROSTER_PART).enumerate().map(|(k, c)| encode(&S2C::Roster { at: (k * ROSTER_PART) as u8, total, entries: c.to_vec() })).collect()
 }
 
 /// The address this machine uses on its local network, if it has one.
@@ -178,16 +195,26 @@ pub fn run(cfg: Config, sock: UdpSocket, stop: Arc<AtomicBool>) {
                 let bytes = encode(&S2C::Snap(snap));
                 bytes_out += bytes.len() as u64;
                 let _ = sock.send_to(&bytes, addr);
+                // Chat is resent until the client says it has it.
+                let lines = game.chat_for(c.player, c.chat_ack);
+                if !lines.is_empty() {
+                    let bytes = encode(&S2C::Chat(lines));
+                    bytes_out += bytes.len() as u64;
+                    let _ = sock.send_to(&bytes, addr);
+                }
             }
         }
         if t % 30 == 0 && !conns.is_empty() {
-            let bytes = encode(&S2C::Roster(game.roster()));
-            // Round results change rarely: once a second is plenty.
-            let rounds = (t % 60 == 0).then(|| encode(&game.rounds_msg()));
+            let parts = roster_msgs(&game);
+            // Round results and who wears which icon change rarely: once
+            // a second is plenty.
+            let slow = (t % 60 == 0).then(|| [encode(&game.rounds_msg()), encode(&game.icons_msg())]);
             for addr in conns.keys() {
-                let _ = sock.send_to(&bytes, addr);
-                if let Some(r) = &rounds {
-                    let _ = sock.send_to(r, addr);
+                for p in &parts {
+                    let _ = sock.send_to(p, addr);
+                }
+                for m in slow.iter().flatten() {
+                    let _ = sock.send_to(m, addr);
                 }
             }
         }
@@ -224,7 +251,7 @@ pub fn run(cfg: Config, sock: UdpSocket, stop: Arc<AtomicBool>) {
 fn handle(game: &mut Game, conns: &mut HashMap<SocketAddr, Conn>, sock: &UdpSocket, addr: SocketAddr, data: &[u8], log: bool) {
     let Some(msg) = decode::<C2S>(data) else { return };
     match msg {
-        C2S::Hello { proto, name, spectator, team } => {
+        C2S::Hello { proto, name, spectator, team, uuid, icon } => {
             if proto != PROTO {
                 let _ = sock.send_to(&encode(&S2C::Reject(format!("protocol mismatch: server speaks v{}", PROTO))), addr);
                 return;
@@ -234,7 +261,9 @@ fn handle(game: &mut Game, conns: &mut HashMap<SocketAddr, Conn>, sock: &UdpSock
                     let _ = sock.send_to(&encode(&S2C::Reject("server full".into())), addr);
                     return;
                 }
-                let player = if spectator { None } else { game.join_team(&name, team) };
+                // Not shown their own arrival, nor anything said before it.
+                let chat_ack = game.chat_seq + if spectator { 0 } else { 1 };
+                let player = if spectator { None } else { game.join_as(&name, team, uuid, &icon) };
                 if !spectator && player.is_none() {
                     let _ = sock.send_to(&encode(&S2C::Reject("server full".into())), addr);
                     return;
@@ -247,7 +276,18 @@ fn handle(game: &mut Game, conns: &mut HashMap<SocketAddr, Conn>, sock: &UdpSock
                 }
                 conns.insert(
                     addr,
-                    Conn { player, last_heard: Instant::now(), ack_feed: game.feed.len() as u32, fx_sent: game.fx_seq, team_switch: Instant::now() - Duration::from_secs(60) },
+                    Conn {
+                        player,
+                        last_heard: Instant::now(),
+                        ack_feed: game.feed.len() as u32,
+                        fx_sent: game.fx_seq,
+                        team_switch: Instant::now() - Duration::from_secs(60),
+                        chat_ack: chat_ack.min(game.chat_seq),
+                        chat_id: 0,
+                        chat_budget: 4.0,
+                        chat_at: Instant::now(),
+                        icon_at: Instant::now() - Duration::from_secs(1),
+                    },
                 );
             }
             let c = &conns[&addr];
@@ -257,18 +297,23 @@ fn handle(game: &mut Game, conns: &mut HashMap<SocketAddr, Conn>, sock: &UdpSock
             };
             let w = S2C::Welcome { id, team, seed: game.cfg.seed, map: game.world.map, feed_id: c.ack_feed, tick: game.tick };
             let _ = sock.send_to(&encode(&w), addr);
-            let _ = sock.send_to(&encode(&S2C::Roster(game.roster())), addr);
+            for p in roster_msgs(game) {
+                let _ = sock.send_to(&p, addr);
+            }
             let _ = sock.send_to(&encode(&game.rounds_msg()), addr);
+            let _ = sock.send_to(&encode(&game.icons_msg()), addr);
         }
-        C2S::Cmds { mut cmds, ack_feed, kit, prim, side, skin } => {
+        C2S::Cmds { mut cmds, ack_feed, kit, prim, side, skin, wskin, ack_chat } => {
             let Some(c) = conns.get_mut(&addr) else { return };
             c.last_heard = Instant::now();
             c.ack_feed = c.ack_feed.max(ack_feed.min(game.feed.len() as u32));
+            c.chat_ack = c.chat_ack.max(ack_chat.min(game.chat_seq));
             if let Some(i) = c.player {
                 let (kit, prim, side) = ferrite_shared::sim::fix_loadout(kit, prim, side);
                 let p = &mut game.players[i];
                 (p.next_kit, p.next_prim, p.next_side) = (kit, prim, side);
                 p.skin = skin % ferrite_shared::sim::SKINS.len() as u8;
+                p.next_wskin = wskin; // checked against the weapons at the next deploy
                 cmds.truncate(8);
                 cmds.sort_by_key(|c| c.seq);
                 for cmd in cmds {
@@ -288,7 +333,41 @@ fn handle(game: &mut Game, conns: &mut HashMap<SocketAddr, Conn>, sock: &UdpSock
                 if log {
                     println!("[{}] {} switched to team {}", game.tick, game.players[i].name, team);
                 }
-                let _ = sock.send_to(&encode(&S2C::Roster(game.roster())), addr);
+                for p in roster_msgs(game) {
+                    let _ = sock.send_to(&p, addr);
+                }
+            }
+        }
+        C2S::Chat { id, team, text } => {
+            let Some(c) = conns.get_mut(&addr) else { return };
+            c.last_heard = Instant::now();
+            let Some(i) = c.player else { return };
+            if id <= c.chat_id {
+                return; // a repeat of something already said
+            }
+            c.chat_id = id;
+            // A message every second and a half, four in a burst.
+            let now = Instant::now();
+            c.chat_budget = (c.chat_budget + now.duration_since(c.chat_at).as_secs_f32() / 1.5).min(4.0);
+            c.chat_at = now;
+            if c.chat_budget < 1.0 {
+                return;
+            }
+            c.chat_budget -= 1.0;
+            if game.say(i, team, &text) && log {
+                if let Some(l) = game.chat.last() {
+                    println!("[{}] <{}{}> {}", game.tick, l.name, if team { " (team)" } else { "" }, l.text);
+                }
+            }
+        }
+        C2S::WantIcon(id) => {
+            let Some(c) = conns.get_mut(&addr) else { return };
+            if c.icon_at.elapsed() < Duration::from_millis(40) {
+                return;
+            }
+            c.icon_at = Instant::now();
+            if let Some(p) = game.players.get(id as usize).filter(|p| p.icon_hash != 0) {
+                let _ = sock.send_to(&encode(&S2C::Icon { id, hash: p.icon_hash, rgba: p.icon.clone() }), addr);
             }
         }
         C2S::Lobby { vote, ready } => {

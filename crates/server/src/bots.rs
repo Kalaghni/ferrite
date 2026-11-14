@@ -2,7 +2,7 @@
 //! and goes through the same validation and simulation path.
 
 use crate::Game;
-use ferrite_shared::proto::{btn, Cmd};
+use ferrite_shared::proto::{btn, btn2, Cmd};
 use ferrite_shared::rng::Rng;
 use ferrite_shared::sim;
 use ferrite_shared::{eligible, vec2, vec3, wrap_angle, Vec2, Vec3, NUM_POINTS};
@@ -286,6 +286,7 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
     let mut ads = false;
     let mut engaged = false;
     let mut crouch = false;
+    let mut melee = false;
     if let Some(j) = b.target {
         let tp = &g.players[j];
         let visible = t - b.last_seen < 12;
@@ -344,6 +345,8 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
                 mv = right * (if b.strafe == 0.0 { 1.0 } else { b.strafe }) - toh * 0.7;
             }
             ads = kit != 1 && d > 28.0;
+            // Close enough to touch: hit them.
+            melee = d < 1.9 && t >= b.acquire_at;
             // Holding still in a firefight: drop to a knee for a steadier shot.
             crouch = mv.length_squared() < 0.01 && d > 15.0;
             if t >= b.acquire_at {
@@ -466,6 +469,9 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
     }
     if fire {
         cmd.buttons |= btn::FIRE;
+    }
+    if melee && dy.abs() < 0.5 {
+        cmd.more |= btn2::MELEE;
     }
     // Dry in a firefight: draw the sidearm instead of reloading in the open.
     if (engaged && !side && me.st.ammo == 0 && me.st.ammo_alt > 0) || (!engaged && side) {

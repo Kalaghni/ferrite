@@ -1,6 +1,6 @@
 //! Everything that turns game state into low-poly geometry.
 
-use ferrite_shared::sim::weapon_def;
+use ferrite_shared::sim::{self, weapon_def};
 use crate::gfx::{rgb, shade, Col, Mesh};
 use ferrite_shared::glam::{vec3, Mat4, Vec3};
 use ferrite_shared::map::*;
@@ -311,6 +311,10 @@ pub struct PlayerView {
     pub gun: u8,
     /// Look: index into `sim::SKINS`.
     pub skin: u8,
+    /// Finish on the weapon in hand: index into `sim::WEAPON_SKINS`.
+    pub wskin: u8,
+    /// 0..1 through a melee strike.
+    pub melee: f32,
     pub phase: f32,
     pub moving: f32,
     /// Smoothed 0..1 pose weights.
@@ -517,12 +521,18 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
     // ---- arms and weapon ----
     // The muzzle follows the aim, drops for a sprint or a reload, and kicks
     // when a shot goes off.
-    let relaxed = (0.5 * sprint + 0.3 * air) * (1.0 - p.fire) + 0.55 * p.reload + 1.1 * fall;
+    let relaxed = (0.5 * sprint + 0.3 * air) * (1.0 - p.fire) * (1.0 - p.melee) + 0.55 * p.reload + 1.1 * fall;
     let aim = -p.pitch * (1.0 - 0.6 * sprint) * (1.0 - fall) - lean + relaxed - 0.07 * p.fire;
+    // A melee strike drives the weapon forward and across.
     let arms = body
-        * Mat4::from_translation(vec3(0.0, 1.36, -0.045 * p.fire))
+        * Mat4::from_translation(vec3(0.0, 1.36, -0.045 * p.fire + 0.3 * p.melee))
         * Mat4::from_rotation_x(aim)
-        * Mat4::from_rotation_y(0.45 * sprint * (1.0 - p.fire) + 0.25 * p.reload);
+        * Mat4::from_rotation_y(0.45 * sprint * (1.0 - p.fire) * (1.0 - p.melee) + 0.25 * p.reload + 0.6 * p.melee);
+    // The weapon's finish replaces its bare metal.
+    let metal = match sim::weapon_skin(p.wskin).body {
+        Some(c) => tint(c, 0.0),
+        None => metal,
+    };
     let sidearm = p.flags & flag::SIDEARM != 0;
     let glen = if sidearm { 0.12 } else { [0.36, 0.3, 0.52][p.gun as usize % 3] };
     let gx = -0.2;
@@ -793,10 +803,14 @@ pub struct ViewModel {
     pub seq: u32,
     /// Draw only the weapon, placed by this matrix (no arms, no motion).
     pub preview: Option<Mat4>,
+    /// Finish: index into `sim::WEAPON_SKINS`.
+    pub skin: u8,
+    /// Melee strike: 1 as it starts, falling to 0 when it is over.
+    pub melee: f32,
 }
 
 /// A weapon on its own, placed by `g`. Gun space: muzzle toward -Z, +Y up.
-pub fn gun_model(m: &mut Mesh, wid: u8, team: u8, g: Mat4) {
+pub fn gun_model(m: &mut Mesh, wid: u8, team: u8, skin: u8, g: Mat4) {
     let mut add = Mesh::default();
     let v = ViewModel {
         sight: sights_for(wid)[0],
@@ -821,6 +835,8 @@ pub fn gun_model(m: &mut Mesh, wid: u8, team: u8, g: Mat4) {
         time: 0.0,
         seq: 0,
         preview: Some(g),
+        skin,
+        melee: 0.0,
     };
     viewmodel(m, &mut add, &v);
 }
@@ -829,9 +845,9 @@ pub fn gun_model(m: &mut Mesh, wid: u8, team: u8, g: Mat4) {
 /// by `turn` radians, and scaled so its profile fits a `w` x `h` box
 /// centred on (`cx`, `cy`).
 #[allow(clippy::too_many_arguments)]
-pub fn gun_icon(m: &mut Mesh, wid: u8, team: u8, cx: f32, cy: f32, w: f32, h: f32, turn: f32) {
+pub fn gun_icon(m: &mut Mesh, wid: u8, team: u8, skin: u8, cx: f32, cy: f32, w: f32, h: f32, turn: f32) {
     let mut probe = Mesh::default();
-    gun_model(&mut probe, wid, team, Mat4::IDENTITY);
+    gun_model(&mut probe, wid, team, skin, Mat4::IDENTITY);
     let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
     for v in &probe.v {
         let p = Vec3::from(v.pos);
@@ -847,7 +863,7 @@ pub fn gun_icon(m: &mut Mesh, wid: u8, team: u8, cx: f32, cy: f32, w: f32, h: f3
         * Mat4::from_rotation_x(0.14)
         * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2 + turn)
         * Mat4::from_translation(-(lo + hi) * 0.5);
-    gun_model(m, wid, team, g);
+    gun_model(m, wid, team, skin, g);
 }
 
 /// First-person weapon and arms, built in camera space (camera looks down
@@ -855,11 +871,15 @@ pub fn gun_icon(m: &mut Mesh, wid: u8, team: u8, cx: f32, cy: f32, w: f32, h: f3
 pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
     use std::f32::consts::PI;
     let tc = team_col(v.team);
-    let accent = rgb(tc[0], tc[1], tc[2]);
-    let metal = rgb(0.2, 0.2, 0.23);
-    let dark = rgb(0.11, 0.11, 0.13);
+    // A finish replaces whichever of the weapon's own colours it names.
+    let fin = sim::weapon_skin(sim::fix_weapon_skin(v.wid, v.skin));
+    let pick = |own: Col, with: Option<[f32; 3]>| with.map_or(own, |c| rgb(c[0], c[1], c[2]));
+    let accent = pick(rgb(tc[0], tc[1], tc[2]), fin.accent);
+    let metal = pick(rgb(0.2, 0.2, 0.23), fin.body);
+    let dark = pick(rgb(0.11, 0.11, 0.13), fin.detail);
     // The self-loaders wear polymer where the older guns wear wood.
-    let wood = if matches!(v.wid, 7 | 9 | 14) { rgb(0.17, 0.18, 0.17) } else { rgb(0.45, 0.3, 0.17) };
+    let wood = pick(if matches!(v.wid, 7 | 9 | 14) { rgb(0.17, 0.18, 0.17) } else { rgb(0.45, 0.3, 0.17) }, fin.furniture);
+    let grip_wood = pick(rgb(0.45, 0.3, 0.17), fin.furniture);
     let sleeve = rgb(tc[0] * 0.45, tc[1] * 0.45, tc[2] * 0.48);
     let cuff = rgb(tc[0] * 0.3, tc[1] * 0.3, tc[2] * 0.33);
     let glove = rgb(0.42, 0.34, 0.25);
@@ -894,6 +914,9 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
     let pump = if matches!(v.wid, 1 | 13) { cyc } else { 0.0 };
     let bolt = if matches!(v.wid, 2 | 15) { cyc } else { 0.0 };
     let draw = ease(v.draw.clamp(0.0, 1.0));
+    // Melee: the weapon is driven forward and across, then brought back.
+    let strike = if v.melee > 0.0 { ((1.0 - v.melee) / 0.62).clamp(0.0, 1.0) } else { 1.0 };
+    let jab = (seg(strike, 0.0, 0.3) * (1.0 - seg(strike, 0.36, 1.0))).min(1.0);
 
     let k = 1.0 - v.ads * 0.85;
     let mut pos = hip + (aim - hip) * v.ads;
@@ -904,9 +927,10 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
     pos.x -= tilt * 0.05;
     pos.y -= -tilt * 0.06 + v.sprint * 0.06 + draw * 0.34 + v.land * 0.05 * k + v.mantle * 0.3 - seat * 0.014 - v.air * 0.012 * k;
     pos.x += (v.slide * 0.03 - bolt * 0.012) * k;
-    let rot = Mat4::from_rotation_x(v.recoil * 0.09 + tilt * 0.36 - v.sprint * 0.25 - draw * 0.9 - v.mantle * 0.8 - v.land * 0.05 * k + pump * 0.03)
-        * Mat4::from_rotation_y(v.sprint * 0.5 + tilt * 0.22 + draw * 0.3 + bolt * 0.04)
-        * Mat4::from_rotation_z(-tilt * 0.55 - v.strafe * 0.05 * k + v.slide * 0.28 * k - bolt * 0.16 * k);
+    pos += vec3(-0.1, 0.1, -0.3) * jab;
+    let rot = Mat4::from_rotation_x(v.recoil * 0.09 + tilt * 0.36 - v.sprint * 0.25 * (1.0 - jab) - draw * 0.9 - v.mantle * 0.8 - v.land * 0.05 * k + pump * 0.03 - jab * 0.25)
+        * Mat4::from_rotation_y(v.sprint * 0.5 * (1.0 - jab) + tilt * 0.22 + draw * 0.3 + bolt * 0.04 + jab * 1.15)
+        * Mat4::from_rotation_z(-tilt * 0.55 - v.strafe * 0.05 * k + v.slide * 0.28 * k - bolt * 0.16 * k + jab * 0.7);
     let g = v.preview.unwrap_or(Mat4::from_translation(pos) * rot);
 
     // Where the hands go, in gun space, and the magazine if there is one.
@@ -990,7 +1014,7 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
                     m.tube(&g, vec3(0.0, 0.012, -0.035), 0.034, 0.0, 0.04, 12, shade(metal, 1.25));
                     m.tube(&g, vec3(0.0, 0.03, -0.31), 0.014, 0.008, 0.07, 20, metal);
                     m.obox(&g, vec3(0.0, 0.05, -0.3), vec3(0.005, 0.006, 0.075), dark);
-                    m.obox(&(g * Mat4::from_rotation_x(-0.25)), vec3(0.0, -0.08, 0.004), vec3(0.023, 0.062, 0.033), rgb(0.45, 0.3, 0.17));
+                    m.obox(&(g * Mat4::from_rotation_x(-0.25)), vec3(0.0, -0.08, 0.004), vec3(0.023, 0.062, 0.033), grip_wood);
                     -0.39
                 }
                 11 => {
@@ -1005,7 +1029,7 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
                         m.tube(&g, vec3(x, 0.03, -0.2), 0.016, 0.011, 0.12, 20, shade(metal, 1.2));
                     }
                     m.obox(&g, vec3(0.0, 0.03, -0.1), vec3(0.034, 0.02, 0.03), dark);
-                    m.obox(&(g * Mat4::from_rotation_x(-0.25)), vec3(0.0, -0.08, 0.004), vec3(0.023, 0.062, 0.033), rgb(0.45, 0.3, 0.17));
+                    m.obox(&(g * Mat4::from_rotation_x(-0.25)), vec3(0.0, -0.08, 0.004), vec3(0.023, 0.062, 0.033), grip_wood);
                     -0.33
                 }
                 _ => -0.27,

@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 /// Remote players are drawn this many server ticks in the past so there is
 /// always a pair of snapshots to interpolate between (100 ms at 60 Hz).
 pub const INTERP_TICKS: f64 = 6.0;
+/// Snapshots kept (30 a second).
+const HISTORY: usize = 260;
 
 pub struct Welcome {
     pub id: u8,
@@ -23,6 +25,19 @@ pub struct Net {
     sock: UdpSocket,
     pub snaps: VecDeque<Snapshot>,
     pub roster: Vec<RosterEntry>,
+    /// A roster still arriving, part by part.
+    roster_build: Vec<RosterEntry>,
+    /// Chat lines that have arrived and not been shown yet, and the newest
+    /// one acknowledged.
+    pub chat_in: Vec<ChatLine>,
+    pub ack_chat: u32,
+    /// Things we said that are still being repeated to the server:
+    /// (id, team only, text, sends left, when to send next).
+    chat_out: Vec<(u32, bool, String, u8, f64)>,
+    chat_id: u32,
+    /// Who wears an icon (id, hash), and icons that have just arrived.
+    pub icon_ids: Vec<(u8, u32)>,
+    pub icon_in: Vec<(u8, u32, Vec<u8>)>,
     /// Rounds won by each team on this server, and its recent rounds.
     pub wins: [u16; 2],
     pub rounds: Vec<RoundResult>,
@@ -50,11 +65,11 @@ pub struct Remote {
 
 impl Net {
     /// Blocking handshake with retries (runs before the first frame).
-    pub fn connect(addr: SocketAddr, name: &str, spectator: bool, team: u8) -> Result<(Net, Welcome), String> {
+    pub fn connect(addr: SocketAddr, name: &str, spectator: bool, team: u8, uuid: [u8; 16], icon: &[u8]) -> Result<(Net, Welcome), String> {
         let sock = UdpSocket::bind(("0.0.0.0", 0)).map_err(|e| e.to_string())?;
         sock.connect(addr).map_err(|e| e.to_string())?;
         sock.set_read_timeout(Some(Duration::from_millis(100))).ok();
-        let hello = encode(&C2S::Hello { proto: PROTO, name: name.to_string(), spectator, team });
+        let hello = encode(&C2S::Hello { proto: PROTO, name: name.to_string(), spectator, team, uuid, icon: icon.to_vec() });
         let start = Instant::now();
         let mut buf = [0u8; 4096];
         let mut welcome = None;
@@ -81,6 +96,13 @@ impl Net {
                 sock,
                 snaps: VecDeque::new(),
                 roster: Vec::new(),
+                roster_build: Vec::new(),
+                chat_in: Vec::new(),
+                ack_chat: 0,
+                chat_out: Vec::new(),
+                chat_id: 0,
+                icon_ids: Vec::new(),
+                icon_in: Vec::new(),
                 wins: [0; 2],
                 rounds: Vec::new(),
                 ack_feed: feed_id,
@@ -132,11 +154,36 @@ impl Net {
                     }
                     self.fresh.push(s.clone());
                     self.snaps.push_back(s);
-                    while self.snaps.len() > 40 {
+                    // Several seconds are kept: the killcam replays them.
+                    while self.snaps.len() > HISTORY {
                         self.snaps.pop_front();
                     }
                 }
-                Some(S2C::Roster(r)) => self.roster = r,
+                Some(S2C::Roster { at, total, entries }) => {
+                    if at == 0 {
+                        self.roster_build.clear();
+                    }
+                    if at as usize == self.roster_build.len() {
+                        self.roster_build.extend(entries);
+                        if self.roster_build.len() >= total as usize {
+                            self.roster = std::mem::take(&mut self.roster_build);
+                        }
+                    }
+                }
+                Some(S2C::Chat(lines)) => {
+                    for l in lines {
+                        if l.seq > self.ack_chat {
+                            self.ack_chat = l.seq;
+                            self.chat_in.push(l);
+                        }
+                    }
+                }
+                Some(S2C::Icons(list)) => self.icon_ids = list,
+                Some(S2C::Icon { id, hash, rgba }) => {
+                    if rgba.len() == ICON_BYTES && icon_hash(&rgba) == hash {
+                        self.icon_in.push((id, hash, rgba));
+                    }
+                }
                 Some(S2C::Rounds { wins, rounds }) => {
                     self.wins = wins;
                     self.rounds = rounds;
@@ -145,6 +192,23 @@ impl Net {
                 _ => {}
             }
         }
+        // Chat rides on plain UDP: say each thing three times.
+        for m in self.chat_out.iter_mut().filter(|m| now >= m.4) {
+            let _ = self.sock.send(&encode(&C2S::Chat { id: m.0, team: m.1, text: m.2.clone() }));
+            m.3 -= 1;
+            m.4 = now + 0.12;
+        }
+        self.chat_out.retain(|m| m.3 > 0);
+    }
+
+    /// Say something to everyone, or to our own side.
+    pub fn say(&mut self, team: bool, text: &str) {
+        self.chat_id += 1;
+        self.chat_out.push((self.chat_id, team, text.to_string(), 3, 0.0));
+    }
+
+    pub fn want_icon(&self, id: u8) {
+        let _ = self.sock.send(&encode(&C2S::WantIcon(id)));
     }
 
     /// Tick-time at which remote entities are displayed right now.
@@ -152,7 +216,7 @@ impl Net {
         now * 60.0 + self.clock_offset - INTERP_TICKS
     }
 
-    pub fn send_cmds(&mut self, cmds: &[Cmd], loadout: (u8, u8, u8), skin: u8, now: f64) {
+    pub fn send_cmds(&mut self, cmds: &[Cmd], loadout: (u8, u8, u8), skin: u8, wskin: [u8; 2], now: f64) {
         let (kit, prim, side) = loadout;
         if let Some(c) = cmds.last() {
             self.sent.push_back((c.seq, now));
@@ -160,7 +224,7 @@ impl Net {
                 self.sent.pop_front();
             }
         }
-        let _ = self.sock.send(&encode(&C2S::Cmds { cmds: cmds.to_vec(), ack_feed: self.ack_feed, kit, prim, side, skin }));
+        let _ = self.sock.send(&encode(&C2S::Cmds { cmds: cmds.to_vec(), ack_feed: self.ack_feed, kit, prim, side, skin, wskin, ack_chat: self.ack_chat }));
     }
 
     /// Ask the server to move us to `team`. Sent a few times because the
