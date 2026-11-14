@@ -9,4 +9,9 @@ services:
     # on UDP 27499) reaches the server; game traffic is UDP 27500.
     network_mode: host
     restart: unless-stopped
-    command: ["--port", "27500", "--bots", "12", "--name", "josh-docker"]
+    volumes:
+      - ferrite-data:/data
+    command: ["--port", "27500", "--bots", "12", "--name", "josh-docker", "--stats", "/data/ferrite-stats.txt"]
+
+volumes:
+  ferrite-data:
