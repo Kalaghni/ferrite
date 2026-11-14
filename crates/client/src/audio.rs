@@ -1,8 +1,239 @@
-//! All sound is synthesised at startup - the game ships no asset files.
+//! Sound effects are synthesised at startup. The one asset the game ships
+//! is its lobby track, built into the executable.
 
 use ferrite_shared::glam::Vec3;
 use ferrite_shared::rng::Rng;
-use macroquad::audio::{load_sound_from_bytes, play_sound, PlaySoundParams, Sound};
+use macroquad::audio::{load_sound_from_bytes, play_sound, set_sound_volume, PlaySoundParams, Sound};
+
+/// Songs that rotate on the launcher (and in a match, if that is switched
+/// on): the title shown as "now playing", and the file.
+///
+/// To add one: put the .ogg (44.1 kHz stereo) in `assets/` and add a line.
+/// Players can add their own without rebuilding, by putting .ogg or .wav
+/// files in a `music` folder next to the executable.
+static SONGS: &[(&str, &[u8])] = &[
+    ("Liquid Plasma - breadKernel", include_bytes!("../assets/liquid-plasma.ogg")),
+    ("Submariner - breadKernel", include_bytes!("../assets/submariner.ogg")),
+];
+
+/// The lobby has its own track.
+static LOBBY_SONG: (&str, &[u8]) = ("Foundrite Lobby - breadKernel", include_bytes!("../assets/foundrite-lobby.ogg"));
+
+#[derive(Clone)]
+enum Source {
+    Built(&'static [u8]),
+    File(std::path::PathBuf),
+}
+
+struct Song {
+    title: String,
+    src: Source,
+}
+
+/// Decoded on a worker thread: a token for `load_sound_from_bytes` and the
+/// length in seconds, or `None` if the file could not be read.
+type Decoded = Option<(Vec<u8>, f32)>;
+
+fn decode_in_background(src: &Source) -> std::sync::mpsc::Receiver<Decoded> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let src = src.clone();
+    std::thread::spawn(move || {
+        let pcm = match &src {
+            Source::Built(b) => quad_snd::decode(b),
+            Source::File(p) => std::fs::read(p).ok().and_then(|b| quad_snd::decode(&b)),
+        };
+        let _ = tx.send(pcm.map(|pcm| {
+            let secs = pcm.len() as f32 / 2.0 / 44100.0;
+            (quad_snd::stash(pcm), secs)
+        }));
+    });
+    rx
+}
+
+#[derive(Default)]
+struct Deck {
+    sound: Option<Sound>,
+    loading: Option<std::sync::mpsc::Receiver<Decoded>>,
+    /// Length of the loaded track, and how much of it is left to play.
+    secs: f32,
+    left: f32,
+    level: f32,
+    sent: f32,
+    playing: bool,
+}
+
+impl Deck {
+    /// Take a finished decode. `Some(false)` means the file was unreadable.
+    async fn poll(&mut self) -> Option<bool> {
+        let got = match self.loading.as_ref()?.try_recv() {
+            Ok(d) => d,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return None,
+            Err(_) => None,
+        };
+        self.loading = None;
+        let (token, secs) = match got {
+            Some(x) => x,
+            None => return Some(false),
+        };
+        match load_sound_from_bytes(&token).await {
+            Ok(s) => {
+                self.sound = Some(s);
+                self.secs = secs;
+                self.playing = false;
+                Some(true)
+            }
+            Err(_) => Some(false),
+        }
+    }
+
+    /// Fade toward audible or silent, start the track when first wanted,
+    /// and return true on the frame it finishes (never, when looped).
+    fn run(&mut self, want: bool, gain: f32, looped: bool, dt: f32) -> bool {
+        let target = if want { 1.0 } else { 0.0 };
+        let step = dt * if target > self.level { 0.9 } else { 0.45 };
+        self.level += (target - self.level).clamp(-step, step);
+        let Some(s) = &self.sound else { return false };
+        let v = gain * self.level * self.level;
+        if !self.playing {
+            if want {
+                self.playing = true;
+                self.left = self.secs;
+                self.sent = v;
+                play_sound(s, PlaySoundParams { looped, volume: v });
+            }
+            return false;
+        }
+        if (v - self.sent).abs() > 0.002 || (v == 0.0 && self.sent != 0.0) {
+            self.sent = v;
+            set_sound_volume(s, v);
+        }
+        if !looped {
+            self.left -= dt;
+            if self.left <= 0.0 {
+                self.playing = false;
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// Where the player is, as far as the music is concerned.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Scene {
+    Launcher,
+    Lobby,
+    Match,
+}
+
+/// Music: a rotation of songs on the launcher (and in a match, if the
+/// player wants it there) and a track of its own for the lobby. Songs are
+/// decoded in the background one at a time, as their turn comes.
+pub struct Music {
+    enabled: bool,
+    /// The player's switches and volume (0..1) from the settings.
+    pub on: bool,
+    pub in_match: bool,
+    pub vol: f32,
+    songs: Vec<Song>,
+    cur: usize,
+    deck: Deck,
+    lobby: Deck,
+}
+
+impl Music {
+    pub fn silent() -> Music {
+        Music { enabled: false, on: false, in_match: false, vol: 0.0, songs: Vec::new(), cur: 0, deck: Deck::default(), lobby: Deck::default() }
+    }
+
+    pub fn new(vol: f32) -> Music {
+        let mut songs: Vec<Song> = SONGS.iter().map(|(t, b)| Song { title: t.to_string(), src: Source::Built(b) }).collect();
+        // The player's own songs: a `music` folder next to the executable.
+        let dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("music")));
+        if let Some(Ok(rd)) = dir.map(std::fs::read_dir) {
+            let mut files: Vec<_> = rd.flatten().map(|e| e.path()).collect();
+            files.sort();
+            for p in files {
+                let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+                if ext == "ogg" || ext == "wav" {
+                    let title = p.file_stem().and_then(|s| s.to_str()).unwrap_or("Unknown").to_string();
+                    songs.push(Song { title, src: Source::File(p) });
+                }
+            }
+        }
+        let lobby = Deck { loading: Some(decode_in_background(&Source::Built(LOBBY_SONG.1))), ..Default::default() };
+        Music { enabled: true, on: true, in_match: false, vol, songs, cur: 0, deck: Deck::default(), lobby }
+    }
+
+    pub fn available(&self) -> bool {
+        self.enabled
+    }
+
+    /// More than one song in the rotation: there is something to skip to.
+    pub fn can_skip(&self) -> bool {
+        self.enabled && self.songs.len() > 1
+    }
+
+    /// Move on to the next song in the rotation.
+    pub fn skip(&mut self) {
+        if !self.can_skip() || self.deck.loading.is_some() {
+            return;
+        }
+        if let Some(s) = self.deck.sound.take() {
+            macroquad::audio::stop_sound(&s);
+        }
+        self.deck.playing = false;
+        self.cur = (self.cur + 1) % self.songs.len();
+    }
+
+    /// Title of the track that can be heard right now.
+    pub fn now_playing(&self) -> Option<&str> {
+        if !self.enabled || !self.on || self.vol <= 0.0 {
+            None
+        } else if self.deck.playing && self.deck.level > 0.05 {
+            self.songs.get(self.cur).map(|s| s.title.as_str())
+        } else if self.lobby.playing && self.lobby.level > 0.05 {
+            Some(LOBBY_SONG.0)
+        } else {
+            None
+        }
+    }
+
+    /// Call every frame.
+    pub async fn update(&mut self, scene: Scene, dt: f32) {
+        if !self.enabled {
+            return;
+        }
+        let want_songs = self.on && !self.songs.is_empty() && (scene == Scene::Launcher || (scene == Scene::Match && self.in_match));
+        let want_lobby = self.on && scene == Scene::Lobby;
+        // Under a firefight the music sits further back.
+        let gain = self.vol * 0.3 * if scene == Scene::Match { 0.6 } else { 1.0 };
+
+        self.lobby.poll().await;
+        self.lobby.run(want_lobby, gain, true, dt);
+
+        if self.deck.poll().await == Some(false) {
+            // Unreadable file: take it out of the rotation.
+            if self.cur < self.songs.len() {
+                self.songs.remove(self.cur);
+            }
+            if self.cur >= self.songs.len() {
+                self.cur = 0;
+            }
+        }
+        if want_songs && self.deck.sound.is_none() && self.deck.loading.is_none() {
+            if let Some(song) = self.songs.get(self.cur) {
+                self.deck.loading = Some(decode_in_background(&song.src));
+            }
+        }
+        let ended = self.deck.run(want_songs, gain, false, dt);
+        if ended && self.songs.len() > 1 {
+            // Free this one and let the next be decoded.
+            self.deck.sound = None;
+            self.cur = (self.cur + 1) % self.songs.len();
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Sfx {

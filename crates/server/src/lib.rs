@@ -18,6 +18,9 @@ pub use net::{run, spawn, ServerHandle};
 pub struct Config {
     pub port: u16,
     pub per_team: usize,
+    /// Most bots in the match at once. Slots beyond it stay empty until
+    /// a human takes them.
+    pub max_bots: usize,
     pub seed: u64,
     /// Index into `ferrite_shared::map::MAPS`.
     pub map: u8,
@@ -34,11 +37,22 @@ pub struct Config {
     pub name: String,
     /// Answer LAN discovery queries.
     pub discover: bool,
+    /// Where the players' records are kept between runs. `None` keeps
+    /// them in memory only.
+    pub stats_file: Option<std::path::PathBuf>,
+}
+
+/// Bot difficulty presets: a name and the skill it stands for. Skill
+/// divides reaction time and aim error.
+pub const DIFFICULTIES: [(&str, f32); 4] = [("RECRUIT", 0.55), ("REGULAR", 1.0), ("VETERAN", 1.5), ("ELITE", 2.2)];
+
+pub fn difficulty_by_name(s: &str) -> Option<f32> {
+    DIFFICULTIES.iter().find(|d| d.0.eq_ignore_ascii_case(s.trim())).map(|d| d.1)
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { port: DEFAULT_PORT, per_team: 12, seed: 0xFE221, map: 0, rotation: Vec::new(), lobby_secs: 0, tickets: 250, bot_skill: 1.0, log: false, name: host_name(), discover: true }
+        Config { port: DEFAULT_PORT, per_team: 12, max_bots: 64, seed: 0xFE221, map: 0, rotation: Vec::new(), lobby_secs: 0, tickets: 250, bot_skill: 1.0, log: false, name: host_name(), discover: true, stats_file: None }
     }
 }
 
@@ -81,7 +95,13 @@ pub struct Player {
     pub kills: u16,
     pub deaths: u16,
     pub score: u32,
+    /// Headshot kills this round.
+    pub heads: u16,
     pub bot: Option<Bot>,
+    /// A bot slot left empty by the bot limit: never deployed, not listed.
+    pub benched: bool,
+    /// Look of the soldier: index into `sim::SKINS`.
+    pub skin: u8,
     pub marked_until: u32,
     pub surge_until: u32,
     pub firing_until: u32,
@@ -143,6 +163,13 @@ pub struct Game {
     pub winner: u8,
     pub phase_until: u32,
     pub stats: Stats,
+    /// Finished rounds, oldest first, and rounds won by each team.
+    pub history: Vec<RoundResult>,
+    pub wins: [u16; 2],
+    round_start: u32,
+    /// Every player's record on this server, banked whenever their round
+    /// counters are reset. Keyed by (is a bot, name).
+    pub records: std::collections::HashMap<(bool, String), Totals>,
     /// Each team's current push target (bots mostly follow it).
     pub orders: [usize; 2],
     rng: Rng,
@@ -178,6 +205,10 @@ impl Game {
             winner: NEUTRAL,
             phase_until: 0,
             stats: Stats::default(),
+            history: Vec::new(),
+            wins: [0; 2],
+            round_start: 0,
+            records: load_records(cfg.stats_file.as_deref()),
             orders: [1, 3],
             rng: Rng::new(cfg.seed ^ 0x5EED),
             cfg,
@@ -209,7 +240,10 @@ impl Game {
                 kills: 0,
                 deaths: 0,
                 score: 0,
+                heads: 0,
                 bot: None,
+                benched: false,
+                skin: 0,
                 marked_until: 0,
                 surge_until: 0,
                 firing_until: 0,
@@ -223,6 +257,7 @@ impl Game {
             g.make_bot(&mut p);
             g.players.push(p);
         }
+        g.balance_bots();
         if g.cfg.lobby_secs > 0 {
             // Start in the lobby and wait there for the first player.
             g.phase = 2;
@@ -244,12 +279,67 @@ impl Game {
         p.next_side = if self.rng.below(2) == 0 { sim::SIDEARM_ID } else { sim::SIDEARMS[self.rng.below(sim::SIDEARMS.len() as u32) as usize] };
         p.vote = 255;
         p.ready = false;
+        // Bots turn out in a mix of looks.
+        p.skin = self.rng.below(sim::SKINS.len() as u32) as u8;
         let skill = self.cfg.bot_skill * self.rng.range(0.7, 1.15);
         p.bot = Some(Bot::new(self.cfg.seed ^ (i as u64 * 977 + 13), skill, i));
         p.kills = 0;
         p.deaths = 0;
         p.score = 0;
+        p.heads = 0;
         p.last_seq = 0;
+    }
+
+    /// Apply the bot limit: decide which bot slots are in the match. Bots
+    /// go to whichever side is short, so a few bots even up uneven teams.
+    /// Called whenever a human comes, goes or changes side.
+    pub fn balance_bots(&mut self) {
+        let n = self.players.len();
+        let humans = self.players.iter().filter(|p| p.bot.is_none()).count();
+        let total = self.cfg.max_bots.min(n - humans);
+        let count = |g: &Game, t: u8, human: bool| g.players.iter().filter(|p| p.team == t && p.bot.is_none() == human).count();
+        let free = [count(self, 0, false), count(self, 1, false)];
+        let mut size = [count(self, 0, true), count(self, 1, true)];
+        let mut want = [0usize; 2];
+        for _ in 0..total {
+            let t = if want[0] >= free[0] {
+                1
+            } else if want[1] >= free[1] {
+                0
+            } else if size[1] < size[0] {
+                1
+            } else {
+                0
+            };
+            want[t] += 1;
+            size[t] += 1;
+        }
+        let t = self.tick;
+        for team in 0..2u8 {
+            let mut left = want[team as usize];
+            // Bots already in the match keep their place first.
+            for pass in [false, true] {
+                for p in self.players.iter_mut().filter(|p| p.team == team && p.bot.is_some() && p.benched == pass) {
+                    if left > 0 {
+                        left -= 1;
+                        if p.benched {
+                            p.benched = false;
+                            p.respawn_at = t + 2 * TICK_HZ;
+                        }
+                    } else if !p.benched {
+                        p.benched = true;
+                        p.alive = false;
+                        p.hp = 0.0;
+                        p.marked_until = 0;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Bots in the match right now.
+    pub fn active_bots(&self) -> usize {
+        self.players.iter().filter(|p| p.bot.is_some() && !p.benched).count()
     }
 
     /// A human takes over a bot slot on the team with fewer humans.
@@ -268,13 +358,16 @@ impl Game {
         } else {
             0
         };
+        // An empty seat first, so no bot is pushed out mid-fight.
         let slot = self
             .players
             .iter()
-            .position(|p| p.team == team && p.bot.is_some())
+            .position(|p| p.team == team && p.bot.is_some() && p.benched)
+            .or_else(|| self.players.iter().position(|p| p.team == team && p.bot.is_some()))
             .or_else(|| self.players.iter().position(|p| p.bot.is_some()))?;
         let clean: String = name.chars().filter(|c| c.is_ascii_graphic()).take(14).collect();
         let t = self.tick;
+        self.bank(slot); // what the bot did stays with the bot
         let p = &mut self.players[slot];
         p.bot = None;
         p.name = if clean.is_empty() { format!("Player{}", slot) } else { clean };
@@ -289,7 +382,10 @@ impl Game {
         p.vote = 255;
         p.ready = false;
         p.alive = false;
+        p.benched = false;
+        p.skin = 0;
         p.respawn_at = t + 20;
+        self.balance_bots();
         Some(slot)
     }
 
@@ -315,6 +411,7 @@ impl Game {
             p.marked_until = 0;
             p.respawn_at = t + 3 * TICK_HZ;
         }
+        self.balance_bots();
         true
     }
 
@@ -322,9 +419,101 @@ impl Game {
         if i >= self.players.len() || self.players[i].bot.is_some() {
             return;
         }
+        self.bank(i);
+        self.save_records();
         let mut p = std::mem::replace(&mut self.players[i], dummy());
         self.make_bot(&mut p);
+        p.benched = false;
+        p.alive = false;
         self.players[i] = p;
+        self.balance_bots();
+    }
+
+    /// Add a player's round counters to their record and zero them. Called
+    /// wherever the counters are reset, so record + counters is always the
+    /// player's total.
+    fn bank(&mut self, i: usize) {
+        let p = &mut self.players[i];
+        if !p.name.is_empty() && (p.kills > 0 || p.deaths > 0 || p.score > 0) {
+            let r = self.records.entry((p.bot.is_some(), p.name.clone())).or_default();
+            r.kills += p.kills as u32;
+            r.deaths += p.deaths as u32;
+            r.score += p.score;
+            r.heads += p.heads as u32;
+        }
+        p.kills = 0;
+        p.deaths = 0;
+        p.score = 0;
+        p.heads = 0;
+    }
+
+    /// A player's record on this server, the round in progress included.
+    pub fn totals(&self, i: usize) -> Totals {
+        let p = &self.players[i];
+        let mut r = self.records.get(&(p.bot.is_some(), p.name.clone())).copied().unwrap_or_default();
+        r.kills += p.kills as u32;
+        r.deaths += p.deaths as u32;
+        r.score += p.score;
+        r.heads += p.heads as u32;
+        r
+    }
+
+    /// The round is decided: note how it went and credit everyone with it.
+    fn close_round(&mut self) {
+        let w = self.winner;
+        self.stats.rounds += 1;
+        if w < 2 {
+            self.wins[w as usize] += 1;
+        }
+        for p in self.players.iter().filter(|p| !p.name.is_empty()) {
+            let r = self.records.entry((p.bot.is_some(), p.name.clone())).or_default();
+            r.rounds += 1;
+            if p.team == w {
+                r.wins += 1;
+            }
+        }
+        let mvp = self.players.iter().max_by_key(|p| p.score);
+        self.history.push(RoundResult {
+            map: self.world.map,
+            winner: w,
+            tickets: [self.tickets[0].max(0) as u16, self.tickets[1].max(0) as u16],
+            secs: ((self.tick - self.round_start) / TICK_HZ).min(u16::MAX as u32) as u16,
+            mvp: mvp.map_or(String::new(), |p| p.name.clone()),
+            mvp_team: mvp.map_or(NEUTRAL, |p| p.team),
+            mvp_score: mvp.map_or(0, |p| p.score),
+        });
+        if self.history.len() > 32 {
+            self.history.remove(0);
+        }
+        self.save_records();
+    }
+
+    /// The last few rounds, for the scoreboard.
+    pub fn rounds_msg(&self) -> S2C {
+        let from = self.history.len().saturating_sub(8);
+        S2C::Rounds { wins: self.wins, rounds: self.history[from..].to_vec() }
+    }
+
+    /// Write the human players' records to the stats file, best first.
+    /// Bots are left out: theirs last only as long as the server runs.
+    pub fn save_records(&self) {
+        let Some(path) = &self.cfg.stats_file else { return };
+        let mut all: std::collections::HashMap<&str, Totals> =
+            self.records.iter().filter(|(k, _)| !k.0).map(|(k, v)| (k.1.as_str(), *v)).collect();
+        for (i, p) in self.players.iter().enumerate().filter(|(_, p)| p.bot.is_none() && !p.name.is_empty()) {
+            all.insert(p.name.as_str(), self.totals(i));
+        }
+        let mut rows: Vec<_> = all.into_iter().collect();
+        rows.sort_by(|a, b| b.1.score.cmp(&a.1.score).then(a.0.cmp(b.0)));
+        let mut out = String::from("# FERRITE player records: name kills deaths score headshots rounds wins\n");
+        for (name, r) in rows {
+            out += &format!("{name} {} {} {} {} {} {}\n", r.kills, r.deaths, r.score, r.heads, r.rounds, r.wins);
+        }
+        if let Err(e) = std::fs::write(path, out) {
+            if self.cfg.log {
+                println!("could not write {}: {e}", path.display());
+            }
+        }
     }
 
     pub fn owners(&self) -> [u8; NUM_POINTS] {
@@ -544,6 +733,7 @@ impl Game {
         if let Some(a) = attacker {
             if a != j {
                 self.players[a].kills += 1;
+                self.players[a].heads += head as u16;
                 self.players[a].score += if head { 125 } else { 100 };
                 killer_id = a as u8;
             }
@@ -569,6 +759,9 @@ impl Game {
     }
 
     fn spawn_player(&mut self, i: usize) {
+        if self.players[i].benched {
+            return;
+        }
         let t = self.tick;
         let team = self.players[i].team;
         let mut anchor = self.world.bases[team as usize];
@@ -864,11 +1057,10 @@ impl Game {
         self.grenades.clear();
         self.phase = 0;
         self.winner = NEUTRAL;
-        for p in self.players.iter_mut() {
-            p.kills = 0;
-            p.deaths = 0;
-            p.score = 0;
-            p.surge_until = 0;
+        self.round_start = self.tick;
+        for i in 0..self.players.len() {
+            self.bank(i);
+            self.players[i].surge_until = 0;
         }
         for i in 0..self.players.len() {
             self.spawn_player(i);
@@ -941,7 +1133,7 @@ impl Game {
                 self.tickets[1] = self.tickets[1].max(0);
                 self.phase = 1;
                 self.phase_until = t + 10 * TICK_HZ;
-                self.stats.rounds += 1;
+                self.close_round();
                 self.feed.push(Feed::MatchEnd { winner: self.winner });
             }
         } else if t >= self.phase_until {
@@ -1083,7 +1275,9 @@ impl Game {
     pub fn roster(&self) -> Vec<RosterEntry> {
         self.players
             .iter()
-            .map(|p| RosterEntry {
+            .enumerate()
+            .filter(|(_, p)| !p.benched)
+            .map(|(i, p)| RosterEntry {
                 id: p.id,
                 name: p.name.clone(),
                 team: p.team,
@@ -1095,9 +1289,28 @@ impl Game {
                 score: p.score,
                 bot: p.bot.is_some(),
                 ready: p.ready,
+                heads: p.heads,
+                total: self.totals(i),
+                skin: p.skin,
             })
             .collect()
     }
+}
+
+/// Read a stats file written by `Game::save_records`. Anything that does
+/// not parse is skipped.
+fn load_records(path: Option<&std::path::Path>) -> std::collections::HashMap<(bool, String), Totals> {
+    let mut m = std::collections::HashMap::new();
+    let Some(text) = path.and_then(|p| std::fs::read_to_string(p).ok()) else { return m };
+    for line in text.lines().filter(|l| !l.starts_with('#')) {
+        let mut f = line.split_whitespace();
+        let Some(name) = f.next() else { continue };
+        let n: Vec<u32> = f.filter_map(|x| x.parse().ok()).collect();
+        if n.len() == 6 && name.len() <= 14 {
+            m.insert((false, name.to_string()), Totals { kills: n[0], deaths: n[1], score: n[2], heads: n[3], rounds: n[4], wins: n[5] });
+        }
+    }
+    m
 }
 
 fn dummy() -> Player {
@@ -1124,7 +1337,10 @@ fn dummy() -> Player {
         kills: 0,
         deaths: 0,
         score: 0,
+        heads: 0,
         bot: None,
+        benched: false,
+        skin: 0,
         marked_until: 0,
         surge_until: 0,
         firing_until: 0,

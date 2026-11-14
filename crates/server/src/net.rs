@@ -182,8 +182,13 @@ pub fn run(cfg: Config, sock: UdpSocket, stop: Arc<AtomicBool>) {
         }
         if t % 30 == 0 && !conns.is_empty() {
             let bytes = encode(&S2C::Roster(game.roster()));
+            // Round results change rarely: once a second is plenty.
+            let rounds = (t % 60 == 0).then(|| encode(&game.rounds_msg()));
             for addr in conns.keys() {
                 let _ = sock.send_to(&bytes, addr);
+                if let Some(r) = &rounds {
+                    let _ = sock.send_to(r, addr);
+                }
             }
         }
         let w = w0.elapsed().as_secs_f64() * 1000.0;
@@ -253,8 +258,9 @@ fn handle(game: &mut Game, conns: &mut HashMap<SocketAddr, Conn>, sock: &UdpSock
             let w = S2C::Welcome { id, team, seed: game.cfg.seed, map: game.world.map, feed_id: c.ack_feed, tick: game.tick };
             let _ = sock.send_to(&encode(&w), addr);
             let _ = sock.send_to(&encode(&S2C::Roster(game.roster())), addr);
+            let _ = sock.send_to(&encode(&game.rounds_msg()), addr);
         }
-        C2S::Cmds { mut cmds, ack_feed, kit, prim, side } => {
+        C2S::Cmds { mut cmds, ack_feed, kit, prim, side, skin } => {
             let Some(c) = conns.get_mut(&addr) else { return };
             c.last_heard = Instant::now();
             c.ack_feed = c.ack_feed.max(ack_feed.min(game.feed.len() as u32));
@@ -262,6 +268,7 @@ fn handle(game: &mut Game, conns: &mut HashMap<SocketAddr, Conn>, sock: &UdpSock
                 let (kit, prim, side) = ferrite_shared::sim::fix_loadout(kit, prim, side);
                 let p = &mut game.players[i];
                 (p.next_kit, p.next_prim, p.next_side) = (kit, prim, side);
+                p.skin = skin % ferrite_shared::sim::SKINS.len() as u8;
                 cmds.truncate(8);
                 cmds.sort_by_key(|c| c.seq);
                 for cmd in cmds {

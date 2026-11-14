@@ -23,6 +23,9 @@ pub struct Net {
     sock: UdpSocket,
     pub snaps: VecDeque<Snapshot>,
     pub roster: Vec<RosterEntry>,
+    /// Rounds won by each team on this server, and its recent rounds.
+    pub wins: [u16; 2],
+    pub rounds: Vec<RoundResult>,
     pub ack_feed: u32,
     pub fresh: Vec<Snapshot>,
     clock_offset: f64,
@@ -78,6 +81,8 @@ impl Net {
                 sock,
                 snaps: VecDeque::new(),
                 roster: Vec::new(),
+                wins: [0; 2],
+                rounds: Vec::new(),
                 ack_feed: feed_id,
                 fresh: Vec::new(),
                 clock_offset: 0.0,
@@ -132,6 +137,10 @@ impl Net {
                     }
                 }
                 Some(S2C::Roster(r)) => self.roster = r,
+                Some(S2C::Rounds { wins, rounds }) => {
+                    self.wins = wins;
+                    self.rounds = rounds;
+                }
                 Some(S2C::Reject(why)) => self.rejected = Some(why),
                 _ => {}
             }
@@ -143,7 +152,7 @@ impl Net {
         now * 60.0 + self.clock_offset - INTERP_TICKS
     }
 
-    pub fn send_cmds(&mut self, cmds: &[Cmd], loadout: (u8, u8, u8), now: f64) {
+    pub fn send_cmds(&mut self, cmds: &[Cmd], loadout: (u8, u8, u8), skin: u8, now: f64) {
         let (kit, prim, side) = loadout;
         if let Some(c) = cmds.last() {
             self.sent.push_back((c.seq, now));
@@ -151,7 +160,7 @@ impl Net {
                 self.sent.pop_front();
             }
         }
-        let _ = self.sock.send(&encode(&C2S::Cmds { cmds: cmds.to_vec(), ack_feed: self.ack_feed, kit, prim, side }));
+        let _ = self.sock.send(&encode(&C2S::Cmds { cmds: cmds.to_vec(), ack_feed: self.ack_feed, kit, prim, side, skin }));
     }
 
     /// Ask the server to move us to `team`. Sent a few times because the

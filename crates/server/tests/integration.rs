@@ -218,7 +218,7 @@ fn udp_round_trip() {
             seq += 1;
             history.push(Cmd { seq, mz: 1, yaw: 1.0, ..Default::default() });
             let recent: Vec<Cmd> = history.iter().rev().take(3).rev().copied().collect();
-            sock.send(&encode(&C2S::Cmds { cmds: recent, ack_feed: 0, kit: 1, prim: 1, side: 4 })).unwrap();
+            sock.send(&encode(&C2S::Cmds { cmds: recent, ack_feed: 0, kit: 1, prim: 1, side: 4, skin: 2 })).unwrap();
         }
         if !asked_switch && start.elapsed() > Duration::from_millis(600) {
             asked_switch = true;
@@ -756,4 +756,104 @@ fn servers_answer_discovery_queries() {
     server.stop();
     let i = found.expect("no discovery reply");
     assert_eq!((i.proto, i.name.as_str(), i.map, i.humans, i.slots), (PROTO, "test box", 1, 0, 4));
+}
+
+#[test]
+fn difficulty_presets_have_names() {
+    use ferrite_server::{difficulty_by_name, DIFFICULTIES};
+    assert_eq!(difficulty_by_name("regular"), Some(1.0));
+    assert_eq!(difficulty_by_name(" Elite "), Some(DIFFICULTIES[3].1));
+    assert_eq!(difficulty_by_name("nightmare"), None);
+    // Harder presets are strictly more skilled.
+    assert!(DIFFICULTIES.windows(2).all(|w| w[0].1 < w[1].1));
+}
+
+#[test]
+fn rounds_and_player_records_are_kept() {
+    let file = std::env::temp_dir().join(format!("ferrite-stats-test-{}.txt", std::process::id()));
+    let _ = std::fs::remove_file(&file);
+    let conf = || Config { per_team: 3, tickets: 6, discover: false, stats_file: Some(file.clone()), ..Default::default() };
+    let mut g = Game::new(conf());
+    let me = g.join("tester").unwrap();
+    // Play two rounds to the end, noting what the roster said last.
+    let mut seen = Vec::new();
+    for _ in 0..60 * 60 * 20 {
+        let before = g.stats.rounds;
+        g.tick();
+        if g.stats.rounds != before {
+            seen.push(g.roster()[me].clone());
+            if g.stats.rounds == 2 {
+                break;
+            }
+        }
+    }
+    assert_eq!(g.history.len(), 2, "two rounds finished");
+    assert_eq!(g.wins[0] + g.wins[1], 2);
+    for r in &g.history {
+        assert!(r.winner < 2 && !r.mvp.is_empty() && r.secs > 0, "{r:?}");
+        assert!(r.tickets[0] == 0 || r.tickets[1] == 0);
+    }
+    let ferrite_shared::proto::S2C::Rounds { wins, rounds } = g.rounds_msg() else { panic!() };
+    assert_eq!((wins, rounds.len()), (g.wins, 2));
+    // The record spans rounds: round counters reset, totals do not.
+    let (first, second) = (&seen[0], &seen[1]);
+    assert_eq!(first.total.rounds, 1);
+    assert_eq!(second.total.rounds, 2);
+    assert_eq!(second.total.deaths, first.deaths as u32 + second.deaths as u32);
+    assert_eq!(second.total.score, first.score + second.score);
+    let my_wins = g.history.iter().filter(|r| r.winner == seen[0].team).count() as u32;
+    assert_eq!(second.total.wins, my_wins);
+    // Leaving and coming back under the same name keeps it.
+    let total = g.totals(me);
+    g.leave(me);
+    let again = g.join("tester").unwrap();
+    assert_eq!(g.roster()[again].total, total);
+    assert_eq!(g.roster()[again].kills, 0);
+    // And so does restarting the server: people are saved, bots are not.
+    let text = std::fs::read_to_string(&file).expect("stats file written");
+    assert!(text.lines().any(|l| l.starts_with("tester ")), "{text}");
+    assert_eq!(text.lines().filter(|l| !l.starts_with('#')).count(), 1, "{text}");
+    let mut fresh = Game::new(conf());
+    let back = fresh.join("tester").unwrap();
+    assert_eq!(fresh.roster()[back].total, total);
+    assert!(fresh.history.is_empty());
+    let _ = std::fs::remove_file(&file);
+}
+
+#[test]
+fn bot_limit_leaves_seats_empty_and_evens_the_sides() {
+    let mut g = Game::new(Config { max_bots: 3, ..cfg(6) });
+    let side = |g: &Game, t: u8| g.players.iter().filter(|p| p.team == t && !p.benched).count();
+    assert_eq!(g.active_bots(), 3);
+    assert_eq!(g.roster().len(), 3, "empty seats are not listed");
+    for _ in 0..300 {
+        g.tick();
+    }
+    assert_eq!(g.players.iter().filter(|p| p.alive).count(), 3, "only the bots in the match deploy");
+    assert!(g.players.iter().all(|p| !p.benched || !p.alive));
+    // A human takes an empty seat: the three bots stay, and they shift to
+    // keep the sides level (2 v 2).
+    let me = g.join_team("tester", 0).unwrap();
+    assert_eq!(g.active_bots(), 3);
+    assert_eq!(g.roster().len(), 4);
+    assert_eq!((side(&g, 0), side(&g, 1)), (2, 2));
+    assert!(!g.players[me].benched);
+    // Changing side still works, and the bots even it up again.
+    assert!(g.set_team(me, 1));
+    assert_eq!((side(&g, 0), side(&g, 1)), (2, 2));
+    g.leave(me);
+    assert_eq!((g.active_bots(), g.roster().len()), (3, 3));
+    // No bots at all: an empty field until people join.
+    let mut g = Game::new(Config { max_bots: 0, ..cfg(4) });
+    assert_eq!(g.active_bots(), 0);
+    let a = g.join("a").unwrap();
+    let b = g.join("b").unwrap();
+    assert_ne!(g.players[a].team, g.players[b].team);
+    assert_eq!(g.roster().len(), 2);
+    // The default fills every slot, as before.
+    let g = Game::new(cfg(6));
+    assert_eq!((g.active_bots(), g.roster().len()), (12, 12));
+    // Bots wear a mix of looks.
+    let looks: std::collections::HashSet<u8> = g.roster().iter().map(|r| r.skin).collect();
+    assert!(looks.len() > 1 && looks.iter().all(|&s| (s as usize) < sim::SKINS.len()));
 }

@@ -84,6 +84,17 @@ pub struct KitDef {
     pub speed: f32,
 }
 
+/// Looks a soldier can wear: name and a line about it. Purely cosmetic;
+/// the team colour always stays on the torso.
+pub static SKINS: [(&str, &str); 6] = [
+    ("REGULAR", "Standard issue helmet and plate"),
+    ("SCOUT", "Soft cap, goggles and a light rig"),
+    ("HEAVY", "Full-face helmet, shoulder plates"),
+    ("GHOST", "Hood and mask, dark fatigues"),
+    ("VETERAN", "Beret, rolled sleeves, bandolier"),
+    ("HAZARD", "Hard hat and striped work gear"),
+];
+
 pub static KITS: [KitDef; 3] = [
     KitDef { name: "VANGUARD", blurb: "100 HP - 2 frags - line fighter", prims: &[0, 12, 8, 6], hp: 100.0, grenades: 2, speed: 1.0 },
     KitDef { name: "BREACHER", blurb: "130 HP - 1 frag - faster - clears points", prims: &[1, 7, 13, 14, 8], hp: 130.0, grenades: 1, speed: 1.05 },

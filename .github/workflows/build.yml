@@ -79,7 +79,7 @@ jobs:
           version="${RELEASE_TAG:-dev-${GITHUB_SHA::7}}"
           dir="ferrite-${version}-${{ matrix.name }}"
           mkdir "$dir"
-          cp out/* packaging/README.txt "$dir/"
+          cp out/* packaging/README.txt packaging/Quantico-OFL.txt "$dir/"
           if [ "$RUNNER_OS" = "Windows" ]; then
             cp packaging/start-server.bat "$dir/"
             7z a -tzip "$dir.zip" "$dir" > /dev/null

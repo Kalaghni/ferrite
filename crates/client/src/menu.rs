@@ -1,17 +1,43 @@
-//! Home screen: pick a saved server, type an address, or host a match.
-//! Saved servers and the player name live in `ferrite-client.txt` next to
-//! the executable.
+//! Launcher: a home page over the key art, with pages to host a match,
+//! join one (found on the network, saved, or typed in) and change
+//! settings. Saved servers and settings live in `ferrite-client.txt` next
+//! to the executable.
 
 use ferrite_shared::map::{map_by_name, MAPS};
 use ferrite_shared::proto::{decode_info, ServerInfo, DEFAULT_PORT, DISCOVERY_GROUP, DISCOVERY_PORT, DISCOVERY_QUERY, PROTO};
+use crate::audio::{Music, Scene};
+use crate::{gfx, scene};
+use ferrite_shared::glam::{vec3, Mat4, Vec3};
+use ferrite_shared::map::World;
+use crate::ui::{self, color as th};
 use macroquad::prelude as mq;
 use std::path::PathBuf;
 
 /// Team preference: 0 EMBER, 1 COBALT, 2 auto-balance.
 pub const TEAM_LABELS: [&str; 3] = ["EMBER", "COBALT", "AUTO"];
 
+/// Video and control settings a match needs.
+#[derive(Clone)]
+pub struct Prefs {
+    /// Vertical field of view, degrees.
+    pub fov: f32,
+    pub fullscreen: bool,
+    /// Side of the sun shadow map in texels; 0 = off.
+    pub shadows: u32,
+    pub show_fps: bool,
+    pub invert_y: bool,
+    /// Aim with a click instead of holding the button.
+    pub toggle_aim: bool,
+}
+
+impl Default for Prefs {
+    fn default() -> Prefs {
+        Prefs { fov: 66.0, fullscreen: false, shadows: 4096, show_fps: false, invert_y: false, toggle_aim: false }
+    }
+}
+
 pub enum Choice {
-    Host { port: u16, per_team: usize, map: u8, rotate: bool, lobby: u32 },
+    Host { port: u16, per_team: usize, max_bots: usize, map: u8, rotate: bool, lobby: u32, skill: f32 },
     Join(String),
     Quit,
 }
@@ -21,11 +47,12 @@ const F_HOST: usize = 1;
 const F_PORT: usize = 2;
 const F_BOTS: usize = 3;
 const F_HPORT: usize = 4;
+const F_MAXBOTS: usize = 5;
 const MAX_SAVED: usize = 6;
 
 pub struct Menu {
     /// name, join host, join port, bots per team, hosting port
-    f: [String; 5],
+    f: [String; 6],
     servers: Vec<String>,
     focus: usize,
     pub team: u8,
@@ -36,7 +63,29 @@ pub struct Menu {
     /// Play every map in turn, one per round.
     pub rotate: bool,
     /// Class, the primary chosen for each class, and the sidearm.
-    pub loadout: [u8; 5],
+    pub loadout: [u8; 6],
+    /// Bot difficulty when hosting: index into `ferrite_server::DIFFICULTIES`.
+    pub difficulty: u8,
+    /// Sound effects and music volume, 0..1, and the music switch.
+    pub volume: f32,
+    pub music_vol: f32,
+    pub music_on: bool,
+    /// Keep the song rotation playing during a match.
+    pub music_in_match: bool,
+    /// Chosen sound output device (its id); `None` follows the system.
+    pub audio_device: Option<String>,
+    /// World seed and shadow map size, for the map shown behind HOST & PLAY.
+    pub seed: u64,
+    pub prefs: Prefs,
+    /// Settings tab: 0 audio, 1 video, 2 controls.
+    pub tab: u8,
+    /// That map, built for drawing: (map index, world, renderer).
+    preview: Option<(u8, World, gfx::Gpu)>,
+    /// Output devices found when the settings page was opened: (id, name).
+    devices: Vec<(String, String)>,
+    /// Page on screen: 0 home, 1 join, 2 host, 3 settings.
+    pub page: u8,
+    last: f64,
     pub error: Option<String>,
     lan_ip: Option<String>,
     repeat_at: f64,
@@ -45,13 +94,6 @@ pub struct Menu {
     frames: u32,
     lan: Lan,
 }
-
-const BG: mq::Color = mq::Color::new(0.07, 0.065, 0.065, 1.0);
-const PANEL: mq::Color = mq::Color::new(0.12, 0.115, 0.115, 1.0);
-const LINE: mq::Color = mq::Color::new(0.3, 0.29, 0.28, 1.0);
-const DIM: mq::Color = mq::Color::new(0.62, 0.6, 0.58, 1.0);
-const EMBER: mq::Color = mq::Color::new(0.95, 0.45, 0.16, 1.0);
-const COBALT: mq::Color = mq::Color::new(0.25, 0.55, 0.98, 1.0);
 
 fn cfg_path() -> PathBuf {
     let dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_default();
@@ -142,13 +184,44 @@ fn hit(x: f32, y: f32, w: f32, h: f32) -> bool {
     mx >= x && mx < x + w && my >= y && my < y + h
 }
 
-fn button(x: f32, y: f32, w: f32, h: f32, label: &str, col: mq::Color, size: f32) -> bool {
+fn clicked() -> bool {
+    mq::is_mouse_button_pressed(mq::MouseButton::Left)
+}
+
+/// Plain button. `solid` is the fill for a call to action; without one it
+/// is dark glass that picks up a cobalt edge under the pointer.
+fn button(x: f32, y: f32, w: f32, h: f32, label: &str, solid: Option<mq::Color>, size: f32) -> bool {
     let over = hit(x, y, w, h);
-    let fill = if over { col } else { mq::Color::new(col.r * 0.55, col.g * 0.55, col.b * 0.55, 1.0) };
-    mq::draw_rectangle(x, y, w, h, fill);
-    let m = mq::measure_text(label, None, size as u16, 1.0);
-    mq::draw_text(label, x + (w - m.width) / 2.0, y + h / 2.0 + size * 0.3, size, mq::WHITE);
-    over && mq::is_mouse_button_pressed(mq::MouseButton::Left)
+    match solid {
+        Some(c) => {
+            let k = if over { 1.0 } else { 0.86 };
+            mq::draw_rectangle(x, y, w, h, mq::Color::new(c.r * k, c.g * k, c.b * k, 1.0));
+            ui::text_c(label, x + w / 2.0, y + h / 2.0 + size * 0.28, size, th::INK);
+        }
+        None => {
+            ui::plate(x, y, w, h, th::GLASS_STRONG, if over { th::COBALT } else { th::STROKE });
+            ui::text_c(label, x + w / 2.0, y + h / 2.0 + size * 0.28, size, if over { th::WHITE } else { th::MUTED });
+        }
+    }
+    over && clicked()
+}
+
+/// One of the big home page buttons: a title, a line under it, a chevron.
+fn big_button(x: f32, y: f32, w: f32, h: f32, title: &str, sub: &str, primary: bool) -> bool {
+    let over = hit(x, y, w, h);
+    let lift = if over { 1.0 } else { 0.0 };
+    let (ink, quiet) = if primary {
+        let k = if over { 1.07 } else { 1.0 };
+        mq::draw_rectangle(x, y - lift, w, h, mq::Color::new((th::EMBER.r * k).min(1.0), (th::EMBER.g * k).min(1.0), (th::EMBER.b * k).min(1.0), 1.0));
+        (th::INK, ui::fade(th::INK, 0.75))
+    } else {
+        ui::plate(x, y - lift, w, h, th::GLASS_STRONG, if over { th::COBALT } else { th::STROKE });
+        (th::WHITE, th::MUTED)
+    };
+    ui::text(title, x + 22.0, y - lift + h * 0.5 + 2.0, 30.0, ink);
+    ui::text(sub, x + 23.0, y - lift + h * 0.5 + 21.0, 15.0, quiet);
+    ui::text(">", x + w - 36.0, y - lift + h * 0.5 + 10.0, 30.0, ink);
+    over && clicked()
 }
 
 impl Menu {
@@ -160,14 +233,28 @@ impl Menu {
                 DEFAULT_PORT.to_string(),
                 per_team.to_string(),
                 host_port.to_string(),
+                String::new(),
             ],
             servers: Vec::new(),
-            focus: F_HOST,
+            focus: F_NAME,
             team: 2,
             sens: 0.0022,
             map: 0,
             rotate: true,
-            loadout: [0, 0, 1, 2, 4],
+            loadout: [0, 0, 1, 2, 4, 0],
+            difficulty: 1,
+            volume: 0.7,
+            music_vol: 0.5,
+            music_on: true,
+            music_in_match: false,
+            audio_device: None,
+            seed: 0xFE221,
+            prefs: Prefs::default(),
+            tab: 0,
+            preview: None,
+            devices: Vec::new(),
+            page: 0,
+            last: 0.0,
             error: None,
             lan_ip: lan_ip(),
             repeat_at: 0.0,
@@ -183,12 +270,25 @@ impl Menu {
                     "name" if !v.is_empty() => m.f[F_NAME] = v.chars().take(16).collect(),
                     "server" if !v.is_empty() && m.servers.len() < MAX_SAVED => m.servers.push(v.to_string()),
                     "bots" if v.parse::<usize>().is_ok() => m.f[F_BOTS] = v.to_string(),
+                    "max_bots" if v.parse::<usize>().is_ok() => m.f[F_MAXBOTS] = v.chars().take(2).collect(),
                     "team" => m.team = v.parse::<u8>().unwrap_or(2).min(2),
                     "sens" => m.sens = v.parse::<f32>().unwrap_or(0.0022).clamp(0.0004, 0.01),
                     "map" => m.map = map_by_name(v).unwrap_or(0),
                     "rotate" => m.rotate = v != "0",
+                    "difficulty" => m.difficulty = v.parse::<u8>().unwrap_or(1).min(3),
+                    "volume" => m.volume = v.parse::<f32>().unwrap_or(0.7).clamp(0.0, 1.0),
+                    "music_volume" => m.music_vol = v.parse::<f32>().unwrap_or(0.5).clamp(0.0, 1.0),
+                    "music" => m.music_on = v != "0",
+                    "music_in_match" => m.music_in_match = v == "1",
+                    "fov" => m.prefs.fov = v.parse::<f32>().unwrap_or(66.0).clamp(56.0, 90.0),
+                    "fullscreen" => m.prefs.fullscreen = v == "1",
+                    "shadows" => m.prefs.shadows = match v { "0" => 0, "2048" => 2048, _ => 4096 },
+                    "show_fps" => m.prefs.show_fps = v == "1",
+                    "invert_y" => m.prefs.invert_y = v == "1",
+                    "toggle_aim" => m.prefs.toggle_aim = v == "1",
+                    "audio_device" if !v.is_empty() => m.audio_device = Some(v.to_string()),
                     "loadout" => {
-                        for (k, n) in v.split(',').take(5).enumerate() {
+                        for (k, n) in v.split(',').take(6).enumerate() {
                             m.loadout[k] = n.trim().parse().unwrap_or(m.loadout[k]);
                         }
                     }
@@ -202,8 +302,18 @@ impl Menu {
     fn save(&self) {
         let map = MAPS[self.map as usize % MAPS.len()].name.to_lowercase();
         let mut out = format!("name={}\nbots={}\nteam={}\nsens={}\nmap={}\nrotate={}\n", self.f[F_NAME], self.f[F_BOTS], self.team, self.sens, map, self.rotate as u8);
+        out += &format!("difficulty={}\nvolume={:.2}\nmusic_volume={:.2}\nmusic={}\nmusic_in_match={}\n", self.difficulty, self.volume, self.music_vol, self.music_on as u8, self.music_in_match as u8);
+        let p = &self.prefs;
+        out += &format!("fov={}\nfullscreen={}\nshadows={}\nshow_fps={}\ninvert_y={}\ntoggle_aim={}\n", p.fov, p.fullscreen as u8, p.shadows, p.show_fps as u8, p.invert_y as u8, p.toggle_aim as u8);
+        if let Some(d) = &self.audio_device {
+            out += &format!("audio_device={d}
+");
+        }
         let l = self.loadout;
-        out += &format!("loadout={},{},{},{},{}\n", l[0], l[1], l[2], l[3], l[4]);
+        out += &format!("loadout={},{},{},{},{},{}\n", l[0], l[1], l[2], l[3], l[4], l[5]);
+        if !self.f[F_MAXBOTS].is_empty() {
+            out += &format!("max_bots={}\n", self.f[F_MAXBOTS]);
+        }
         for s in &self.servers {
             out += &format!("server={s}\n");
         }
@@ -213,6 +323,17 @@ impl Menu {
     /// Write settings changed during a match (sensitivity) back to disk.
     pub fn persist(&self) {
         self.save();
+    }
+
+    /// Send sound to the device saved in the settings file, if any. Used
+    /// at startup, whichever way the game was launched.
+    pub fn apply_saved_audio_device() {
+        let Ok(text) = std::fs::read_to_string(cfg_path()) else { return };
+        if let Some(id) = text.lines().find_map(|l| l.strip_prefix("audio_device=")) {
+            if !id.trim().is_empty() {
+                quad_snd::set_output_device(Some(id.trim().to_string()));
+            }
+        }
     }
 
     pub fn name(&self) -> String {
@@ -242,9 +363,12 @@ impl Menu {
         Choice::Host {
             port: self.f[F_HPORT].parse().ok().filter(|p| *p != 0).unwrap_or(DEFAULT_PORT),
             per_team: self.f[F_BOTS].parse::<usize>().unwrap_or(12).clamp(1, 16),
+            // Left empty: bots fill every slot.
+            max_bots: self.f[F_MAXBOTS].parse::<usize>().unwrap_or(64),
             map: self.map % MAPS.len() as u8,
             rotate: self.rotate,
             lobby: 30,
+            skill: ferrite_server::DIFFICULTIES[self.difficulty as usize % 4].1,
         }
     }
 
@@ -257,28 +381,55 @@ impl Menu {
         }
     }
 
+    /// Text fields on each page, in TAB order.
+    fn fields(page: u8) -> &'static [usize] {
+        match page {
+            0 => &[F_NAME],
+            1 => &[F_HOST, F_PORT],
+            2 => &[F_BOTS, F_MAXBOTS, F_HPORT],
+            _ => &[],
+        }
+    }
+
+    pub fn go_to(&mut self, page: u8) {
+        self.go(page);
+    }
+
+    fn go(&mut self, page: u8) {
+        self.page = page;
+        if page == 3 {
+            self.devices = quad_snd::output_devices();
+        }
+        if let Some(f) = Self::fields(page).first() {
+            self.focus = *f;
+        }
+    }
+
     fn field(&mut self, id: usize, x: f32, y: f32, w: f32, label: &str, hint: &str, now: f64) {
-        mq::draw_text(label, x, y - 8.0, 16.0, DIM);
+        ui::text(label, x, y - 8.0, 18.0, th::MUTED);
         let h = 38.0;
         let focused = self.focus == id;
-        mq::draw_rectangle(x, y, w, h, mq::Color::new(0.05, 0.05, 0.05, 1.0));
-        mq::draw_rectangle_lines(x, y, w, h, 2.0, if focused { EMBER } else { LINE });
+        ui::plate(x, y, w, h, th::GLASS_STRONG, if focused { th::COBALT } else { th::STROKE });
         let v = &self.f[id];
         if v.is_empty() && !focused {
-            mq::draw_text(hint, x + 10.0, y + 26.0, 22.0, mq::Color::new(0.4, 0.39, 0.38, 1.0));
+            ui::text(hint, x + 10.0, y + 26.0, 22.0, th::QUIET);
         } else {
-            mq::draw_text(v, x + 10.0, y + 26.0, 22.0, mq::WHITE);
+            ui::text(v, x + 10.0, y + 26.0, 22.0, th::WHITE);
         }
         if focused && (now * 2.0) as i64 % 2 == 0 {
-            let m = mq::measure_text(v, None, 22, 1.0);
-            mq::draw_rectangle(x + 12.0 + m.width, y + 9.0, 2.0, 20.0, EMBER);
+            mq::draw_rectangle(x + 12.0 + ui::width(v, 22.0), y + 9.0, 2.0, 20.0, th::COBALT);
         }
-        if hit(x, y, w, h) && mq::is_mouse_button_pressed(mq::MouseButton::Left) {
+        if hit(x, y, w, h) && clicked() {
             self.focus = id;
         }
     }
 
     fn typing(&mut self, now: f64) {
+        let fields = Self::fields(self.page);
+        if !fields.contains(&self.focus) {
+            while mq::get_char_pressed().is_some() {}
+            return;
+        }
         while let Some(c) = mq::get_char_pressed() {
             if Self::accepts(self.focus, c, self.f[self.focus].chars().count()) {
                 self.f[self.focus].push(c);
@@ -303,8 +454,8 @@ impl Menu {
             self.repeat_at = now + 0.04;
         }
         if mq::is_key_pressed(mq::KeyCode::Tab) {
-            let back = mq::is_key_down(mq::KeyCode::LeftShift) || mq::is_key_down(mq::KeyCode::RightShift);
-            self.focus = (self.focus + if back { 4 } else { 1 }) % 5;
+            let at = fields.iter().position(|f| *f == self.focus).unwrap_or(0);
+            self.focus = fields[(at + 1) % fields.len()];
         }
         // Typing "host:port" into the address box moves the port across.
         if self.focus != F_HOST {
@@ -316,199 +467,495 @@ impl Menu {
         }
     }
 
-    pub async fn run(&mut self) -> Choice {
+    /// The selected map, seen from a camera circling it. Built when the
+    /// selection changes; drawn in place of the key art.
+    fn draw_map(&mut self, now: f64, sw: f32, sh: f32) {
+        use ferrite_shared::map::{HALF_X, HALF_Z};
+        let map = self.map % MAPS.len() as u8;
+        if self.preview.as_ref().map(|p| p.0) != Some(map) {
+            self.drop_map();
+            let world = World::with_map(self.seed, map);
+            let bounds = (vec3(-HALF_X - 8.0, -12.0, -HALF_Z - 8.0), vec3(HALF_X + 8.0, 34.0, HALF_Z + 8.0));
+            let gpu = gfx::Gpu::new(scene::build_world(&world), scene::build_sky(), self.prefs.shadows.min(2048), scene::SUN.normalize(), bounds);
+            self.preview = Some((map, world, gpu));
+        }
+        let Some((_, world, gpu)) = &mut self.preview else { return };
+        let (mut opaque, mut alpha, mut add) = (gfx::Mesh::default(), gfx::Mesh::default(), gfx::Mesh::default());
+        let time = now as f32;
+        scene::crates(&mut opaque, world, 0);
+        let owners = [(ferrite_shared::NEUTRAL, 0.0, false); 5];
+        scene::beacons(&mut opaque, &mut alpha, &mut add, world, &owners, time);
+        // Circle the middle of the map. The page covers the left of the
+        // screen, so look a little to the left of centre: that puts the map
+        // on the right.
+        let a = time * 0.11;
+        let r = HALF_X.max(HALF_Z) * 1.05;
+        let eye = vec3(a.cos() * r, 62.0, a.sin() * r);
+        let to = (vec3(0.0, 4.0, 0.0) - eye).normalize();
+        let right = to.cross(Vec3::Y).normalize();
+        let dir = (vec3(0.0, 4.0, 0.0) - right * r * 0.3 - eye).normalize();
+        let proj = Mat4::perspective_rh_gl(52f32.to_radians(), sw / sh.max(1.0), 0.5, 900.0);
+        let view = Mat4::look_to_rh(eye, dir, Vec3::Y);
+        let empty = gfx::Mesh::default();
+        gpu.render(&gfx::Frame {
+            vp: proj * view,
+            sky_vp: proj * Mat4::look_to_rh(Vec3::ZERO, dir, Vec3::Y),
+            cam: eye,
+            sun: scene::SUN.normalize(),
+            fog: scene::FOG,
+            lights: [gfx::Light::default(); 4],
+            opaque: &opaque,
+            alpha: &alpha,
+            add: &add,
+            view_vp: Mat4::IDENTITY,
+            view_sun: Vec3::Y,
+            view_lit: 1.0,
+            view_opaque: &empty,
+            view_add: &empty,
+        });
+    }
+
+    fn drop_map(&mut self) {
+        if let Some((_, _, gpu)) = self.preview.take() {
+            gpu.destroy();
+        }
+    }
+
+    /// Heading shared by the inner pages; returns true when BACK is clicked.
+    fn page_head(x: f32, y: f32, w: f32, label: &str, title: &str, accent: mq::Color) -> bool {
+        ui::text(label, x, y, 15.0, accent);
+        ui::text(title, x, y + 34.0, 34.0, th::WHITE);
+        mq::draw_line(x, y + 48.0, x + w, y + 48.0, 1.0, th::STROKE);
+        button(x + w - 110.0, y - 2.0, 110.0, 34.0, "< BACK", None, 18.0)
+    }
+
+    pub async fn run(&mut self, music: &mut Music, art: &ui::Art) -> Choice {
         mq::set_cursor_grab(false);
         mq::show_mouse(true);
         while mq::get_char_pressed().is_some() {}
         // Skip the frame that carried the click or key which brought us here.
         mq::next_frame().await;
+        self.last = mq::get_time();
         loop {
             let now = mq::get_time();
+            let dt = (now - self.last).clamp(0.0, 0.1) as f32;
+            self.last = now;
             let (sw, sh) = (mq::screen_width(), mq::screen_height());
-            mq::clear_background(BG);
+            music.on = self.music_on;
+            music.vol = self.music_vol;
+            music.in_match = self.music_in_match;
+            music.update(Scene::Launcher, dt).await;
+            mq::clear_background(th::INK);
+            if self.page == 2 {
+                self.draw_map(now, sw, sh);
+            } else {
+                self.drop_map();
+                ui::backdrop(&art.launcher, sw, sh);
+            }
             self.typing(now);
+            self.lan.poll(now);
             let mut out: Option<Choice> = None;
 
-            let w = 760.0f32.min(sw - 40.0);
-            let x = ((sw - w) / 2.0).floor();
-            let mut y = (sh * 0.04).max(14.0).floor();
+            // The art carries the logo at the top left; the page hangs under it.
+            let k = ui::art_scale(sw, sh);
+            let x = (78.0 * k).max(24.0).floor();
+            let mut y = (216.0 * k).max(130.0).floor();
+            let wide: f32 = if self.page == 0 { 500.0 } else { 660.0 };
+            let w = wide.min(sw - x - 24.0);
+            if self.page != 0 {
+                // Inner pages are denser: put them on glass.
+                mq::draw_rectangle(0.0, 0.0, (x + w + 40.0).min(sw), sh, ui::fade(th::INK, 0.62));
+            }
+            let esc = mq::is_key_pressed(mq::KeyCode::Escape);
+            let enter = mq::is_key_pressed(mq::KeyCode::Enter) || mq::is_key_pressed(mq::KeyCode::KpEnter);
 
-            // Title with the two team colours.
-            mq::draw_rectangle(x, y, 6.0, 46.0, EMBER);
-            mq::draw_rectangle(x + 10.0, y, 6.0, 46.0, COBALT);
-            mq::draw_text("FERRITE", x + 30.0, y + 40.0, 58.0, mq::WHITE);
-            let tag = "12v12 front-line conquest";
-            let tm = mq::measure_text(tag, None, 18, 1.0);
-            mq::draw_text(tag, x + w - tm.width, y + 36.0, 18.0, DIM);
-            y += 80.0;
-
-            self.field(F_NAME, x, y, 260.0, "CALLSIGN", "Player", now);
-            // Team picker: which side to ask the server for.
-            let tx = x + 290.0;
-            mq::draw_text("TEAM", tx, y - 8.0, 16.0, DIM);
-            let bw = ((w - 290.0 - 16.0) / 3.0).floor();
-            for (k, id) in [2u8, 0, 1].into_iter().enumerate() {
-                let bx = tx + k as f32 * (bw + 8.0);
-                let c = [EMBER, COBALT, mq::Color::new(0.5, 0.49, 0.47, 1.0)][id as usize];
-                let on = self.team == id;
-                mq::draw_rectangle(bx, y, bw, 38.0, if on { c } else { mq::Color::new(c.r * 0.28, c.g * 0.28, c.b * 0.28, 1.0) });
-                if hit(bx, y, bw, 38.0) || on {
-                    mq::draw_rectangle_lines(bx, y, bw, 38.0, 2.0, mq::WHITE);
+            match self.page {
+                0 => {
+                    ui::text("FIELD OPERATIONS", x, y, 18.0, th::EMBER_BRIGHT);
+                    ui::text("Choose your deployment", x, y + 34.0, 34.0, th::WHITE);
+                    mq::draw_line(x, y + 48.0, x + w, y + 48.0, 1.0, th::STROKE);
+                    y += 84.0;
+                    self.field(F_NAME, x, y, 190.0, "CALLSIGN", "Player", now);
+                    // Team: which side to ask the server for.
+                    let tx = x + 206.0;
+                    ui::text("TEAM", tx, y - 8.0, 18.0, th::MUTED);
+                    let bw = ((w - 206.0 - 16.0) / 3.0).floor();
+                    for (i, id) in [2u8, 0, 1].into_iter().enumerate() {
+                        let bx = tx + i as f32 * (bw + 8.0);
+                        let c = [th::EMBER, th::COBALT, th::LINE][id as usize];
+                        let on = self.team == id;
+                        let over = hit(bx, y, bw, 38.0);
+                        mq::draw_rectangle(bx, y, bw, 38.0, if on { c } else { th::GLASS_STRONG });
+                        mq::draw_rectangle_lines(bx, y, bw, 38.0, 2.0, if on || over { th::WHITE } else { ui::fade(c, 0.8) });
+                        ui::text_c(TEAM_LABELS[id as usize], bx + bw / 2.0, y + 26.0, 20.0, if on { th::INK } else { c });
+                        if over && clicked() {
+                            self.team = id;
+                        }
+                    }
+                    y += 56.0;
+                    if let Some(e) = &self.error {
+                        ui::plate(x, y, w, 34.0, th::GLASS_STRONG, th::DANGER);
+                        ui::text(e, x + 12.0, y + 23.0, 18.0, th::DANGER);
+                        y += 44.0;
+                    }
+                    let found = self.lan.found.len();
+                    let join_sub = match found {
+                        0 => "BROWSE OR CONNECT".to_string(),
+                        1 => "1 GAME ON YOUR NETWORK".to_string(),
+                        n => format!("{n} GAMES ON YOUR NETWORK"),
+                    };
+                    let bh = 70.0;
+                    if big_button(x, y, w, bh, "HOST & PLAY", "CREATE A MATCH  -  BOTS FILL THE EMPTY SLOTS", true) {
+                        self.go(2);
+                    }
+                    y += bh + 12.0;
+                    if big_button(x, y, w, bh, "JOIN SERVER", &join_sub, false) {
+                        self.go(1);
+                    }
+                    y += bh + 12.0;
+                    if big_button(x, y, w, bh, "SETTINGS", "AUDIO  -  VIDEO  -  CONTROLS", false) {
+                        self.go(3);
+                    }
+                    y += bh + 12.0;
+                    ui::plate(x, y, w, 44.0, th::GLASS_STRONG, if hit(x, y, w, 44.0) { th::COBALT } else { th::STROKE });
+                    ui::text("QUIT TO DESKTOP", x + 22.0, y + 29.0, 20.0, th::MUTED);
+                    if (hit(x, y, w, 44.0) && clicked()) || esc {
+                        out = Some(Choice::Quit);
+                    }
+                    if enter && out.is_none() {
+                        self.go(2);
+                    }
+                    let fy = (y + 80.0).max(sh - 46.0).min(sh - 30.0);
+                    ui::text(&format!("FERRITE / {}", env!("CARGO_PKG_VERSION")), x, fy, 16.0, th::WHITE);
+                    ui::text("ORIGINAL MUSIC BY breadKernel", x, fy + 20.0, 17.0, th::MUTED);
+                    // Status plate, bottom right.
+                    let status = match &self.lan_ip {
+                        Some(ip) => format!("SYSTEMS ONLINE / {ip} / 60 TICK"),
+                        None => "SYSTEMS ONLINE / 60 TICK".to_string(),
+                    };
+                    let pw = ui::width(&status, 18.0) + 52.0;
+                    if sw - pw - 40.0 > x + w + 20.0 {
+                        ui::plate(sw - pw - 40.0, sh - 62.0, pw, 34.0, th::GLASS, th::STROKE);
+                        mq::draw_circle(sw - pw - 22.0, sh - 45.0, 4.0, th::SUCCESS);
+                        ui::text(&status, sw - pw - 10.0, sh - 40.0, 18.0, th::SUCCESS);
+                    }
                 }
-                let label = TEAM_LABELS[id as usize];
-                let m = mq::measure_text(label, None, 22, 1.0);
-                mq::draw_text(label, bx + (bw - m.width) / 2.0, y + 26.0, 22.0, if on { mq::WHITE } else { DIM });
-                if hit(bx, y, bw, 38.0) && mq::is_mouse_button_pressed(mq::MouseButton::Left) {
-                    self.team = id;
+                1 => {
+                    if Self::page_head(x, y, w, "FIELD OPERATIONS", "JOIN SERVER", th::COBALT_BRIGHT) || esc {
+                        self.go(0);
+                    }
+                    y += 90.0;
+                    let port_w = 100.0;
+                    let btn_w = 110.0;
+                    let host_w = w - port_w - btn_w - 24.0;
+                    self.field(F_HOST, x, y, host_w, "ADDRESS", "hostname or IP", now);
+                    self.field(F_PORT, x + host_w + 12.0, y, port_w, "PORT", &DEFAULT_PORT.to_string(), now);
+                    let can_join = self.join_addr().is_some();
+                    if (button(x + w - btn_w, y, btn_w, 38.0, "JOIN", Some(if can_join { th::COBALT } else { th::QUIET }), 22.0) || enter) && can_join {
+                        out = self.join_addr().map(Choice::Join);
+                    }
+                    let mut ry = y + 58.0;
+                    // Games answering on the local network.
+                    let lan_rows = self.lan.found.len().min(if sh < 800.0 { 3 } else { 4 });
+                    let dots = ["", ".", "..", "..."][(now * 2.0) as usize % 4];
+                    let head = if lan_rows == 0 { format!("ON YOUR NETWORK  -  searching{dots}") } else { "ON YOUR NETWORK".to_string() };
+                    ui::text(&head, x, ry + 14.0, 18.0, th::MUTED);
+                    ry += 24.0;
+                    for f in self.lan.found.iter().take(lan_rows) {
+                        let i = &f.info;
+                        let ok = i.proto == PROTO;
+                        let over = hit(x, ry, w, 40.0);
+                        ui::plate(x, ry, w, 40.0, if over { th::PANEL_RAISED } else { th::GLASS_STRONG }, if over { th::COBALT } else { th::STROKE });
+                        let name: String = i.name.chars().filter(|c| !c.is_control()).take(22).collect();
+                        ui::text(&name, x + 12.0, ry + 27.0, 20.0, th::WHITE);
+                        let state = match i.phase {
+                            2 => "in lobby",
+                            1 => "round over",
+                            _ => "in game",
+                        };
+                        let detail = if ok {
+                            format!("{}   {}/{} players   {}", MAPS[i.map as usize % MAPS.len()].name, i.humans, i.slots, state)
+                        } else {
+                            "different game version".to_string()
+                        };
+                        ui::text(&detail, x + 250.0, ry + 26.0, 15.0, if ok { th::MUTED } else { th::DANGER });
+                        if ok && (button(x + w - 86.0, ry + 5.0, 80.0, 30.0, "JOIN", Some(th::COBALT), 18.0) || (over && clicked())) {
+                            out = Some(Choice::Join(f.addr.clone()));
+                        }
+                        ry += 46.0;
+                    }
+                    ry += 8.0;
+                    ui::text("SAVED SERVERS", x, ry + 14.0, 18.0, th::MUTED);
+                    ry += 24.0;
+                    if self.servers.is_empty() {
+                        ui::text("None yet - servers you join are remembered here.", x, ry + 22.0, 17.0, th::QUIET);
+                    }
+                    let mut remove = None;
+                    for (i, s) in self.servers.iter().enumerate() {
+                        if ry + 46.0 > sh - 40.0 {
+                            break;
+                        }
+                        let over = hit(x, ry, w, 40.0);
+                        ui::plate(x, ry, w, 40.0, if over { th::PANEL_RAISED } else { th::GLASS_STRONG }, if over { th::COBALT } else { th::STROKE });
+                        ui::text(s, x + 12.0, ry + 27.0, 20.0, th::WHITE);
+                        if button(x + w - 42.0, ry + 5.0, 36.0, 30.0, "X", None, 18.0) {
+                            remove = Some(i);
+                        } else if button(x + w - 42.0 - 86.0, ry + 5.0, 80.0, 30.0, "JOIN", Some(th::COBALT), 18.0) {
+                            out = Some(Choice::Join(s.clone()));
+                        } else if over && clicked() {
+                            let (h, p) = split_addr(s);
+                            self.f[F_HOST] = h;
+                            self.f[F_PORT] = if p.is_empty() { DEFAULT_PORT.to_string() } else { p };
+                            self.focus = F_HOST;
+                        }
+                        ry += 46.0;
+                    }
+                    if let Some(i) = remove {
+                        self.servers.remove(i);
+                        self.save();
+                    }
+                    ui::text("TAB next field    ENTER join    CTRL+V paste    ESC back", x, sh - 20.0, 18.0, th::QUIET);
+                }
+                2 => {
+                    if Self::page_head(x, y, w, "FIELD OPERATIONS", "HOST & PLAY", th::EMBER_BRIGHT) || esc {
+                        self.go(0);
+                    }
+                    y += 90.0;
+                    self.field(F_BOTS, x, y, 170.0, "PLAYERS PER TEAM", "12", now);
+                    self.field(F_MAXBOTS, x + 182.0, y, 110.0, "MAX BOTS", "all", now);
+                    self.field(F_HPORT, x + 304.0, y, 90.0, "PORT", &DEFAULT_PORT.to_string(), now);
+                    // Map: click the right side for the next one, the left
+                    // side for the one before.
+                    let (mx, mw) = (x + 406.0, w - 406.0);
+                    let def = &MAPS[self.map as usize % MAPS.len()];
+                    ui::text("MAP", mx, y - 8.0, 18.0, th::MUTED);
+                    let over = hit(mx, y, mw, 38.0);
+                    ui::plate(mx, y, mw, 38.0, th::GLASS_STRONG, if over { th::COBALT } else { th::STROKE });
+                    ui::text_c(def.name, mx + mw / 2.0, y + 26.0, 20.0, th::WHITE);
+                    ui::text("<", mx + 10.0, y + 26.0, 20.0, if over { th::WHITE } else { th::QUIET });
+                    ui::text(">", mx + mw - 20.0, y + 26.0, 20.0, if over { th::WHITE } else { th::QUIET });
+                    if over && clicked() {
+                        let n = MAPS.len() as u8;
+                        let back = mq::mouse_position().0 < mx + mw * 0.3;
+                        self.map = (self.map % n + if back { n - 1 } else { 1 }) % n;
+                    }
+                    y += 58.0;
+                    ui::text(&format!("{}: {}.", def.name, def.blurb), x, y, 16.0, th::WHITE);
+                    y += 38.0;
+
+                    // Rotation: after each round the server moves to the next map.
+                    ui::text("MAP ROTATION", x, y - 8.0, 18.0, th::MUTED);
+                    for (i, label) in ["ON", "OFF"].into_iter().enumerate() {
+                        let on = self.rotate == (i == 0);
+                        let bx = x + i as f32 * 78.0;
+                        let over = hit(bx, y, 70.0, 34.0);
+                        ui::plate(bx, y, 70.0, 34.0, if on { th::COBALT } else { th::GLASS_STRONG }, if on || over { th::WHITE } else { th::STROKE });
+                        ui::text_c(label, bx + 35.0, y + 23.0, 18.0, if on { th::INK } else { th::MUTED });
+                        if over && clicked() {
+                            self.rotate = i == 0;
+                        }
+                    }
+                    let rn = if self.rotate { "Rounds move to the next map, unless the lobby votes." } else { "Rounds stay on this map, unless the lobby votes." };
+                    ui::text(rn, x + 170.0, y + 22.0, 18.0, th::MUTED);
+                    y += 66.0;
+
+                    // Bot difficulty.
+                    ui::text("BOT DIFFICULTY", x, y - 8.0, 18.0, th::MUTED);
+                    let dw = ((w - 24.0) / 4.0).floor();
+                    for (i, (label, _)) in ferrite_server::DIFFICULTIES.iter().enumerate() {
+                        let on = self.difficulty as usize == i;
+                        let bx = x + i as f32 * (dw + 8.0);
+                        let over = hit(bx, y, dw, 40.0);
+                        let c = [th::SUCCESS, th::COBALT, th::WARNING, th::DANGER][i];
+                        ui::plate(bx, y, dw, 40.0, if on { c } else { th::GLASS_STRONG }, if on || over { th::WHITE } else { th::STROKE });
+                        ui::text_c(label, bx + dw / 2.0, y + 27.0, 20.0, if on { th::INK } else { c });
+                        if over && clicked() {
+                            self.difficulty = i as u8;
+                        }
+                    }
+                    let dn = [
+                        "Recruit: bots are slow to react and spray wide. A gentle start.",
+                        "Regular: the standard fight.",
+                        "Veteran: bots react quickly and hold their aim.",
+                        "Elite: fast, accurate and unforgiving.",
+                    ][self.difficulty as usize % 4];
+                    ui::text(dn, x, y + 62.0, 18.0, th::MUTED);
+                    y += 96.0;
+
+                    let hp = self.f[F_HPORT].parse::<u16>().ok().filter(|p| *p != 0).unwrap_or(DEFAULT_PORT);
+                    let note = match &self.lan_ip {
+                        Some(ip) => format!("Others on your network can join at {ip}:{hp}."),
+                        None => "Empty slots are filled by bots.".to_string(),
+                    };
+                    ui::text(&note, x, y, 18.0, th::MUTED);
+                    y += 22.0;
+                    if button(x, y, w, 62.0, "START MATCH", Some(th::EMBER), 30.0) || enter {
+                        out = Some(self.host_choice());
+                    }
+                    ui::text("TAB next field    ENTER start    ESC back", x, sh - 20.0, 18.0, th::QUIET);
+                }
+                _ => {
+                    if Self::page_head(x, y, w, "FIELD OPERATIONS", "SETTINGS", th::COBALT_BRIGHT) || esc {
+                        self.go(0);
+                        self.save();
+                    }
+                    y += 84.0;
+                    // Tabs.
+                    let tw = ((w - 16.0) / 3.0).floor();
+                    for (i, label) in ["AUDIO", "VIDEO", "CONTROLS"].into_iter().enumerate() {
+                        let bx = x + i as f32 * (tw + 8.0);
+                        let on = self.tab as usize == i;
+                        let over = hit(bx, y, tw, 36.0);
+                        ui::plate(bx, y, tw, 36.0, if on { th::COBALT } else { th::GLASS_STRONG }, if on || over { th::WHITE } else { th::STROKE });
+                        ui::text_c(label, bx + tw / 2.0, y + 25.0, 20.0, if on { th::INK } else { th::MUTED });
+                        if over && clicked() {
+                            self.tab = i as u8;
+                        }
+                    }
+                    y += 50.0;
+                    // Each row: a label, the value, and - / + to change it.
+                    let row = |label: &str, value: String, y: f32| -> i32 {
+                        ui::plate(x, y, w, 46.0, th::GLASS_STRONG, th::STROKE);
+                        ui::text(label, x + 14.0, y + 30.0, 20.0, th::WHITE);
+                        ui::text_c(&value, x + w - 112.0, y + 30.0, 20.0, th::COBALT_BRIGHT);
+                        let down = button(x + w - 210.0, y + 6.0, 40.0, 34.0, "-", None, 22.0);
+                        let up = button(x + w - 48.0, y + 6.0, 40.0, 34.0, "+", None, 22.0);
+                        up as i32 - down as i32
+                    };
+                    let pct = |v: f32| format!("{:.0}%", v * 100.0);
+                    let on_off = |b: bool| if b { "ON".to_string() } else { "OFF".to_string() };
+                    match self.tab {
+                        0 => {
+                            // Output device: step through what is plugged in. The
+                            // sound moves across at once, so you can hear the choice.
+                            {
+                                ui::plate(x, y, w, 46.0, th::GLASS_STRONG, th::STROKE);
+                                ui::text("OUTPUT", x + 14.0, y + 30.0, 20.0, th::WHITE);
+                                let at = self.audio_device.as_ref().and_then(|id| self.devices.iter().position(|d| &d.0 == id));
+                                let mut name = match (at, &self.audio_device) {
+                                    (Some(i), _) => self.devices[i].1.clone(),
+                                    (None, Some(_)) => "System default (saved device not connected)".to_string(),
+                                    (None, None) => "System default".to_string(),
+                                };
+                                let room = w - 130.0 - 60.0 - 56.0;
+                                while ui::width(&name, 16.0) > room && name.chars().count() > 4 {
+                                    name = name.chars().take(name.chars().count() - 4).collect::<String>() + "...";
+                                }
+                                ui::text_c(&name, x + 130.0 + 48.0 + room / 2.0, y + 29.0, 16.0, th::COBALT_BRIGHT);
+                                let n = self.devices.len() as i32 + 1;
+                                let step = button(x + w - 48.0, y + 6.0, 40.0, 34.0, ">", None, 22.0) as i32 - button(x + 130.0, y + 6.0, 40.0, 34.0, "<", None, 22.0) as i32;
+                                if step != 0 && (n > 1 || self.audio_device.is_some()) {
+                                    // Slot 0 is the system default, then the devices.
+                                    let cur = at.map_or(0, |i| i as i32 + 1);
+                                    let next = (cur + step).rem_euclid(n);
+                                    self.audio_device = if next == 0 { None } else { Some(self.devices[next as usize - 1].0.clone()) };
+                                    quad_snd::set_output_device(self.audio_device.clone());
+                                }
+                                y += 54.0;
+                            }
+                            if row("MUSIC", on_off(self.music_on), y) != 0 {
+                                self.music_on = !self.music_on; // either button flips it
+                            }
+                            y += 54.0;
+                            if row("MUSIC IN A MATCH", on_off(self.music_in_match), y) != 0 {
+                                self.music_in_match = !self.music_in_match;
+                            }
+                            y += 54.0;
+                            let d = row("MUSIC VOLUME", pct(self.music_vol), y);
+                            self.music_vol = ((self.music_vol * 10.0).round() + d as f32).clamp(0.0, 10.0) / 10.0;
+                            y += 54.0;
+                            let d = row("EFFECTS VOLUME", pct(self.volume), y);
+                            self.volume = ((self.volume * 10.0).round() + d as f32).clamp(0.0, 10.0) / 10.0;
+                            y += 72.0;
+                            ui::text("Music by breadKernel.", x, y, 18.0, th::MUTED);
+                            ui::text("Your own .ogg or .wav files in a 'music' folder beside the game", x, y + 24.0, 18.0, th::QUIET);
+                            ui::text("join the rotation.", x, y + 46.0, 18.0, th::QUIET);
+                        }
+                        1 => {
+                            if row("FULLSCREEN", on_off(self.prefs.fullscreen), y) != 0 {
+                                self.prefs.fullscreen = !self.prefs.fullscreen;
+                                mq::set_fullscreen(self.prefs.fullscreen);
+                            }
+                            y += 54.0;
+                            let d = row("FIELD OF VIEW", format!("{:.0}", self.prefs.fov), y);
+                            self.prefs.fov = (self.prefs.fov + 2.0 * d as f32).clamp(56.0, 90.0);
+                            y += 54.0;
+                            let levels = [0u32, 2048, 4096];
+                            let at = levels.iter().position(|l| *l == self.prefs.shadows).unwrap_or(2) as i32;
+                            let d = row("SHADOWS", ["OFF", "LOW", "HIGH"][at as usize].to_string(), y);
+                            self.prefs.shadows = levels[(at + d).clamp(0, 2) as usize];
+                            y += 54.0;
+                            if row("SHOW FPS AND PING", on_off(self.prefs.show_fps), y) != 0 {
+                                self.prefs.show_fps = !self.prefs.show_fps;
+                            }
+                            y += 72.0;
+                            ui::text("Field of view is vertical, in degrees. Aiming down a sight narrows it.", x, y, 18.0, th::QUIET);
+                            ui::text("Lower the shadows on an older graphics card. F3 shows FPS in a match.", x, y + 24.0, 18.0, th::QUIET);
+                        }
+                        _ => {
+                            let d = row("MOUSE SENSITIVITY", format!("{:.2}", self.sens * 1000.0), y);
+                            if d != 0 {
+                                self.sens = (self.sens * if d > 0 { 1.1 } else { 1.0 / 1.1 }).clamp(0.0004, 0.01);
+                            }
+                            y += 54.0;
+                            if row("INVERT MOUSE Y", on_off(self.prefs.invert_y), y) != 0 {
+                                self.prefs.invert_y = !self.prefs.invert_y;
+                            }
+                            y += 54.0;
+                            if row("AIM", if self.prefs.toggle_aim { "TOGGLE".to_string() } else { "HOLD".to_string() }, y) != 0 {
+                                self.prefs.toggle_aim = !self.prefs.toggle_aim;
+                            }
+                            y += 72.0;
+                            let keys = [
+                                "WASD move    SHIFT sprint    SPACE jump / climb    CTRL or C crouch",
+                                "LMB fire    RMB aim    R reload    Q / F / wheel sidearm    G grenade",
+                                "T sight    L loadout    M team    TAB scoreboard    ESC pause",
+                                "Crouch while sprinting to slide.    - / = change sensitivity in a match.",
+                            ];
+                            for (i, l) in keys.iter().enumerate() {
+                                ui::text(l, x, y + i as f32 * 24.0, 18.0, th::QUIET);
+                            }
+                        }
+                    }
+                    ui::text("ESC back", x, sh - 20.0, 18.0, th::QUIET);
                 }
             }
-            y += 62.0;
 
-            if let Some(e) = &self.error {
-                mq::draw_rectangle(x, y, w, 34.0, mq::Color::new(0.35, 0.1, 0.06, 1.0));
-                mq::draw_text(e, x + 12.0, y + 23.0, 20.0, mq::Color::new(1.0, 0.8, 0.7, 1.0));
-                y += 46.0;
-            }
-
-            // ---- join ----
-            self.lan.poll(now);
-            let lan_rows = self.lan.found.len().min(if sh < 800.0 { 2 } else { 4 });
-            // With games found nearby, an empty saved list needs no placeholder.
-            let saved_rows = if lan_rows > 0 { self.servers.len() } else { self.servers.len().max(1) };
-            let join_h = 118.0 + 30.0 + 44.0 * (lan_rows + saved_rows) as f32 + 34.0;
-            mq::draw_rectangle(x, y, w, join_h, PANEL);
-            mq::draw_rectangle(x, y, 4.0, join_h, COBALT);
-            mq::draw_text("JOIN A SERVER", x + 20.0, y + 30.0, 24.0, mq::WHITE);
-            let fy = y + 62.0;
-            let port_w = 110.0;
-            let btn_w = 120.0;
-            let host_w = w - 40.0 - port_w - btn_w - 24.0;
-            self.field(F_HOST, x + 20.0, fy, host_w, "ADDRESS", "hostname or IP", now);
-            self.field(F_PORT, x + 32.0 + host_w, fy, port_w, "PORT", &DEFAULT_PORT.to_string(), now);
-            let can_join = self.join_addr().is_some();
-            if button(x + w - 20.0 - btn_w, fy, btn_w, 38.0, "JOIN", if can_join { COBALT } else { LINE }, 22.0) && can_join {
-                out = self.join_addr().map(Choice::Join);
-            }
-            let mut ry = fy + 56.0;
-            // Games answering on the local network.
-            let dots = ["", ".", "..", "..."][(now * 2.0) as usize % 4];
-            let head = if lan_rows == 0 { format!("ON YOUR NETWORK  -  searching{dots}") } else { "ON YOUR NETWORK".to_string() };
-            mq::draw_text(&head, x + 20.0, ry + 14.0, 16.0, DIM);
-            ry += 24.0;
-            for f in self.lan.found.iter().take(lan_rows) {
-                let i = &f.info;
-                let ok = i.proto == PROTO;
-                let over = hit(x + 20.0, ry, w - 40.0, 38.0);
-                mq::draw_rectangle(x + 20.0, ry, w - 40.0, 38.0, if over { mq::Color::new(0.14, 0.19, 0.25, 1.0) } else { mq::Color::new(0.08, 0.11, 0.15, 1.0) });
-                let name: String = i.name.chars().filter(|c| !c.is_control()).take(22).collect();
-                mq::draw_text(&name, x + 32.0, ry + 26.0, 22.0, mq::WHITE);
-                let state = match i.phase {
-                    2 => "in lobby",
-                    1 => "round over",
-                    _ => "in game",
-                };
-                let detail = if ok {
-                    format!("{}   {}/{} players   {}", MAPS[i.map as usize % MAPS.len()].name, i.humans, i.slots, state)
-                } else {
-                    "different game version".to_string()
-                };
-                mq::draw_text(&detail, x + 290.0, ry + 25.0, 17.0, DIM);
-                if ok && (button(x + w - 20.0 - 100.0, ry + 4.0, 96.0, 30.0, "JOIN", COBALT, 20.0) || (over && mq::is_mouse_button_pressed(mq::MouseButton::Left))) {
-                    out = Some(Choice::Join(f.addr.clone()));
+            // Now playing, bottom right: moving bars, the title, and a
+            // button for the next song when there is more than one.
+            if let Some(title) = music.now_playing().map(|t| t.to_string()) {
+                let skip = music.can_skip();
+                let tw = ui::width(&title, 16.0);
+                let pw = tw + 150.0 + if skip { 46.0 } else { 0.0 };
+                let (px, py) = (sw - pw - 40.0, sh - 104.0);
+                if px > x + w + 20.0 {
+                    ui::plate(px, py, pw, 34.0, th::GLASS, th::STROKE);
+                    for b in 0..4 {
+                        let bh = 5.0 + 11.0 * (0.5 + 0.5 * ((now as f32) * (5.0 + b as f32 * 1.7) + b as f32 * 2.1).sin());
+                        mq::draw_rectangle(px + 14.0 + b as f32 * 6.0, py + 26.0 - bh, 4.0, bh, th::COBALT);
+                    }
+                    ui::text("NOW PLAYING", px + 46.0, py + 23.0, 15.0, th::QUIET);
+                    ui::text(&title, px + 136.0, py + 23.0, 16.0, th::WHITE);
+                    if skip && button(px + pw - 44.0, py + 3.0, 40.0, 28.0, ">>", None, 16.0) {
+                        music.skip();
+                    }
                 }
-                ry += 44.0;
             }
-            ry += 6.0;
-            mq::draw_text("SAVED SERVERS", x + 20.0, ry + 14.0, 16.0, DIM);
-            ry += 24.0;
-            if self.servers.is_empty() && lan_rows == 0 {
-                mq::draw_text("None yet - servers you join are remembered here.", x + 20.0, ry + 26.0, 20.0, DIM);
-            }
-            let mut remove = None;
-            for (i, s) in self.servers.iter().enumerate() {
-                let over = hit(x + 20.0, ry, w - 40.0, 38.0);
-                mq::draw_rectangle(x + 20.0, ry, w - 40.0, 38.0, if over { mq::Color::new(0.17, 0.17, 0.18, 1.0) } else { mq::Color::new(0.09, 0.09, 0.09, 1.0) });
-                mq::draw_text(s, x + 32.0, ry + 26.0, 22.0, mq::WHITE);
-                if button(x + w - 20.0 - 44.0, ry + 4.0, 40.0, 30.0, "X", mq::Color::new(0.5, 0.2, 0.18, 1.0), 20.0) {
-                    remove = Some(i);
-                } else if button(x + w - 20.0 - 44.0 - 96.0, ry + 4.0, 90.0, 30.0, "JOIN", COBALT, 20.0) {
-                    out = Some(Choice::Join(s.clone()));
-                } else if over && mq::is_mouse_button_pressed(mq::MouseButton::Left) {
-                    let (h, p) = split_addr(s);
-                    self.f[F_HOST] = h;
-                    self.f[F_PORT] = if p.is_empty() { DEFAULT_PORT.to_string() } else { p };
-                    self.focus = F_HOST;
-                }
-                ry += 44.0;
-            }
-            if let Some(i) = remove {
-                self.servers.remove(i);
-                self.save();
-            }
-            y += join_h + 18.0;
 
-            // ---- host ----
-            let host_h = 204.0;
-            mq::draw_rectangle(x, y, w, host_h, PANEL);
-            mq::draw_rectangle(x, y, 4.0, host_h, EMBER);
-            mq::draw_text("HOST A MATCH", x + 20.0, y + 30.0, 24.0, mq::WHITE);
-            let fy = y + 62.0;
-            self.field(F_BOTS, x + 20.0, fy, 150.0, "PLAYERS PER TEAM", "12", now);
-            self.field(F_HPORT, x + 186.0, fy, port_w, "PORT", &DEFAULT_PORT.to_string(), now);
-            // Map selector: click the right side for the next map, the left
-            // side for the previous one.
-            let (mx, mw) = (x + 186.0 + port_w + 16.0, (w - 20.0 - 200.0 - 16.0) - (186.0 + port_w + 16.0));
-            let def = &MAPS[self.map as usize % MAPS.len()];
-            mq::draw_text("MAP", mx, fy - 8.0, 16.0, DIM);
-            let over = hit(mx, fy, mw, 38.0);
-            mq::draw_rectangle(mx, fy, mw, 38.0, mq::Color::new(0.05, 0.05, 0.05, 1.0));
-            mq::draw_rectangle_lines(mx, fy, mw, 38.0, 2.0, if over { mq::WHITE } else { LINE });
-            let nm = mq::measure_text(def.name, None, 20, 1.0);
-            mq::draw_text(def.name, mx + (mw - nm.width) / 2.0, fy + 25.0, 20.0, mq::WHITE);
-            mq::draw_text("<", mx + 9.0, fy + 26.0, 22.0, if over { mq::WHITE } else { DIM });
-            mq::draw_text(">", mx + mw - 20.0, fy + 26.0, 22.0, if over { mq::WHITE } else { DIM });
-            if over && mq::is_mouse_button_pressed(mq::MouseButton::Left) {
-                let n = MAPS.len() as u8;
-                let back = mq::mouse_position().0 < mx + mw * 0.3;
-                self.map = (self.map % n + if back { n - 1 } else { 1 }) % n;
-            }
-            if button(x + w - 20.0 - 200.0, fy, 200.0, 38.0, "HOST AND PLAY", EMBER, 22.0) {
-                out = Some(self.host_choice());
-            }
-            let hp = self.f[F_HPORT].parse::<u16>().ok().filter(|p| *p != 0).unwrap_or(DEFAULT_PORT);
-            let note = match &self.lan_ip {
-                Some(ip) => format!("Empty slots are filled by bots. Others on your network can join at {ip}:{hp}"),
-                None => "Empty slots are filled by bots.".to_string(),
-            };
-            mq::draw_text(&format!("{}: {}.", def.name, def.blurb), x + 20.0, fy + 64.0, 18.0, mq::Color::new(0.8, 0.78, 0.74, 1.0));
-            mq::draw_text(&note, x + 20.0, fy + 88.0, 18.0, DIM);
-            // Rotation: after each round the server moves to the next map.
-            let rl = if self.rotate { "MAP ROTATION: ON" } else { "MAP ROTATION: OFF" };
-            let rc = if self.rotate { mq::Color::new(0.25, 0.3, 0.2, 1.0) } else { mq::Color::new(0.16, 0.16, 0.16, 1.0) };
-            if button(x + 20.0, fy + 100.0, 220.0, 28.0, rl, rc, 18.0) {
-                self.rotate = !self.rotate;
-            }
-            let rn = if self.rotate { "Each round is played on the next map in the list." } else { "Every round is played on this map." };
-            mq::draw_text(rn, x + 256.0, fy + 120.0, 18.0, DIM);
-            y += host_h + 18.0;
-
-            if button(x + w - 110.0, y, 110.0, 34.0, "QUIT", LINE, 20.0) || mq::is_key_pressed(mq::KeyCode::Escape) {
-                out = Some(Choice::Quit);
-            }
-            mq::draw_text("TAB next field    ENTER join / host    CTRL+V paste", x, y + 23.0, 18.0, DIM);
-
-            if out.is_none() && (mq::is_key_pressed(mq::KeyCode::Enter) || mq::is_key_pressed(mq::KeyCode::KpEnter)) {
-                out = if self.focus >= F_BOTS { Some(self.host_choice()) } else { self.join_addr().map(Choice::Join) };
-            }
             self.frames += 1;
-            if self.frames == 20 {
+            // (a picture waits for the music, so it shows what is playing)
+            if self.frames >= 20 && self.shot.is_some() && (!music.available() || !self.music_on || music.now_playing().is_some() || self.frames > 900) {
                 if let Some(p) = &self.shot {
                     mq::get_screen_data().export_png(p);
+                    self.drop_map();
                     return Choice::Quit;
                 }
             }
             if let Some(c) = out {
-                self.error = None;
+                if !matches!(c, Choice::Quit) {
+                    self.error = None;
+                }
+                self.drop_map();
                 self.save();
                 return c;
             }

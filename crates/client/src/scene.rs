@@ -309,6 +309,8 @@ pub struct PlayerView {
     pub kit: u8,
     /// Family of the primary carried (0 rifle, 1 shotgun, 2 long rifle).
     pub gun: u8,
+    /// Look: index into `sim::SKINS`.
+    pub skin: u8,
     pub phase: f32,
     pub moving: f32,
     /// Smoothed 0..1 pose weights.
@@ -359,10 +361,20 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
     let h = p.hurt * 0.6;
     let tint = |c: [f32; 3], e: f32| -> Col { [c[0] + (1.0 - c[0]) * h, c[1] + (1.0 - c[1]) * h, c[2] + (1.0 - c[2]) * h, e.max(h * 0.5)] };
     let main = tint(tc, glow);
-    let dark = tint([tc[0] * 0.42, tc[1] * 0.42, tc[2] * 0.45], glow * 0.5);
+    // Fatigues: team-tinted, except the near-black of the Ghost and the
+    // lighter cloth of the Scout.
+    let look = p.skin % 6;
+    let dk = match look {
+        3 => [0.07 + tc[0] * 0.08, 0.07 + tc[1] * 0.08, 0.09 + tc[2] * 0.08],
+        1 => [tc[0] * 0.5 + 0.12, tc[1] * 0.5 + 0.12, tc[2] * 0.5 + 0.1],
+        _ => [tc[0] * 0.42, tc[1] * 0.42, tc[2] * 0.45],
+    };
+    let dark = tint(dk, glow * 0.5);
     let metal = tint([0.16, 0.16, 0.18], 0.0);
     let skin = tint([0.86, 0.78, 0.66], 0.0);
     let glove = tint([0.2, 0.19, 0.18], 0.0);
+    let leather = tint([0.4, 0.27, 0.15], 0.0);
+    let hazard = tint([0.95, 0.78, 0.12], 0.0);
 
     let sl = p.slide;
     let c = p.crouch.max(sl);
@@ -390,6 +402,11 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
         m.obox(&knee, vec3(0.0, -0.16, 0.0), vec3(0.095, 0.17, 0.11), shade(dark, 0.85));
         m.obox(&knee, vec3(0.0, -0.01, 0.07), vec3(0.08, 0.06, 0.05), metal);
         m.obox(&knee, vec3(0.0, -0.35, 0.04), vec3(0.105, 0.055, 0.16), metal);
+        match look {
+            2 => m.obox(&hip, vec3(side.signum() * 0.03, -0.2, 0.09), vec3(0.09, 0.14, 0.05), metal), // thigh plate
+            5 => m.obox(&knee, vec3(0.0, -0.2, 0.0), vec3(0.1, 0.03, 0.115), hazard),                 // reflective band
+            _ => {}
+        }
     }
 
     // ---- torso ----
@@ -410,6 +427,37 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
         m.obox(&body, vec3(sx * 0.31 * bulk, 1.4, 0.0), vec3(0.09, 0.07, 0.13), shade(main, 1.1));
     }
     m.obox(&body, vec3(0.0, 1.48, 0.0), vec3(0.07, 0.04, 0.07), shade(skin, 0.85));
+    match look {
+        1 => {
+            // Scout: a light rig of pouches instead of a plate.
+            for sx in [-0.14f32, 0.0, 0.14] {
+                m.obox(&body, vec3(sx * bulk, 1.02, 0.2 * bulk), vec3(0.055, 0.07, 0.035), leather);
+            }
+        }
+        2 => {
+            // Heavy: big shoulder plates and a collar.
+            for sx in [-1.0f32, 1.0] {
+                m.obox(&body, vec3(sx * 0.35 * bulk, 1.42, 0.0), vec3(0.12, 0.09, 0.17), metal);
+            }
+            m.obox(&body, vec3(0.0, 1.47, 0.0), vec3(0.2, 0.05, 0.17), metal);
+        }
+        3 => m.obox(&body, vec3(0.31 * bulk, 1.2, 0.0), vec3(0.095, 0.035, 0.135), shade(main, 1.2)), // armband
+        4 => {
+            // Veteran: a bandolier across the chest.
+            let strap = body * Mat4::from_translation(vec3(0.0, 1.14, 0.0)) * Mat4::from_rotation_z(0.75);
+            m.obox(&strap, Vec3::ZERO, vec3(0.045, 0.36, 0.2 * bulk), leather);
+            for k in -2i32..=2 {
+                m.obox(&strap, vec3(0.0, k as f32 * 0.12, 0.2 * bulk), vec3(0.035, 0.035, 0.02), hazard);
+            }
+        }
+        5 => {
+            // Hazard: striped vest.
+            for y in [0.98f32, 1.3] {
+                m.obox(&body, vec3(0.0, y, 0.0), vec3(0.275 * bulk, 0.035, 0.165 * bulk), hazard);
+            }
+        }
+        _ => {}
+    }
     match p.kit {
         1 => m.obox(&body, vec3(0.0, 1.2, -0.24), vec3(0.22, 0.26, 0.09), metal),
         2 => m.obox(&body, vec3(0.0, 1.3, -0.2), vec3(0.2, 0.3, 0.04), dark),
@@ -419,11 +467,51 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
     // ---- head: stays level while the body leans ----
     let head = body * Mat4::from_translation(vec3(0.0, 1.5, 0.0)) * Mat4::from_rotation_x(-p.pitch * 0.6 * (1.0 - fall) - lean * 0.8);
     m.obox(&head, vec3(0.0, 0.14, 0.0), vec3(0.15, 0.15, 0.15), skin);
-    m.obox(&head, vec3(0.0, 0.25, -0.01), vec3(0.18, 0.09, 0.19), main);
-    m.obox(&head, vec3(0.0, 0.15, 0.155), vec3(0.12, 0.04, 0.01), metal);
-    m.obox(&head, vec3(0.0, 0.2, 0.2), vec3(0.17, 0.02, 0.05), shade(main, 0.85));
-    for sx in [-1.0f32, 1.0] {
-        m.obox(&head, vec3(sx * 0.165, 0.13, -0.02), vec3(0.02, 0.07, 0.08), shade(main, 0.9));
+    match look {
+        1 => {
+            // Scout: soft cap with a peak, goggles.
+            m.obox(&head, vec3(0.0, 0.28, -0.01), vec3(0.16, 0.05, 0.17), shade(main, 0.75));
+            m.obox(&head, vec3(0.0, 0.25, 0.2), vec3(0.13, 0.015, 0.06), shade(main, 0.6));
+            m.obox(&head, vec3(0.0, 0.17, 0.155), vec3(0.14, 0.04, 0.015), tint([0.55, 0.85, 0.95], 0.35));
+            m.obox(&head, vec3(0.0, 0.17, 0.0), vec3(0.158, 0.02, 0.158), metal);
+        }
+        2 => {
+            // Heavy: full-face helmet with a lit visor slit.
+            m.obox(&head, vec3(0.0, 0.16, 0.0), vec3(0.19, 0.19, 0.2), metal);
+            m.obox(&head, vec3(0.0, 0.3, -0.01), vec3(0.17, 0.06, 0.18), main);
+            m.obox(&head, vec3(0.0, 0.17, 0.2), vec3(0.14, 0.025, 0.012), tint(tc, 0.7));
+            m.obox(&head, vec3(0.0, 0.04, 0.17), vec3(0.08, 0.06, 0.05), shade(metal, 0.7));
+        }
+        3 => {
+            // Ghost: hood up, face covered.
+            m.obox(&head, vec3(0.0, 0.17, -0.03), vec3(0.18, 0.19, 0.19), dark);
+            m.obox(&head, vec3(0.0, 0.1, 0.15), vec3(0.13, 0.08, 0.015), tint([0.05, 0.05, 0.06], 0.0));
+            m.obox(&head, vec3(0.0, 0.2, 0.156), vec3(0.11, 0.022, 0.012), tint([0.85, 0.88, 0.9], 0.25));
+        }
+        4 => {
+            // Veteran: beret pulled to one side, moustache.
+            let tilt = head * Mat4::from_translation(vec3(0.02, 0.29, 0.0)) * Mat4::from_rotation_z(-0.22);
+            m.obox(&tilt, Vec3::ZERO, vec3(0.19, 0.035, 0.18), main);
+            m.obox(&tilt, vec3(0.1, 0.045, 0.1), vec3(0.03, 0.03, 0.03), hazard);
+            m.obox(&head, vec3(0.0, 0.08, 0.155), vec3(0.07, 0.018, 0.012), tint([0.75, 0.75, 0.72], 0.0));
+        }
+        5 => {
+            // Hazard: hard hat with a brim, ear defenders.
+            m.obox(&head, vec3(0.0, 0.28, 0.0), vec3(0.17, 0.07, 0.17), hazard);
+            m.obox(&head, vec3(0.0, 0.225, 0.02), vec3(0.2, 0.012, 0.22), hazard);
+            m.obox(&head, vec3(0.0, 0.34, 0.0), vec3(0.03, 0.02, 0.17), shade(hazard, 0.75));
+            for sx in [-1.0f32, 1.0] {
+                m.obox(&head, vec3(sx * 0.17, 0.13, 0.0), vec3(0.03, 0.06, 0.06), main);
+            }
+        }
+        _ => {
+            m.obox(&head, vec3(0.0, 0.25, -0.01), vec3(0.18, 0.09, 0.19), main);
+            m.obox(&head, vec3(0.0, 0.15, 0.155), vec3(0.12, 0.04, 0.01), metal);
+            m.obox(&head, vec3(0.0, 0.2, 0.2), vec3(0.17, 0.02, 0.05), shade(main, 0.85));
+            for sx in [-1.0f32, 1.0] {
+                m.obox(&head, vec3(sx * 0.165, 0.13, -0.02), vec3(0.02, 0.07, 0.08), shade(main, 0.9));
+            }
+        }
     }
 
     // ---- arms and weapon ----
@@ -453,7 +541,9 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
     let r_hand = vec3(gx, -0.17, 0.42);
     let r_el = vec3(-0.36 * bulk, -0.24, 0.14);
     limb(m, &arms, r_sh, r_el, 0.075, false, dark);
-    limb(m, &arms, r_el, r_hand, 0.065, false, shade(dark, 0.9));
+    // The Veteran wears rolled sleeves.
+    let fore = if look == 4 { skin } else { shade(dark, 0.9) };
+    limb(m, &arms, r_el, r_hand, 0.065, false, fore);
     m.obox(&arms, r_hand, vec3(0.05, 0.055, 0.05), glove);
     // Left arm: supports the fore-end, or comes off it to work the magazine.
     let l_sh = vec3(0.31 * bulk, 0.02, 0.0);
@@ -461,7 +551,7 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
     let l_hand = support + (vec3(gx + 0.04, -0.3, 0.5) - support) * p.reload;
     let l_el = vec3(0.24 * bulk, -0.26, 0.2);
     limb(m, &arms, l_sh, l_el, 0.075, false, dark);
-    limb(m, &arms, l_el, l_hand, 0.065, false, shade(dark, 0.9));
+    limb(m, &arms, l_el, l_hand, 0.065, false, fore);
     m.obox(&arms, l_hand, vec3(0.05, 0.05, 0.055), glove);
 
     if shield {
@@ -701,6 +791,63 @@ pub struct ViewModel {
     pub time: f32,
     /// Changes every shot; picks the muzzle flash shape.
     pub seq: u32,
+    /// Draw only the weapon, placed by this matrix (no arms, no motion).
+    pub preview: Option<Mat4>,
+}
+
+/// A weapon on its own, placed by `g`. Gun space: muzzle toward -Z, +Y up.
+pub fn gun_model(m: &mut Mesh, wid: u8, team: u8, g: Mat4) {
+    let mut add = Mesh::default();
+    let v = ViewModel {
+        sight: sights_for(wid)[0],
+        kit: weapon_def(wid).arch,
+        wid,
+        team,
+        ads: 0.0,
+        recoil: 0.0,
+        bob: 0.0,
+        bob_amt: 0.0,
+        reload: -1.0,
+        draw: 0.0,
+        cycle: 0.0,
+        sway: (0.0, 0.0),
+        flash: 0.0,
+        sprint: 0.0,
+        land: 0.0,
+        strafe: 0.0,
+        slide: 0.0,
+        air: 0.0,
+        mantle: 0.0,
+        time: 0.0,
+        seq: 0,
+        preview: Some(g),
+    };
+    viewmodel(m, &mut add, &v);
+}
+
+/// A weapon for the HUD, in pixels with +Y up: seen from the side, turned
+/// by `turn` radians, and scaled so its profile fits a `w` x `h` box
+/// centred on (`cx`, `cy`).
+#[allow(clippy::too_many_arguments)]
+pub fn gun_icon(m: &mut Mesh, wid: u8, team: u8, cx: f32, cy: f32, w: f32, h: f32, turn: f32) {
+    let mut probe = Mesh::default();
+    gun_model(&mut probe, wid, team, Mat4::IDENTITY);
+    let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+    for v in &probe.v {
+        let p = Vec3::from(v.pos);
+        lo = lo.min(p);
+        hi = hi.max(p);
+    }
+    if probe.v.is_empty() {
+        return;
+    }
+    let s = (w / (hi.z - lo.z).max(0.01)).min(h / (hi.y - lo.y).max(0.01));
+    let g = Mat4::from_translation(vec3(cx, cy, 0.0))
+        * Mat4::from_scale(Vec3::splat(s))
+        * Mat4::from_rotation_x(0.14)
+        * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2 + turn)
+        * Mat4::from_translation(-(lo + hi) * 0.5);
+    gun_model(m, wid, team, g);
 }
 
 /// First-person weapon and arms, built in camera space (camera looks down
@@ -750,7 +897,7 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
 
     let k = 1.0 - v.ads * 0.85;
     let mut pos = hip + (aim - hip) * v.ads;
-    pos += vec3((v.bob).sin() * 0.012, (v.bob * 2.0).sin().abs() * -0.012, 0.0) * v.bob_amt * (1.0 + 0.6 * v.sprint) * k;
+    pos += vec3((v.bob).sin() * 0.012, v.bob.sin().abs() * -0.014, 0.0) * v.bob_amt * (1.0 + 0.6 * v.sprint) * k;
     pos += vec3(v.sway.0, v.sway.1, 0.0) * k;
     pos += vec3((v.time * 0.9).sin() * 0.0018, (v.time * 1.7).sin() * 0.003, 0.0) * k;
     pos.z += v.recoil * 0.07 + pump * 0.012;
@@ -760,7 +907,7 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
     let rot = Mat4::from_rotation_x(v.recoil * 0.09 + tilt * 0.36 - v.sprint * 0.25 - draw * 0.9 - v.mantle * 0.8 - v.land * 0.05 * k + pump * 0.03)
         * Mat4::from_rotation_y(v.sprint * 0.5 + tilt * 0.22 + draw * 0.3 + bolt * 0.04)
         * Mat4::from_rotation_z(-tilt * 0.55 - v.strafe * 0.05 * k + v.slide * 0.28 * k - bolt * 0.16 * k);
-    let g = Mat4::from_translation(pos) * rot;
+    let g = v.preview.unwrap_or(Mat4::from_translation(pos) * rot);
 
     // Where the hands go, in gun space, and the magazine if there is one.
     let (grip, support, mut mag_c, mut mag_h) = match v.kit {
@@ -961,6 +1108,9 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
     }
     if !iron {
         optic(m, &g, v.kit, v.sight, accent, dark, metal);
+    }
+    if v.preview.is_some() {
+        return;
     }
 
     // ---- arms: elbows hang in camera space, hands stay on the weapon ----

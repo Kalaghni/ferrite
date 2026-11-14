@@ -8,16 +8,29 @@ use ferrite_shared::proto::{flag, SPECTATOR_ID};
 use ferrite_shared::sim;
 use ferrite_shared::{eligible, NEUTRAL, POINT_NAMES, POINT_RADIUS, TEAM_NAMES};
 use macroquad::prelude::{
-    draw_circle, draw_circle_lines, draw_line, draw_poly, draw_rectangle, draw_rectangle_lines, draw_text, draw_triangle,
-    is_key_down, measure_text, screen_height, screen_width, Color, KeyCode, Vec2,
+    draw_circle, draw_circle_lines, draw_line, draw_poly, draw_rectangle, draw_rectangle_lines, draw_triangle, is_key_down,
+    screen_height, screen_width, Color, KeyCode, Vec2,
 };
+
+/// Text goes through the UI kit's typeface.
+struct Dim {
+    width: f32,
+}
+fn measure_text(s: &str, _font: Option<()>, size: u16, _scale: f32) -> Dim {
+    Dim { width: crate::ui::width(s, size as f32) }
+}
+fn draw_text(s: &str, x: f32, y: f32, size: f32, c: Color) {
+    crate::ui::text(s, x, y, size, c);
+}
 
 fn col(c: [f32; 3], a: f32) -> Color {
     Color::new(c[0], c[1], c[2], a)
 }
 
-const WHITE: [f32; 3] = [0.97, 0.95, 0.9];
-const DARK: [f32; 3] = [0.07, 0.06, 0.07];
+const WHITE: [f32; 3] = [0.965, 0.953, 0.98];
+const DARK: [f32; 3] = [0.047, 0.063, 0.125];
+const SUCCESS: [f32; 3] = [0.506, 0.878, 0.729];
+const WARNING: [f32; 3] = [1.0, 0.824, 0.541];
 
 fn text(s: &str, x: f32, y: f32, size: f32, c: Color) {
     draw_text(s, x + 1.5, y + 1.5, size, Color::new(0.0, 0.0, 0.0, 0.6 * c.a));
@@ -61,34 +74,71 @@ pub fn loadout_top(h: f32) -> f32 {
 /// Columns are class, primary (for class `kit`) and sidearm; shared with
 /// the click handler.
 pub fn loadout_rects(w: f32, h: f32, kit: u8) -> Vec<(u8, u8, f32, f32, f32, f32)> {
-    let pw = (w - 40.0).min(1080.0);
-    let cw = pw / 3.0;
-    let x0 = w / 2.0 - pw / 2.0;
     let y0 = loadout_top(h) + 106.0;
     let rows = [3, sim::kit(kit).prims.len(), sim::SIDEARMS.len()];
     let mut v = Vec::new();
     for c in 0..3u8 {
+        let (x, cw) = loadout_col(w, c);
         for r in 0..rows[c as usize] as u8 {
-            v.push((c, r, x0 + c as f32 * cw + 4.0, y0 + r as f32 * 38.0, cw - 8.0, 35.0));
+            v.push((c, r, x + 4.0, y0 + r as f32 * 38.0, cw - 8.0, 35.0));
         }
     }
+    // Under the classes: the look worn. One row; a click moves to the next.
+    let (x, cw) = loadout_col(w, 0);
+    v.push((3, 0, x + 4.0, y0 + 4.0 * 38.0, cw - 8.0, 35.0));
     v
 }
 
-fn draw_loadout(app: &App, w: f32, h: f32) {
+/// Left edge and width of a loadout column. The weapon columns are wider:
+/// each row carries a model of the gun.
+fn loadout_col(w: f32, c: u8) -> (f32, f32) {
+    let pw = (w - 40.0).min(1080.0);
+    let x0 = w / 2.0 - pw / 2.0;
+    match c {
+        0 => (x0, pw * 0.26),
+        1 => (x0 + pw * 0.26, pw * 0.37),
+        _ => (x0 + pw * 0.63, pw * 0.37),
+    }
+}
+
+/// A weapon model to draw over the HUD: fitted into a `w` x `h` box
+/// centred on (`cx`, `cy`), in screen pixels.
+pub struct GunIcon {
+    pub wid: u8,
+    pub cx: f32,
+    pub cy: f32,
+    pub w: f32,
+    pub h: f32,
+    /// The big ones turn slowly; the row icons stay put.
+    pub turn: bool,
+}
+
+/// Width of the model at the left of a weapon row.
+const ICON_W: f32 = 92.0;
+
+fn draw_loadout(app: &App, w: f32, h: f32, icons: &mut Vec<GunIcon>) {
     let (mx, my) = macroquad::prelude::mouse_position();
     let top = loadout_top(h);
     let kd = sim::kit(app.kit_choice);
     let tc = team_col(app.my_team);
-    let pw = (w - 40.0).min(1080.0);
     for (c, title) in ["CLASS   keys 1-3", "PRIMARY   4 for the next one", "SIDEARM   5 for the next one"].iter().enumerate() {
-        text(title, w / 2.0 - pw / 2.0 + c as f32 * pw / 3.0 + 14.0, top + 98.0, 16.0, col(WHITE, 0.5));
+        text(title, loadout_col(w, c as u8).0 + 14.0, top + 98.0, 18.0, col(WHITE, 0.6));
     }
+    // The chosen primary and sidearm, large, either side of the heading.
+    // Pointing at a row shows that weapon instead.
+    let (_, prim, side) = app.loadout();
+    let mut big = [prim, side];
     for (c, r, x, y, rw, rh) in loadout_rects(w, h, app.kit_choice) {
         let (name, blurb, sel, stats) = match c {
             0 => {
                 let k = sim::kit(r);
                 (k.name, k.blurb, app.kit_choice == r, String::new())
+            }
+            3 => {
+                let n = sim::SKINS.len();
+                let s = sim::SKINS[app.skin_choice as usize % n];
+                text("LOOK   6 for the next one", x + 10.0, y - 8.0, 18.0, col(WHITE, 0.6));
+                (s.0, s.1, true, format!("{} / {}", app.skin_choice as usize % n + 1, n))
             }
             _ => {
                 let id = if c == 1 { kd.prims[r as usize] } else { sim::SIDEARMS[r as usize] };
@@ -104,9 +154,26 @@ fn draw_loadout(app: &App, w: f32, h: f32) {
         if sel {
             draw_rectangle(x, y, 3.0, rh, col(tc, 1.0));
         }
-        text(&name.to_uppercase(), x + 12.0, y + 16.0, 18.0, col(WHITE, if sel { 1.0 } else { 0.8 }));
+        let mut tx = x + 12.0;
+        if c == 1 || c == 2 {
+            let id = if c == 1 { kd.prims[r as usize] } else { sim::SIDEARMS[r as usize] };
+            draw_rectangle(x + 5.0, y + 2.0, ICON_W, rh - 4.0, col(DARK, 0.45));
+            icons.push(GunIcon { wid: id, cx: x + 5.0 + ICON_W / 2.0, cy: y + rh / 2.0, w: ICON_W - 10.0, h: rh - 10.0, turn: false });
+            tx = x + ICON_W + 12.0;
+            if over {
+                big[c as usize - 1] = id;
+            }
+        }
+        text(&name.to_uppercase(), tx, y + 16.0, 18.0, col(WHITE, if sel { 1.0 } else { 0.8 }));
         text_r(&stats, x + rw - 8.0, y + 15.0, 14.0, col(WHITE, if sel { 0.9 } else { 0.55 }));
-        text(blurb, x + 12.0, y + 30.0, 14.0, col(WHITE, if sel { 0.85 } else { 0.55 }));
+        text(blurb, tx, y + 30.0, 14.0, col(WHITE, if sel { 0.85 } else { 0.55 }));
+    }
+    let pw = (w - 40.0).min(1080.0);
+    let bw = (pw * 0.27).min(290.0);
+    for (k, id) in big.into_iter().enumerate() {
+        let bx = if k == 0 { w / 2.0 - pw / 2.0 + 8.0 } else { w / 2.0 + pw / 2.0 - 8.0 - bw };
+        text(&sim::weapon_def(id).name.to_uppercase(), bx + 4.0, top + 20.0, 16.0, col(tc, 0.95));
+        icons.push(GunIcon { wid: id, cx: bx + bw / 2.0, cy: top + 54.0, w: bw - 30.0, h: 64.0, turn: true });
     }
 }
 
@@ -123,45 +190,58 @@ pub fn lobby_rects(w: f32, _h: f32) -> (Vec<(f32, f32, f32, f32)>, (f32, f32, f3
 }
 
 fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32) {
-    draw_rectangle(0.0, 0.0, w, h, col(DARK, 0.94));
+    // Staging-area key art (its logo sits top left) under a scrim.
+    draw_rectangle(0.0, 0.0, w, h, col(DARK, 1.0));
+    crate::ui::backdrop(&app.lobby_bg, w, h);
+    draw_rectangle(0.0, 0.0, w, h, col(DARK, 0.5));
     let pw = (w - 40.0).min(1080.0);
     let x0 = w / 2.0 - pw / 2.0;
     let tc = team_col(app.my_team);
     let (mx, my) = macroquad::prelude::mouse_position();
-    text("LOBBY", x0, 78.0, 64.0, col(WHITE, 1.0));
-    let status = if snap.phase_secs > 0.05 { format!("Match starts in {:.0}", snap.phase_secs.ceil()) } else { "Waiting for players".to_string() };
-    text(&status, x0 + 220.0, 58.0, 30.0, col(tc, 1.0));
-    text("Vote for a map and choose a loadout. It starts early once everyone is ready.", x0 + 220.0, 82.0, 16.0, col(WHITE, 0.6));
-    text("M change team      ENTER ready      Q leave", x0, 108.0, 14.0, col(WHITE, 0.5));
+    let hx = (500.0 * crate::ui::art_scale(w, h)).max(x0);
+    let soon = snap.phase_secs > 0.05 && snap.phase_secs <= 3.0;
+    let status = if snap.phase_secs > 0.05 { format!("MATCH STARTS IN 00:{:02.0}", snap.phase_secs.ceil()) } else { "WAITING FOR PLAYERS".to_string() };
+    text("PRE-MATCH BRIEFING", hx, 36.0, 15.0, Color::new(0.718, 0.863, 1.0, 1.0));
+    text(&status, hx, 66.0, 30.0, col(if soon { WARNING } else { WHITE }, 1.0));
+    text("Vote for the next map and choose a loadout. It starts early once everyone is ready.", hx, 90.0, 17.0, col(WHITE, 0.75));
+    text("M change team      ENTER ready      Q leave", x0, 113.0, 17.0, col(WHITE, 0.7));
+    if let Some(t) = &app.now_playing {
+        text_r(&format!("now playing: {t}"), x0 + pw, 113.0, 17.0, col(WHITE, 0.7));
+    }
     let (cards, rb) = lobby_rects(w, h);
     for (k, &(x, y, cw, ch)) in cards.iter().enumerate() {
         let def = &ferrite_shared::map::MAPS[k];
         let mine = app.vote == k as u8;
         let next = snap.next_map == k as u8;
         let over = mx >= x && mx < x + cw && my >= y && my < y + ch;
-        draw_rectangle(x, y, cw, ch, if mine { col(tc, 0.36) } else { col(WHITE, if over { 0.15 } else { 0.06 }) });
-        if next {
-            draw_rectangle_lines(x, y, cw, ch, 3.0, col(WHITE, 0.9));
+        draw_rectangle(x, y, cw, ch, col(DARK, 0.82));
+        if mine {
+            draw_rectangle(x, y, cw, ch, col(tc, 0.3));
         }
-        text(def.name, x + 12.0, y + 27.0, 22.0, col(WHITE, 1.0));
+        draw_rectangle_lines(x, y, cw, ch, if next { 3.0 } else { 2.0 }, if next { col(WHITE, 0.95) } else if over { Color::new(0.412, 0.678, 1.0, 1.0) } else { Color::new(0.706, 0.761, 0.882, 0.38) });
+        draw_rectangle(x + 12.0, y + ch - 6.0, cw - 24.0, 2.0, col(if mine { tc } else { [0.412, 0.678, 1.0] }, 0.8));
+        text(&def.name.to_uppercase(), x + 12.0, y + 27.0, 22.0, col(WHITE, 1.0));
         let v = snap.votes[k % 8];
-        text(&format!("{} vote{}", v, if v == 1 { "" } else { "s" }), x + 12.0, y + 48.0, 16.0, col(WHITE, 0.7));
+        text(&format!("{} vote{}", v, if v == 1 { "" } else { "s" }), x + 12.0, y + 46.0, 16.0, col(WHITE, 0.75));
         let tag = match (next, mine) {
             (true, true) => "YOUR VOTE - WILL BE PLAYED",
             (true, false) => "WILL BE PLAYED",
             (false, true) => "YOUR VOTE",
             _ => "",
         };
-        text(tag, x + 12.0, y + 68.0, 14.0, col(WHITE, 0.9));
+        text(tag, x + 12.0, y + 64.0, 14.0, col(WHITE, 0.9));
     }
     if !app.spectator {
         let over = mx >= rb.0 && mx < rb.0 + rb.2 && my >= rb.1 && my < rb.1 + rb.3;
-        let c = if app.ready { Color::new(0.2, 0.55, 0.25, 1.0) } else { col(WHITE, if over { 0.25 } else { 0.14 }) };
+        // Ember until you are ready, then green: the kit's call to action.
+        let c = if app.ready { col(SUCCESS, 1.0) } else { Color::new(1.0, 0.459, 0.298, if over { 1.0 } else { 0.88 }) };
         draw_rectangle(rb.0, rb.1, rb.2, rb.3, c);
-        text_c(if app.ready { "READY" } else { "CLICK WHEN READY" }, rb.0 + rb.2 / 2.0, rb.1 + 31.0, 22.0, col(WHITE, 1.0));
+        crate::ui::text_c(if app.ready { "READY" } else { "READY UP" }, rb.0 + rb.2 / 2.0, rb.1 + 32.0, 24.0, col(DARK, 1.0));
     }
     // Who is here.
     let y0 = 236.0;
+    draw_rectangle(x0 - 12.0, y0 - 24.0, pw + 24.0, loadout_top(h) - (y0 - 24.0) - 8.0, col(DARK, 0.72));
+    draw_rectangle(x0 - 12.0, loadout_top(h), pw + 24.0, LOADOUT_H, col(DARK, 0.82));
     for t in 0..2u8 {
         let tx = x0 + t as f32 * pw * 0.5;
         text(TEAM_NAMES[t as usize], tx, y0, 22.0, col(team_col(t), 1.0));
@@ -175,7 +255,7 @@ fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
             } else {
                 r.name.clone()
             };
-            text(&label, nx, ny, 16.0, col(if r.ready && !r.bot { [0.55, 0.95, 0.6] } else { WHITE }, a));
+            text(&label, nx, ny, 16.0, col(if r.ready && !r.bot { SUCCESS } else { WHITE }, a));
         }
     }
 }
@@ -209,12 +289,317 @@ fn draw_team_pick(app: &App, w: f32, h: f32) {
     text_c("Switching sides redeploys you.     M or ESC to cancel", w / 2.0, rects[0].1 + rects[0].3 + 40.0, 20.0, col(WHITE, 0.75));
 }
 
-pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) {
+/// Size of the pause overlay relative to its 1672 x 941 design.
+fn pause_scale(w: f32, h: f32) -> f32 {
+    (w / 1672.0).min(h / 941.0).max(0.62)
+}
+
+/// Click targets of the pause overlay: (id, x, y, w, h). The menu is
+/// 0 resume, 1 loadout, 2 settings, 3 change team, 4 leave. Its settings
+/// page is four rows with a minus (10, 12, 14, 16) and a plus (11, 13, 15,
+/// 17) each, then 18 back. Shared with the click handler.
+pub fn pause_rects(w: f32, h: f32, settings: bool) -> Vec<(u8, f32, f32, f32, f32)> {
+    let k = pause_scale(w, h);
+    let (x, bw, bh, step) = (62.0 * k, 400.0 * k, 74.0 * k, 88.0 * k);
+    let y0 = 290.0 * k;
+    let mut v = Vec::new();
+    if settings {
+        for r in 0..4u8 {
+            let y = y0 + r as f32 * step + 12.0 * k;
+            v.push((10 + r * 2, x + bw - 124.0 * k, y, 50.0 * k, 50.0 * k));
+            v.push((11 + r * 2, x + bw - 62.0 * k, y, 50.0 * k, 50.0 * k));
+        }
+        v.push((18, x, y0 + 4.0 * step, bw, bh));
+    } else {
+        for b in 0..5u8 {
+            v.push((b, x, y0 + b as f32 * step, bw, bh));
+        }
+    }
+    v
+}
+
+/// The pause overlay: match control on the left, the state of the match
+/// and the controls on the right, over the live game.
+fn draw_pause(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32) {
+    use crate::ui::color as th;
+    use macroquad::prelude::{draw_texture_ex, vec2, DrawTextureParams};
+    let k = pause_scale(w, h);
+    let sz = |n: f32| (n * k).max(13.0);
+    let (mx, my) = macroquad::prelude::mouse_position();
+    let over = |x: f32, y: f32, rw: f32, rh: f32| mx >= x && mx < x + rw && my >= y && my < y + rh;
+    draw_rectangle(0.0, 0.0, w, h, col(DARK, 0.74));
+    let pic = |t: &macroquad::prelude::Texture2D, x: f32, y: f32, pw: f32, ph: f32| {
+        draw_texture_ex(t, x, y, macroquad::prelude::WHITE, DrawTextureParams { dest_size: Some(vec2(pw, ph)), ..Default::default() });
+    };
+
+    // ---- left: match control ----
+    let x = 62.0 * k;
+    pic(&app.art.wordmark, 52.0 * k, 30.0 * k, 330.0 * k, 330.0 * k * 316.0 / 1634.0);
+    draw_text("MATCH CONTROL", x + 2.0, 150.0 * k, sz(20.0), th::EMBER_BRIGHT);
+    let title = if app.pause_settings {
+        "SETTINGS"
+    } else if app.deployed_once {
+        "PAUSED"
+    } else {
+        "STAND BY"
+    };
+    draw_text(title, x, 234.0 * k, 96.0 * k, th::WHITE);
+    draw_line(x, 256.0 * k, x + 420.0 * k, 256.0 * k, 1.0, th::STROKE);
+    let rects = pause_rects(w, h, app.pause_settings);
+    if app.pause_settings {
+        let rows = [
+            ("MOUSE SENSITIVITY", format!("{:.2}", app.sens * 1000.0)),
+            ("EFFECTS VOLUME", format!("{:.0}%", app.audio.volume * 100.0)),
+            ("MUSIC VOLUME", format!("{:.0}%", app.music_vol * 100.0)),
+            ("MUSIC IN A MATCH", if app.music_in_match { "ON".to_string() } else { "OFF".to_string() }),
+        ];
+        for (r, (label, value)) in rows.iter().enumerate() {
+            let y = (290.0 + r as f32 * 88.0) * k;
+            crate::ui::plate(x, y, 400.0 * k, 74.0 * k, th::GLASS_STRONG, th::STROKE);
+            draw_text(label, x + 20.0 * k, y + 28.0 * k, sz(18.0), th::MUTED);
+            draw_text(value, x + 20.0 * k, y + 60.0 * k, sz(30.0), th::WHITE);
+        }
+    }
+    for &(id, bx, by, bw, bh) in &rects {
+        let hot = over(bx, by, bw, bh);
+        if (10..18).contains(&id) {
+            crate::ui::plate(bx, by, bw, bh, th::GLASS_STRONG, if hot { th::COBALT } else { th::STROKE });
+            crate::ui::text_c(if id % 2 == 0 { "-" } else { "+" }, bx + bw / 2.0, by + bh * 0.68, sz(30.0), th::WHITE);
+            continue;
+        }
+        let label = match id {
+            0 if app.deployed_once => "RESUME",
+            0 => "DEPLOY",
+            1 => "LOADOUT",
+            2 => "SETTINGS",
+            3 => "CHANGE TEAM",
+            4 => "LEAVE MATCH",
+            _ => "BACK",
+        };
+        let ink = if id == 0 {
+            let c = if hot { th::EMBER_BRIGHT } else { th::EMBER };
+            draw_rectangle(bx, by, bw, bh, c);
+            th::INK
+        } else {
+            crate::ui::plate(bx, by, bw, bh, th::GLASS_STRONG, if hot { th::COBALT } else { th::STROKE });
+            th::WHITE
+        };
+        draw_text(label, bx + 28.0 * k, by + bh * 0.5 + 10.0 * k, sz(32.0), ink);
+        draw_text(">", bx + bw - 40.0 * k, by + bh * 0.5 + 10.0 * k, sz(32.0), ink);
+    }
+    if let Some(hs) = &app.hosting {
+        draw_text(&format!("{hs}  -  others on your network can join from JOIN SERVER"), x, h - 30.0 * k, sz(17.0), th::MUTED);
+    }
+    if let Some(t) = &app.now_playing {
+        let line = format!("NOW PLAYING   {t}");
+        let lw = crate::ui::width(&line, sz(17.0));
+        crate::ui::plate(x, h - 100.0 * k, lw + 36.0 * k, 40.0 * k, th::GLASS_STRONG, th::STROKE);
+        draw_text(&line, x + 18.0 * k, h - 73.0 * k, sz(17.0), th::WHITE);
+    }
+
+    // ---- right: match status ----
+    let pw = 408.0 * k;
+    let px = w - 46.0 * k - pw;
+    let py = 62.0 * k;
+    if px < x + 430.0 * k {
+        return; // a very narrow window: the menu alone
+    }
+    crate::ui::plate(px, py, pw, 566.0 * k, th::GLASS_STRONG, th::STROKE);
+    let ix = px + 22.0 * k;
+    let iw = pw - 44.0 * k;
+    draw_text("MATCH STATUS", ix, py + 32.0 * k, sz(17.0), th::MUTED);
+    draw_text(&ferrite_shared::map::map_def(snap.map).name.to_uppercase(), ix, py + 70.0 * k, sz(36.0), th::WHITE);
+    draw_text("FRONT-LINE CONQUEST", ix, py + 96.0 * k, sz(17.0), th::MUTED);
+    let cw = (iw - 12.0 * k) / 2.0;
+    for t in 0..2usize {
+        let cx = ix + t as f32 * (cw + 12.0 * k);
+        let cy = py + 122.0 * k;
+        let tc = team_col(t as u8);
+        let mine = app.my_team as usize == t;
+        crate::ui::plate(cx, cy, cw, 72.0 * k, col([tc[0] * 0.22, tc[1] * 0.22, tc[2] * 0.22], 0.95), if mine { col(tc, 1.0) } else { col(tc, 0.4) });
+        pic(&app.art.emblems[t], cx + 10.0 * k, cy + 12.0 * k, 48.0 * k, 48.0 * k);
+        draw_text(TEAM_NAMES[t], cx + 70.0 * k, cy + 28.0 * k, sz(17.0), col(tc, 1.0));
+        draw_text(&snap.tickets[t].max(0).to_string(), cx + 70.0 * k, cy + 60.0 * k, sz(36.0), th::WHITE);
+    }
+    let top_t = snap.tickets[0].max(snap.tickets[1]).max(250) as f32;
+    for t in 0..2usize {
+        let bx = ix + t as f32 * (cw + 12.0 * k);
+        let by = py + 208.0 * k;
+        draw_rectangle(bx, by, cw, 10.0 * k, col(WHITE, 0.12));
+        draw_rectangle(bx, by, cw * (snap.tickets[t].max(0) as f32 / top_t).min(1.0), 10.0 * k, col(team_col(t as u8), 1.0));
+    }
+    draw_line(ix, py + 236.0 * k, ix + iw, py + 236.0 * k, 1.0, th::STROKE);
+    draw_text("THE FRONT LINE", ix, py + 264.0 * k, sz(17.0), th::MUTED);
+    for (p, pt) in snap.points.iter().enumerate().take(5) {
+        let dx = ix + iw * (p as f32 + 0.5) / 5.0;
+        let dy = py + 304.0 * k;
+        if p < 4 {
+            draw_line(dx + 24.0 * k, dy, dx + iw / 5.0 - 24.0 * k, dy, 2.0, th::STROKE);
+        }
+        let c = team_col(pt.owner);
+        draw_poly(dx, dy, 4, 24.0 * k, 0.0, col(c, 1.0));
+        draw_poly(dx, dy, 4, 20.0 * k, 0.0, col(DARK, 0.9));
+        crate::ui::text_c(POINT_NAMES[p], dx, dy + 8.0 * k, sz(24.0), col(c, 1.0));
+    }
+    draw_line(ix, py + 342.0 * k, ix + iw, py + 342.0 * k, 1.0, th::STROKE);
+    let mut squad: Vec<_> = app.net.roster.iter().filter(|r| r.team == app.my_team).collect();
+    squad.sort_by_key(|r| (r.id != app.my_id, r.bot, std::cmp::Reverse(r.score)));
+    let humans = squad.iter().filter(|r| !r.bot).count();
+    draw_text(&format!("YOUR SQUAD  ({} / {} human)", humans, squad.len()), ix, py + 370.0 * k, sz(17.0), th::MUTED);
+    for (i, r) in squad.iter().take(6).enumerate() {
+        let ry = py + (384.0 + i as f32 * 28.0) * k;
+        let me = r.id == app.my_id;
+        if me {
+            draw_rectangle(ix - 6.0 * k, ry, iw + 12.0 * k, 26.0 * k, col(WHITE, 0.08));
+        }
+        draw_circle(ix + 8.0 * k, ry + 13.0 * k, 5.0 * k, if r.bot { th::QUIET } else { th::SUCCESS });
+        draw_text(&r.name, ix + 30.0 * k, ry + 20.0 * k, sz(19.0), if r.bot { th::MUTED } else { th::WHITE });
+        let tag = if me { "YOU" } else if r.bot { "BOT" } else { "" };
+        crate::ui::text_r(tag, ix + iw, ry + 20.0 * k, sz(15.0), if me { th::EMBER_BRIGHT } else { th::QUIET });
+        crate::ui::text_r(&format!("{} / {}", r.kills, r.deaths), ix + iw - 60.0 * k, ry + 20.0 * k, sz(15.0), th::MUTED);
+    }
+
+    // ---- right: controls ----
+    let qy = py + 592.0 * k;
+    let qh = (h - qy - 40.0 * k).min(250.0 * k);
+    if qh < 150.0 * k {
+        return;
+    }
+    crate::ui::plate(px, qy, pw, qh, th::GLASS_STRONG, th::STROKE);
+    draw_text("CONTROLS", ix, qy + 32.0 * k, sz(17.0), th::MUTED);
+    let keys = [
+        [("ESC", "resume"), ("L", "loadout"), ("M", "change team"), ("TAB", "scoreboard"), ("Q", "leave (here)")],
+        [("T", "change sight"), ("G", "frag grenade"), ("F", "sidearm"), ("C", "crouch / slide"), ("- =", "sensitivity")],
+    ];
+    for (c, column) in keys.iter().enumerate() {
+        for (r, (key, what)) in column.iter().enumerate() {
+            let kx = ix + c as f32 * iw * 0.5;
+            let ky = qy + (50.0 + r as f32 * 36.0) * k;
+            if ky + 30.0 * k > qy + qh {
+                break;
+            }
+            crate::ui::plate(kx, ky, 52.0 * k, 28.0 * k, col(DARK, 0.6), th::STROKE);
+            crate::ui::text_c(key, kx + 26.0 * k, ky + 21.0 * k, sz(16.0), th::WHITE);
+            draw_text(what, kx + 62.0 * k, ky + 21.0 * k, sz(16.0), th::MUTED);
+        }
+    }
+}
+
+/// Scoreboard: the series so far (who won each round, on which map, and
+/// its top scorer), then both teams with this round's figures and each
+/// player's record on this server.
+fn draw_scoreboard(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32, top: f32) {
+    use crate::ui::color as th;
+    let bw = (w - 32.0).min(1120.0);
+    let x0 = w / 2.0 - bw / 2.0;
+    let bh = (h - top - 12.0).min(620.0);
+    crate::ui::plate(x0, top, bw, bh, col(DARK, 0.9), th::STROKE);
+
+    // ---- the series ----
+    let (lx, rx) = (x0 + 18.0, x0 + bw - 18.0);
+    text("ROUND BY ROUND", lx, top + 24.0, 15.0, th::MUTED);
+    let wins = app.net.wins;
+    let mid = x0 + 300.0;
+    crate::ui::text_r(&format!("{}  {}", TEAM_NAMES[0], wins[0]), mid - 14.0, top + 26.0, 22.0, col(team_col(0), 1.0));
+    text_c("-", mid, top + 26.0, 22.0, th::MUTED);
+    text(&format!("{}  {}", wins[1], TEAM_NAMES[1]), mid + 14.0, top + 26.0, 22.0, col(team_col(1), 1.0));
+    let live = match snap.phase {
+        0 => format!("round {} in progress on {}", app.net.rounds.len().max((wins[0] + wins[1]) as usize) + 1, ferrite_shared::map::map_def(snap.map).name),
+        1 => "round over".to_string(),
+        _ => "in the lobby".to_string(),
+    };
+    crate::ui::text_r(&live, rx, top + 24.0, 15.0, th::MUTED);
+    let cards_y = top + 38.0;
+    let ch = 62.0;
+    let shown = app.net.rounds.len().min(if bw < 900.0 { 4 } else { 6 });
+    let first = app.net.rounds.len() - shown;
+    let number0 = (wins[0] + wins[1]) as usize - app.net.rounds.len().min((wins[0] + wins[1]) as usize);
+    if shown == 0 {
+        text("No round has finished yet. Each one is listed here as it ends.", lx, cards_y + 36.0, 16.0, th::QUIET);
+    }
+    let gap = 8.0;
+    let cw = ((bw - 36.0 - gap * 5.0) / 6.0).min(190.0);
+    for (k, r) in app.net.rounds[first..].iter().enumerate() {
+        let x = lx + k as f32 * (cw + gap);
+        let tc = team_col(r.winner);
+        crate::ui::plate(x, cards_y, cw, ch, col([tc[0] * 0.2, tc[1] * 0.2, tc[2] * 0.2], 0.95), col(tc, 0.7));
+        draw_rectangle(x, cards_y, 4.0, ch, col(tc, 1.0));
+        let name = ferrite_shared::map::map_def(r.map).name.to_uppercase();
+        text(&format!("{}  {}", number0 + first + k + 1, name), x + 12.0, cards_y + 18.0, 15.0, th::WHITE);
+        text(TEAM_NAMES[r.winner as usize % 2], x + 12.0, cards_y + 38.0, 20.0, col(tc, 1.0));
+        crate::ui::text_r(&format!("{} - {}", r.tickets[0], r.tickets[1]), x + cw - 8.0, cards_y + 37.0, 15.0, th::MUTED);
+        let mut mvp = format!("{}  {}", r.mvp, r.mvp_score);
+        while crate::ui::width(&mvp, 14.0) > cw - 62.0 && mvp.len() > 4 {
+            mvp.pop();
+        }
+        text(&mvp, x + 12.0, cards_y + 55.0, 14.0, col(team_col(r.mvp_team), 0.9));
+        crate::ui::text_r(&format!("{}:{:02}", r.secs / 60, r.secs % 60), x + cw - 8.0, cards_y + 55.0, 14.0, th::QUIET);
+    }
+
+    // ---- the teams ----
+    let ty = cards_y + ch + 14.0;
+    draw_line(lx, ty - 6.0, rx, ty - 6.0, 1.0, th::STROKE);
+    let half = (bw - 36.0) / 2.0;
+    // Columns, as offsets from the right edge of a team's half: this
+    // round's score, headshots, deaths and kills, then the server record.
+    let wide = half > 500.0;
+    let (c_wins, c_kd, c_score, c_hs, c_d, c_k) = (10.0, 78.0, 176.0, 240.0, 278.0, 316.0);
+    for t in 0..2u8 {
+        let x = lx + t as f32 * (half + 8.0) + 4.0;
+        let right = x + half - 12.0;
+        let tc = team_col(t);
+        text(TEAM_NAMES[t as usize], x, ty + 22.0, 24.0, col(tc, 1.0));
+        crate::ui::text_r(&format!("{} tickets", snap.tickets[t as usize]), x + 250.0f32.min(half * 0.5), ty + 20.0, 15.0, th::MUTED);
+        let head = |s: &str, off: f32| crate::ui::text_r(s, right - off, ty + 42.0, 13.0, th::QUIET);
+        head("K", c_k);
+        head("D", c_d);
+        head("HS", c_hs);
+        head("SCORE", c_score);
+        head("K / D", c_kd);
+        head("WON", c_wins);
+        crate::ui::text_r("THIS ROUND", right - c_score, ty + 20.0, 13.0, th::MUTED);
+        crate::ui::text_r("ON THIS SERVER", right - c_wins, ty + 20.0, 13.0, th::MUTED);
+        draw_line(right - c_score + 14.0, ty + 10.0, right - c_score + 14.0, top + bh - 10.0, 1.0, th::STROKE);
+        let mut rows: Vec<_> = app.net.roster.iter().filter(|r| r.team == t).collect();
+        rows.sort_by(|a, b| b.score.cmp(&a.score).then(b.total.score.cmp(&a.total.score)));
+        for (i, r) in rows.iter().enumerate() {
+            let y = ty + 64.0 + i as f32 * 21.0;
+            if y > top + bh - 8.0 {
+                break;
+            }
+            let me = r.id == app.my_id && !app.spectator;
+            if me {
+                draw_rectangle(x - 6.0, y - 16.0, half - 2.0, 21.0, col(WHITE, 0.14));
+            }
+            let c = if r.bot { th::MUTED } else { th::WHITE };
+            let mut name = r.name.clone();
+            if !wide {
+                name.truncate(9);
+            }
+            text(&name, x, y, 17.0, c);
+            if wide {
+                text(&sim::kit(r.kit).name[..3], x + 150.0, y, 13.0, th::QUIET);
+            }
+            let cell = |s: String, off: f32, c: Color| crate::ui::text_r(&s, right - off, y, 16.0, c);
+            cell(r.kills.to_string(), c_k, c);
+            cell(r.deaths.to_string(), c_d, c);
+            cell(r.heads.to_string(), c_hs, c);
+            cell(r.score.to_string(), c_score, c);
+            let dim = if r.bot { th::QUIET } else { th::MUTED };
+            cell(format!("{} / {}", r.total.kills, r.total.deaths), c_kd, dim);
+            cell(format!("{} / {}", r.total.wins, r.total.rounds), c_wins, dim);
+        }
+    }
+}
+
+/// Draws the HUD and returns the weapon models that belong on top of it.
+pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<GunIcon> {
+    let mut icons = Vec::new();
     let (w, h) = (screen_width(), screen_height());
     let (cx, cy) = (w * 0.5, h * 0.5);
     let Some(snap) = app.net.latest() else {
         text_c("waiting for server...", cx, cy, 30.0, col(WHITE, 1.0));
-        return;
+        return icons;
     };
     let playing = app.alive && !app.spectator;
     let my_pos = if app.spectator {
@@ -460,7 +845,8 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) {
     // ---- banners ----
     if let Some((msg, c, at)) = &app.banner {
         let age = (now - at) as f32;
-        if age < 3.5 {
+        // The round-over banner takes this spot when a round ends.
+        if age < 3.5 && snap.phase != 1 {
             let a = (1.0 - (age - 2.6).max(0.0) / 0.9).clamp(0.0, 1.0) * (age * 5.0).clamp(0.0, 1.0);
             let tw = measure_text(msg, None, 34, 1.0).width;
             draw_rectangle(cx - tw * 0.5 - 22.0, 92.0, tw + 44.0, 46.0, col(DARK, 0.6 * a));
@@ -598,9 +984,9 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) {
         text_r(&ammo, w - 96.0, h - 26.0, 52.0, if low { Color::new(1.0, 0.35, 0.2, 1.0) } else { col(WHITE, 1.0) });
         text(&format!("/ {}", wd.mag), w - 90.0, h - 28.0, 24.0, col(WHITE, 0.6));
         text_r(&format!("{}  -  {}", wd.name, crate::scene::SIGHT_NAMES[app.sight() as usize % 6]), w - 24.0, h - 74.0, 20.0, col(WHITE, 0.75));
-        text_r("[T] change sight", w - 24.0, h - 146.0, 16.0, col(WHITE, 0.4));
+        text_r("[T] change sight", w - 24.0, h - 150.0, 18.0, col(WHITE, 0.55));
         let other = sim::weapon_def(if app.st.slot == 1 { app.st.prim } else { app.st.side }).name;
-        text_r(&format!("[Q] {}  {}", other, app.st.ammo_alt), w - 24.0, h - 128.0, 16.0, col(WHITE, 0.5));
+        text_r(&format!("[Q] {}  {}", other, app.st.ammo_alt), w - 24.0, h - 128.0, 18.0, col(WHITE, 0.6));
         for g in 0..app.st.grenades {
             draw_poly(w - 34.0 - g as f32 * 22.0, h - 104.0, 6, 8.0, 0.0, col([0.75, 0.8, 0.5], 0.95));
         }
@@ -637,13 +1023,21 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) {
                 text_c(&who, cx, y0 + 38.0, 34.0, col(WHITE, 1.0));
                 let rs = if app.respawn_in > 0.05 { format!("Reinforcing in {:.1}s", app.respawn_in) } else { "Deploying...".to_string() };
                 text_c(&rs, cx, y0 + 66.0, 22.0, col(WHITE, 0.8));
+                if app.spec_killer {
+                    let hp = app.views.iter().find(|v| v.id == app.killer).map_or(0, |v| v.hp);
+                    let gun = sim::weapon_def(app.wid_of(app.killer, false)).name;
+                    let line = format!("SPECTATING  {}  -  {} HP  -  {}", app.name(app.killer), hp, gun);
+                    let tw = measure_text(&line, None, 22, 1.0).width;
+                    draw_rectangle(cx - tw / 2.0 - 14.0, y0 - 36.0, tw + 28.0, 30.0, col(DARK, 0.6));
+                    text_c(&line, cx, y0 - 14.0, 22.0, col(team_col(app.team(app.killer)), 1.0));
+                }
             } else {
                 text_c("LOADOUT", cx, y0 + 38.0, 34.0, col(WHITE, 1.0));
                 text_c("Used the next time you deploy.   L or ESC to close", cx, y0 + 66.0, 20.0, col(WHITE, 0.8));
             }
         }
         if panel {
-            draw_loadout(app, w, h);
+            draw_loadout(app, w, h, &mut icons);
         }
     }
     if app.spectator {
@@ -651,86 +1045,35 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) {
     }
 
     // ---- round over ----
-    if snap.phase == 1 && snap.winner != NEUTRAL {
-        draw_rectangle(0.0, cy - 80.0, w, 130.0, col(DARK, 0.7));
+    // The banner sits high so the scoreboard has the rest of the screen.
+    let over = snap.phase == 1 && snap.winner != NEUTRAL;
+    if over {
+        let by = (h * 0.1).max(66.0);
+        draw_rectangle(0.0, by, w, 112.0, col(DARK, 0.78));
         let c = team_col(snap.winner);
-        text_c(&format!("{} HOLDS THE FIELD", TEAM_NAMES[snap.winner as usize % 2]), cx, cy - 20.0, 56.0, col(c, 1.0));
+        text_c(&format!("{} HOLDS THE FIELD", TEAM_NAMES[snap.winner as usize % 2]), cx, by + 52.0, 52.0, col(c, 1.0));
         let res = if app.spectator { "" } else if snap.winner == app.my_team { "VICTORY" } else { "DEFEAT" };
-        text_c(&format!("{}   next round in {:.0}s", res, snap.phase_secs), cx, cy + 18.0, 24.0, col(WHITE, 0.9));
+        let mut line = format!("{}   next round in {:.0}s", res, snap.phase_secs);
         if snap.next_map != snap.map {
-            text_c(&format!("NEXT MAP: {}", ferrite_shared::map::map_def(snap.next_map).name), cx, cy + 42.0, 20.0, col(WHITE, 0.8));
+            line += &format!("   -   next map: {}", ferrite_shared::map::map_def(snap.next_map).name);
         }
+        text_c(&line, cx, by + 88.0, 22.0, col(WHITE, 0.9));
     }
 
     // ---- scoreboard ----
-    if is_key_down(KeyCode::Tab) || snap.phase == 1 {
-        let (bw, bh) = (760.0, 400.0);
-        let (x0, y0) = (cx - bw * 0.5, if snap.phase == 1 { cy + 70.0 } else { cy - bh * 0.5 });
-        let bh = if snap.phase == 1 { (h - y0 - 10.0).min(bh) } else { bh };
-        draw_rectangle(x0, y0, bw, bh, col(DARK, 0.82));
-        for t in 0..2u8 {
-            let x = x0 + 16.0 + t as f32 * bw * 0.5;
-            text(TEAM_NAMES[t as usize], x, y0 + 30.0, 26.0, col(team_col(t), 1.0));
-            text("K", x + 220.0, y0 + 30.0, 16.0, col(WHITE, 0.6));
-            text("D", x + 260.0, y0 + 30.0, 16.0, col(WHITE, 0.6));
-            text("SCORE", x + 300.0, y0 + 30.0, 16.0, col(WHITE, 0.6));
-            let mut rows: Vec<_> = app.net.roster.iter().filter(|r| r.team == t).collect();
-            rows.sort_by(|a, b| b.score.cmp(&a.score));
-            for (i, r) in rows.iter().enumerate() {
-                let y = y0 + 56.0 + i as f32 * 22.0;
-                if y > y0 + bh - 6.0 {
-                    break;
-                }
-                let me = r.id == app.my_id;
-                if me {
-                    draw_rectangle(x - 6.0, y - 16.0, bw * 0.5 - 20.0, 21.0, col(WHITE, 0.14));
-                }
-                let c = if r.bot { col(WHITE, 0.62) } else { col(WHITE, 1.0) };
-                text(&r.name, x, y, 18.0, c);
-                text(&sim::kit(r.kit).name[..3], x + 160.0, y, 14.0, col(WHITE, 0.4));
-                text(&r.kills.to_string(), x + 220.0, y, 18.0, c);
-                text(&r.deaths.to_string(), x + 260.0, y, 18.0, c);
-                text(&r.score.to_string(), x + 300.0, y, 18.0, c);
-            }
-        }
+    if is_key_down(KeyCode::Tab) || snap.phase == 1 || app.demo_scores {
+        icons.clear(); // the scoreboard covers the panel
+        let top = if over { (h * 0.1).max(66.0) + 124.0 } else { (h * 0.1).max(66.0) };
+        draw_scoreboard(app, snap, w, h, top);
     }
 
     // ---- team picker / pause / help ----
     if app.team_pick {
+        icons.clear();
         draw_team_pick(app, w, h);
-    } else if !app.captured && !app.auto && !app.spectator && !app.lobby {
-        draw_rectangle(0.0, 0.0, w, h, col(DARK, 0.8));
-        let top = (cy - 330.0).max(8.0);
-        text_c("FERRITE", cx, top + 86.0, 96.0, col(team_col(app.my_team), 1.0));
-        text_c("hold the line - five points, one front", cx, top + 122.0, 22.0, col(WHITE, 0.8));
-        let lines = [
-            "CLICK to deploy            ESC release mouse          Q leave match (while released)",
-            "",
-            "WASD move     SHIFT sprint     SPACE jump     CTRL / C crouch     MOUSE aim",
-            "Crouch while sprinting to SLIDE          Hold SPACE into a ledge to CLIMB it",
-            "LMB fire    RMB aim    R reload    Q / wheel swap to sidearm    G frag grenade",
-            "T change sight      L loadout      M change team      TAB scoreboard",
-            "",
-            "Capture points in order - only the front line can be contested.",
-            "Standing together captures faster. Every capture grants your team a SURGE.",
-            "Teams that hold more ground reinforce more slowly. Crates can be destroyed.",
-            "Long bursts open your spread - fire in short ones at range.",
-            "Choose a class, primary and sidearm in the lobby, while you wait to deploy, or with L.",
-        ];
-        // Everything below is laid out in one column so nothing can overlap.
-        let mut y = top + 178.0;
-        for l in lines.iter() {
-            text_c(l, cx, y, 20.0, col(WHITE, 0.92));
-            y += 26.0;
-        }
-        y += 18.0;
-        text_c(&format!("mouse sensitivity {:.2}   ( - / = to adjust )", app.sens * 1000.0), cx, y, 18.0, col(WHITE, 0.7));
-        if let Some(hs) = &app.hosting {
-            y += 28.0;
-            text_c(&format!("{hs}  -  friends on your LAN join with:  ferrite --connect <your-ip>"), cx, y, 18.0, col(WHITE, 0.7));
-        }
-        y += 30.0;
-        text_c(&format!("you fight for {}", TEAM_NAMES[app.my_team as usize % 2]), cx, y, 20.0, col(team_col(app.my_team), 1.0));
+    } else if app.paused() {
+        icons.clear();
+        draw_pause(app, snap, w, h);
     }
 
     if app.show_net {
@@ -749,4 +1092,5 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) {
     if now - app.net.last_recv > 2.0 {
         text_c("CONNECTION LOST - waiting for server", cx, cy - 60.0, 30.0, Color::new(1.0, 0.4, 0.2, 1.0));
     }
+    icons
 }

@@ -392,6 +392,7 @@ pub struct Gpu {
     d_add: DynBuf,
     d_view: DynBuf,
     d_view_add: DynBuf,
+    d_overlay: DynBuf,
     pub tris: usize,
 }
 
@@ -429,7 +430,7 @@ impl Gpu {
     /// Free the GPU objects of a finished match.
     pub fn destroy(self) {
         let ctx = unsafe { get_internal_gl() }.quad_context;
-        let dynamic = [&self.d_opaque.b, &self.d_alpha.b, &self.d_add.b, &self.d_view.b, &self.d_view_add.b];
+        let dynamic = [&self.d_opaque.b, &self.d_alpha.b, &self.d_add.b, &self.d_view.b, &self.d_view_add.b, &self.d_overlay.b];
         for b in self.statics.iter().chain(self.sky.iter()).map(|(b, _)| b).chain(dynamic) {
             for v in &b.vertex_buffers {
                 ctx.delete_buffer(*v);
@@ -552,9 +553,41 @@ impl Gpu {
             d_add: DynBuf::new(ctx, 30000, tex),
             d_view: DynBuf::new(ctx, 40000, tex),
             d_view_add: DynBuf::new(ctx, 400, tex),
+            d_overlay: DynBuf::new(ctx, 60000, tex),
             shadow,
             tris,
         }
+    }
+
+    /// Lit models drawn over the 2D HUD (the weapons in the loadout
+    /// panel). `mesh` is in pixels, +Y up, origin at the bottom left.
+    /// Whatever the HUD has drawn so far goes underneath.
+    pub fn overlay(&mut self, mesh: &Mesh, w: f32, h: f32) {
+        let mut gl = unsafe { get_internal_gl() };
+        gl.flush();
+        let ctx = gl.quad_context;
+        self.d_overlay.upload(ctx, mesh);
+        if self.d_overlay.n == 0 {
+            return;
+        }
+        let u = Uniforms {
+            vp: Mat4::orthographic_rh_gl(0.0, w, 0.0, h, -4000.0, 4000.0).to_cols_array(),
+            cam: [0.0; 3],
+            sun: Vec3::new(0.35, 0.75, 0.56).normalize().to_array(),
+            fog: [0.0; 4],
+            params: [0.0, 0.0, 1.0, 0.0],
+            light: Mat4::IDENTITY.to_cols_array(),
+            lights: [[0.0, 0.0, 0.0, 0.01]; 4],
+            lcols: [[0.0; 4]; 4],
+            sh: [0.0; 4],
+        };
+        ctx.begin_default_pass(PassAction::Clear { color: None, depth: Some(1.0), stencil: None });
+        ctx.apply_pipeline(&self.opaque);
+        depth_mask(true);
+        ctx.apply_uniforms(UniformsSource::table(&u));
+        ctx.apply_bindings(&self.d_overlay.b);
+        ctx.draw(0, self.d_overlay.n, 1);
+        ctx.end_render_pass();
     }
 
     pub fn shadows(&self) -> bool {

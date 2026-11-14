@@ -17,7 +17,8 @@ RUN A DEDICATED SERVER
   Run start-server.bat (Windows) or ./start-server.sh (Linux, macOS).
   It listens on UDP port 27500 and logs a status line every 10 seconds.
   Options: --port N  --map NAME  --rotation all|off|a,b,c  --lobby SECS
-           --bots N  --skill X  --tickets N  --seed N
+           --bots N  --difficulty recruit|regular|veteran|elite
+           --tickets N  --seed N
   Games on your network show up on the home screen by themselves. --name NAME
   sets what a dedicated server is called there; --no-discovery hides it.
   (Discovery uses UDP 27499; the game itself uses UDP 27500.)
@@ -57,3 +58,10 @@ SKIP THE HOME SCREEN
   ferrite --connect host[:port]     join directly
   ferrite --host                    host directly
   ferrite --host --map quarry       host directly on a chosen map
+
+CREDITS
+  Music by breadKernel: "Liquid Plasma", "Submariner" and "Foundrite Lobby".
+  Copyright breadKernel, all rights reserved. The music and artwork are
+  not covered by the game's MIT licence and may not be reused elsewhere.
+  Typeface: Quantico by Matthew Desmond, SIL Open Font License
+  (see Quantico-OFL.txt).

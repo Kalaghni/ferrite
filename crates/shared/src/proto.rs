@@ -9,7 +9,7 @@ use crate::sim::PState;
 use bincode::Options;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-pub const PROTO: u32 = 10;
+pub const PROTO: u32 = 12;
 pub const DEFAULT_PORT: u16 = 27500;
 pub const SPECTATOR_ID: u8 = 255;
 
@@ -95,7 +95,7 @@ pub enum C2S {
     /// `team`: 0 or 1 to ask for a side, anything else for auto-balance.
     Hello { proto: u32, name: String, spectator: bool, team: u8 },
     /// `kit`, `prim`, `side`: the loadout wanted at the next deploy.
-    Cmds { cmds: Vec<Cmd>, ack_feed: u32, kit: u8, prim: u8, side: u8 },
+    Cmds { cmds: Vec<Cmd>, ack_feed: u32, kit: u8, prim: u8, side: u8, skin: u8 },
     Bye,
     /// Ask to change sides mid-match.
     Team(u8),
@@ -109,6 +109,9 @@ pub enum S2C {
     Snap(Snapshot),
     Roster(Vec<RosterEntry>),
     Reject(String),
+    /// Rounds won by each team since the server started, and the most
+    /// recent finished rounds, oldest first.
+    Rounds { wins: [u16; 2], rounds: Vec<RoundResult> },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
@@ -223,6 +226,38 @@ pub struct RosterEntry {
     pub bot: bool,
     /// Ready in the lobby.
     pub ready: bool,
+    /// Headshot kills this round.
+    pub heads: u16,
+    /// This player's record on this server, this round included.
+    pub total: Totals,
+    /// Look of the soldier: index into `sim::SKINS`.
+    pub skin: u8,
+}
+
+/// What a player has done on one server, under one name.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+pub struct Totals {
+    pub kills: u32,
+    pub deaths: u32,
+    pub score: u32,
+    pub heads: u32,
+    /// Rounds seen to the end, and how many of those their team won.
+    pub rounds: u32,
+    pub wins: u32,
+}
+
+/// How one finished round went.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct RoundResult {
+    pub map: u8,
+    pub winner: u8,
+    pub tickets: [u16; 2],
+    /// Length of the round in seconds.
+    pub secs: u16,
+    /// Top scorer of the round.
+    pub mvp: String,
+    pub mvp_team: u8,
+    pub mvp_score: u32,
 }
 
 fn opts() -> impl Options {

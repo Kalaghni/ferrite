@@ -6,6 +6,8 @@ use std::sync::Arc;
 fn main() {
     let mut cfg = Config { log: true, lobby_secs: 30, ..Default::default() };
     let mut bench: Option<u32> = None;
+    // Player records: a file beside the executable unless told otherwise.
+    let mut stats: Option<String> = None;
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
     while i < args.len() {
@@ -13,6 +15,7 @@ fn main() {
         match args[i].as_str() {
             "--port" => cfg.port = val.parse().expect("--port <u16>"),
             "--bots" => cfg.per_team = val.parse().expect("--bots <players per team>"),
+            "--max-bots" => cfg.max_bots = val.parse().expect("--max-bots <n>"),
             "--seed" => cfg.seed = val.parse().expect("--seed <u64>"),
             "--map" => match ferrite_shared::map::map_by_name(&val) {
                 Some(m) => cfg.map = m,
@@ -50,11 +53,18 @@ fn main() {
                 i += 1;
                 continue;
             }
+            "--stats" => stats = Some(val.clone()),
             "--tickets" => cfg.tickets = val.parse().expect("--tickets <n>"),
             "--skill" => cfg.bot_skill = val.parse().expect("--skill <f32>"),
+            "--difficulty" => {
+                cfg.bot_skill = ferrite_server::difficulty_by_name(&val).unwrap_or_else(|| {
+                    eprintln!("unknown difficulty '{val}'. One of: recruit, regular, veteran, elite.");
+                    std::process::exit(2);
+                })
+            }
             "--bench" => bench = Some(val.parse().expect("--bench <simulated seconds>")),
             "-h" | "--help" => {
-                println!("ferrite-server [--port 27500] [--map NAME|N] [--maps] [--rotation all|off|a,b,c] [--lobby 30] [--name NAME] [--no-discovery] [--bots 12] [--seed N] [--tickets 250] [--skill 1.0] [--bench SECS]");
+                println!("ferrite-server [--port 27500] [--map NAME|N] [--maps] [--rotation all|off|a,b,c] [--lobby 30] [--name NAME] [--no-discovery] [--bots 12] [--max-bots N] [--seed N] [--tickets 250] [--stats FILE|off] [--difficulty recruit|regular|veteran|elite] [--skill 1.0] [--bench SECS]");
                 return;
             }
             other => panic!("unknown argument {other}"),
@@ -69,6 +79,12 @@ fn main() {
     } else if !args.iter().any(|a| a == "--map") {
         cfg.map = cfg.rotation[0];
     }
+    cfg.stats_file = match stats.as_deref() {
+        Some("off") | Some("none") => None,
+        Some(f) => Some(f.into()),
+        None if bench.is_some() => None,
+        None => std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("ferrite-stats.txt"))),
+    };
     if let Some(secs) = bench {
         cfg.lobby_secs = 0;
         // Headless soak: simulate as fast as possible and report cost.

@@ -127,16 +127,17 @@ dependencies = [
 
 [[package]]
 name = "ferrite"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "ferrite-server",
  "ferrite-shared",
  "macroquad",
+ "quad-snd",
 ]
 
 [[package]]
 name = "ferrite-server"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "ferrite-shared",
  "socket2",
@@ -144,7 +145,7 @@ dependencies = [
 
 [[package]]
 name = "ferrite-shared"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "bincode",
  "glam",
@@ -381,8 +382,6 @@ checksum = "5a651516ddc9168ebd67b24afd085a718be02f8858fe406591b013d101ce2f40"
 [[package]]
 name = "quad-snd"
 version = "0.2.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cba0c4943fc67147fbe9d1eb731fb9e678bfc9d926507eebbbfe0103e154e5b0"
 dependencies = [
  "audir-sles",
  "audrey",
