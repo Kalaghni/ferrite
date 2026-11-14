@@ -1,4 +1,4 @@
-# FERRITE 0.7
+# FERRITE 0.8 (upcoming)
 
 ![The FERRITE launcher: host, join or change settings](docs/launcher.png)
 
@@ -19,7 +19,18 @@ v0.5 adds a lobby before every round (map vote, loadouts, ready-up countdown), t
 
 v0.6 adds a new launcher and lobby look (key art, palette and typeface from the FERRITE UI kit), launcher and lobby music, a pause overlay, 3D models of every gun in the loadout picker, a bot difficulty selector, and a camera that follows whoever eliminated you while you wait to redeploy.
 
-v0.7 adds text chat, a melee strike, a killcam, player icons, callsigns backed by a player id (your record follows you when you rename), a kill feed that puts people ahead of bots, six patterned weapon finishes alongside Factory, a Windows installer, and updates from inside the launcher.
+v0.7 adds text chat, a melee strike, a killcam, player icons, callsigns backed by a player id (your record follows you when you rename), a kill feed that puts people ahead of bots, the plumbing for weapon finishes, a Windows installer, and updates from inside the launcher.
+
+## v0.8 (upcoming)
+
+- **Two new maps.** Spillway brings drained waterworks, pump halls and a floodgate; Relay adds a highland communications station, antenna towers and rocky pine flanks. Six maps are now in the rotation. The original four retain their terrain, cover and objectives.
+- **New soldier shapes and animation.** All six looks have layered, faceted armor and team-marked field packs based on the launcher artwork, with articulated movement, planted feet and hands that follow the weapon's action.
+- **Cleaner guns and sights.** The existing guns have corrected barrels, receivers, magazines and reload actions, shared between first person, soldiers and loadout previews. Iron sights and optics have connected mounts, protected posts and clear, aligned aiming apertures.
+- **Six weapon finishes.** Oxide, Arctic, Woodland, Midnight, Hazard and Sandstorm add bands or digital camouflage to every gun. Click the large loadout models or press 7 / 8 to cycle finishes; the choice is saved per weapon and applies at the next deploy.
+- **Rendering and finish fixes.** Larger model batches render in full, local corpses keep their weapon finish, and finish changes persist after direct host/join launches. Map voting fits all six choices.
+
+The weapon roster and gameplay statistics are unchanged. See the [full v0.8 release notes](docs/release-notes/v0.8.0.md) for fixes and verification details.
+
 
 ## Download
 
@@ -146,13 +157,15 @@ crates/client   window, renderer, prediction, effects, synthesised audio, HUD, l
 ## Verification
 
 ```sh
-cargo test --workspace                                            # 27 integration tests, 3 for the updater
+cargo test --workspace                                            # 41 tests across client, server and shared code
 cargo run --release -p ferrite-server -- --bench 900              # headless 15-minute bot war + timing
 cargo run --release -p ferrite -- --spectate                      # watch a match
 cargo run --release -p ferrite -- --auto --quit-at 30             # scripted client, prints session stats
 ```
 
-The tests cover: prediction equals server state exactly over 900 random commands; replay after delayed delivery converges; command-flood rate limiting; NaN/out-of-range/replayed input and malformed packets; a five-minute 12v12 soak asserting territory stays contiguous, nobody leaves the map or falls through terrain, and snapshots stay under 1400 bytes; a real UDP join / drive / acknowledge / leave round trip; and the newer mechanics - crouch, sidearm, team switching, slide, climbing (a 1.9 m ledge yes, a 3.2 m wall no), spread bloom, assists, loadout validation, map rotation, burst fire, the lobby, and delivery of effects raised between ticks (the bug that used to eat hit markers). New in v0.7: chat reaching only the people it should, in packet-sized pieces; melee reach, facing, the kill from behind and the lock-out while swinging; records following a player id through a rename, a name clash and a server restart; all seven finish ids, next-deploy application, roster replication and valid bot finishes; and, over real UDP, the roster arriving in parts with selected non-factory weapon finishes, a chat line said three times and heard once, and an icon going up with the hello and coming back on request.
+The tests cover: prediction equals server state exactly over 900 random commands; replay after delayed delivery converges; command-flood rate limiting; NaN/out-of-range/replayed input and malformed packets; a five-minute 12v12 soak asserting territory stays contiguous, nobody leaves the map or falls through terrain, and snapshots stay under 1400 bytes; a real UDP join / drive / acknowledge / leave round trip; and the newer mechanics - crouch, sidearm, team switching, slide, climbing (a 1.9 m ledge yes, a 3.2 m wall no), spread bloom, assists, loadout validation, map rotation, burst fire, the lobby, and delivery of effects raised between ticks (the bug that used to eat hit markers). New in v0.7: chat reaching only the people it should, in packet-sized pieces; melee reach, facing, the kill from behind and the lock-out while swinging; records following a player id through a rename, a name clash and a server restart; and, over real UDP, the roster arriving in parts, a chat line said three times and heard once, and an icon going up with the hello and coming back on request.
+
+New in v0.8: complete geometry fingerprints for the original maps; seeded navigation and symmetry checks for Spillway and Relay; soldier pose and weapon-action bounds; all seven finish ids, next-deploy application, roster and real UDP replication, and valid bot finishes; paint confined to weapon surfaces; clear optic apertures; and dynamic meshes spanning multiple pages. The discovery test also works while another local game is running.
 
 Scripted-run aids added for these: `--seek` (the scripted player walks to the front line, so it gets shot), `--shot-killcam`, `--say TEXT`, `--icon N`, `--vm-melee 0.75`, and `--update --pretend-version 0.5.0` to exercise the updater against a real release.
 

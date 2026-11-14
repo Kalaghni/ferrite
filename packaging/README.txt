@@ -1,6 +1,18 @@
 FERRITE - 12v12 front-line conquest
 https://github.com/Kalaghni/ferrite
 
+NEW IN v0.8
+  Two new maps: Spillway (drained waterworks) and Relay (highland signal
+  station). The original four maps keep their layouts.
+  All six soldier looks have faceted armor, team-marked field packs and
+  improved movement and weapon animations based on the launcher artwork.
+  Existing guns and sights have cleaner models, fitted mounts and open
+  aiming apertures.
+  Six finishes fit every gun: Oxide, Arctic, Woodland, Midnight, Hazard and
+  Sandstorm. In the loadout, click the large primary/sidearm models or use
+  7 / 8 to cycle finishes. Choices are saved per weapon and apply at the
+  next deploy. The weapon roster and gameplay statistics are unchanged.
+
 PLAY
   Run ferrite (ferrite.exe on Windows). The home screen lets you:
     - join a server: type its address (port defaults to 27500) and press JOIN,
@@ -36,8 +48,9 @@ RUN A DEDICATED SERVER
   turns it off.
   The server moves to the next map after every round. --rotation quarry,depot
   plays only those; --rotation off stays on one map.
-  Maps: foundry valley, quarry, ridgeline, depot (--maps lists them). A name
-  can be shortened: --map ridge. Players get the map from the server.
+  Maps: foundry valley, quarry, ridgeline, depot, spillway, relay
+  (--maps lists them). A name can be shortened: --map ridge. Players get
+  the map from the server.
   Players join by typing this machine's address into the home screen.
 
   For others to reach it:
