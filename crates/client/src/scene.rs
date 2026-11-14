@@ -1,5 +1,6 @@
 //! Everything that turns game state into low-poly geometry.
 
+use ferrite_shared::sim::weapon_def;
 use crate::gfx::{rgb, shade, Col, Mesh};
 use ferrite_shared::glam::{vec3, Mat4, Vec3};
 use ferrite_shared::map::*;
@@ -306,6 +307,8 @@ pub struct PlayerView {
     pub hp: u8,
     pub team: u8,
     pub kit: u8,
+    /// Family of the primary carried (0 rifle, 1 shotgun, 2 long rifle).
+    pub gun: u8,
     pub phase: f32,
     pub moving: f32,
     /// Smoothed 0..1 pose weights.
@@ -433,7 +436,7 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
         * Mat4::from_rotation_x(aim)
         * Mat4::from_rotation_y(0.45 * sprint * (1.0 - p.fire) + 0.25 * p.reload);
     let sidearm = p.flags & flag::SIDEARM != 0;
-    let glen = if sidearm { 0.12 } else { [0.36, 0.3, 0.52][p.kit as usize % 3] };
+    let glen = if sidearm { 0.12 } else { [0.36, 0.3, 0.52][p.gun as usize % 3] };
     let gx = -0.2;
     m.obox(&arms, vec3(gx, -0.08, 0.4 + glen * 0.5), vec3(0.04, 0.06, glen), metal);
     m.obox(&arms, vec3(gx, -0.2, 0.42), vec3(0.03, 0.08, 0.05), metal);
@@ -550,7 +553,10 @@ pub const SCOPE8: u8 = 5;
 
 /// Sights each weapon can mount, first entry is the default.
 pub fn sights_for(wid: u8) -> &'static [u8] {
-    match wid {
+    if wid == 9 {
+        return &[OPTIC, SCOPE4, RED_DOT, IRON]; // the Ranger ships with glass
+    }
+    match weapon_def(wid).arch {
         0 => &[IRON, RED_DOT, HOLO, OPTIC],
         1 => &[IRON, RED_DOT, HOLO],
         2 => &[SCOPE4, SCOPE8, OPTIC, RED_DOT, IRON],
@@ -560,7 +566,7 @@ pub fn sights_for(wid: u8) -> &'static [u8] {
 
 /// Vertical field of view when aiming through a sight.
 pub fn sight_fov(wid: u8, sight: u8) -> f32 {
-    let iron = match wid {
+    let iron = match weapon_def(wid).arch {
         0 => 48.0,
         1 => 58.0,
         2 => 46.0,
@@ -578,7 +584,7 @@ pub fn sight_fov(wid: u8, sight: u8) -> f32 {
 
 /// Top rail of each weapon in gun space: (height, z, scale).
 fn rail(wid: u8) -> (f32, f32, f32) {
-    match wid {
+    match weapon_def(wid).arch {
         0 => (0.066, -0.02, 1.3),
         1 => (0.063, -0.1, 1.3),
         2 => (0.045, -0.12, 1.3),
@@ -668,7 +674,10 @@ fn optic(m: &mut Mesh, g: &Mat4, wid: u8, sight: u8, accent: Col, dark: Col, met
 
 pub struct ViewModel {
     pub sight: u8,
+    /// Weapon family (0 rifle, 1 shotgun, 2 long rifle, 4 handgun).
     pub kit: u8,
+    /// The exact weapon, for the details that set it apart.
+    pub wid: u8,
     pub team: u8,
     pub ads: f32,
     pub recoil: f32,
@@ -702,7 +711,8 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
     let accent = rgb(tc[0], tc[1], tc[2]);
     let metal = rgb(0.2, 0.2, 0.23);
     let dark = rgb(0.11, 0.11, 0.13);
-    let wood = rgb(0.45, 0.3, 0.17);
+    // The self-loaders wear polymer where the older guns wear wood.
+    let wood = if matches!(v.wid, 7 | 9 | 14) { rgb(0.17, 0.18, 0.17) } else { rgb(0.45, 0.3, 0.17) };
     let sleeve = rgb(tc[0] * 0.45, tc[1] * 0.45, tc[2] * 0.48);
     let cuff = rgb(tc[0] * 0.3, tc[1] * 0.3, tc[2] * 0.33);
     let glove = rgb(0.42, 0.34, 0.25);
@@ -734,8 +744,8 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
     };
     // Working the action between shots.
     let cyc = if reloading { 0.0 } else { (seg(1.0 - v.cycle, 0.22, 0.72) * PI).sin() };
-    let pump = if v.kit == 1 { cyc } else { 0.0 };
-    let bolt = if v.kit == 2 { cyc } else { 0.0 };
+    let pump = if matches!(v.wid, 1 | 13) { cyc } else { 0.0 };
+    let bolt = if matches!(v.wid, 2 | 15) { cyc } else { 0.0 };
     let draw = ease(v.draw.clamp(0.0, 1.0));
 
     let k = 1.0 - v.ads * 0.85;
@@ -753,12 +763,20 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
     let g = Mat4::from_translation(pos) * rot;
 
     // Where the hands go, in gun space, and the magazine if there is one.
-    let (grip, support, mag_c, mag_h) = match v.kit {
+    let (grip, support, mut mag_c, mut mag_h) = match v.kit {
         1 => (vec3(0.0, -0.06, 0.1), vec3(0.0, -0.085, -0.32), Vec3::ZERO, Vec3::ZERO),
         2 => (vec3(0.0, -0.065, 0.13), vec3(0.0, -0.06, -0.3), vec3(0.0, -0.065, -0.06), vec3(0.016, 0.028, 0.04)),
         4 => (vec3(0.0, -0.085, 0.02), vec3(-0.03, -0.1, 0.005), vec3(0.0, -0.085, 0.022), vec3(0.013, 0.05, 0.02)),
         _ => (vec3(0.0, -0.085, 0.1), vec3(0.0, -0.05, -0.36), vec3(0.0, -0.1, -0.06), vec3(0.022, 0.07, 0.04)),
     };
+    match v.wid {
+        6 => (mag_c, mag_h) = (vec3(0.0, -0.095, -0.1), vec3(0.05, 0.05, 0.065)), // belt box
+        8 => (mag_c, mag_h) = (vec3(0.0, -0.13, -0.06), vec3(0.014, 0.1, 0.024)), // stick magazine
+        9 => mag_h = vec3(0.018, 0.05, 0.045),
+        10 | 16 => mag_h = Vec3::ZERO, // revolver, break-action
+        11 => (mag_c, mag_h) = (vec3(0.0, -0.11, 0.022), vec3(0.013, 0.08, 0.02)),
+        _ => {}
+    }
     let mag_off = vec3(0.0, -0.3 * mag_out, 0.04 * mag_out);
     let slide_back = vec3(0.0, 0.0, pump * 0.085);
     let muzzle_z;
@@ -786,6 +804,19 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
                 m.obox(&g, vec3(-0.012, 0.07, 0.1), vec3(0.004, 0.008, 0.005), dark);
                 m.obox(&g, vec3(0.012, 0.07, 0.1), vec3(0.004, 0.008, 0.005), dark);
             }
+            match v.wid {
+                13 => {
+                    // Slug gun: heat shield and a tall rifle front sight.
+                    m.obox(&g, vec3(0.0, 0.04, -0.4), vec3(0.03, 0.005, 0.13), dark);
+                    m.obox(&g, vec3(0.0, 0.06, -0.58), vec3(0.004, 0.016, 0.006), accent);
+                }
+                14 => {
+                    // Drum magazine under the receiver.
+                    m.tube(&g, vec3(0.0, -0.085, -0.06), 0.062, 0.0, 0.034, 16, dark);
+                    m.tube(&g, vec3(0.0, -0.085, -0.06), 0.03, 0.0, 0.037, 12, metal);
+                }
+                _ => {}
+            }
             muzzle_z = -0.64;
         }
         4 => {
@@ -806,7 +837,32 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
                 m.obox(&g, vec3(0.013, 0.056, -0.01) + kick, vec3(0.004, 0.008, 0.006), dark);
             }
             m.obox(&g, vec3(0.0, 0.025, 0.0) + kick, vec3(0.024, 0.02, 0.012), accent);
-            muzzle_z = -0.27;
+            muzzle_z = match v.wid {
+                10 => {
+                    // Revolver: cylinder, long barrel with a rib, wooden grip.
+                    m.tube(&g, vec3(0.0, 0.012, -0.035), 0.034, 0.0, 0.04, 12, shade(metal, 1.25));
+                    m.tube(&g, vec3(0.0, 0.03, -0.31), 0.014, 0.008, 0.07, 20, metal);
+                    m.obox(&g, vec3(0.0, 0.05, -0.3), vec3(0.005, 0.006, 0.075), dark);
+                    m.obox(&(g * Mat4::from_rotation_x(-0.25)), vec3(0.0, -0.08, 0.004), vec3(0.023, 0.062, 0.033), rgb(0.45, 0.3, 0.17));
+                    -0.39
+                }
+                11 => {
+                    // Machine pistol: compensator and a stubby fore grip.
+                    m.obox(&g, vec3(0.0, 0.028, -0.275), vec3(0.025, 0.028, 0.022), dark);
+                    m.obox(&g, vec3(0.0, -0.05, -0.17), vec3(0.014, 0.03, 0.016), dark);
+                    -0.3
+                }
+                16 => {
+                    // Sawn-off: two fat barrels side by side, wooden grip.
+                    for x in [-0.016f32, 0.016] {
+                        m.tube(&g, vec3(x, 0.03, -0.2), 0.016, 0.011, 0.12, 20, shade(metal, 1.2));
+                    }
+                    m.obox(&g, vec3(0.0, 0.03, -0.1), vec3(0.034, 0.02, 0.03), dark);
+                    m.obox(&(g * Mat4::from_rotation_x(-0.25)), vec3(0.0, -0.08, 0.004), vec3(0.023, 0.062, 0.033), rgb(0.45, 0.3, 0.17));
+                    -0.33
+                }
+                _ => -0.27,
+            };
         }
         2 => {
             m.obox(&g, vec3(0.0, 0.0, -0.1), vec3(0.03, 0.045, 0.3), wood);
@@ -828,16 +884,55 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
             }
             m.obox(&g, vec3(0.0, -0.03, 0.25), vec3(0.028, 0.055, 0.1), wood);
             m.obox(&g, vec3(0.0, -0.035, 0.37), vec3(0.03, 0.065, 0.02), dark);
-            muzzle_z = -0.9;
+            muzzle_z = if v.wid == 15 {
+                // Heavy rifle: thick barrel and a slab of muzzle brake.
+                m.tube(&g, vec3(0.0, 0.015, -0.58), 0.02, 0.008, 0.27, 24, dark);
+                m.obox(&g, vec3(0.0, 0.015, -0.92), vec3(0.04, 0.022, 0.04), metal);
+                for z in [-0.935f32, -0.905] {
+                    m.obox(&g, vec3(0.0, 0.015, z), vec3(0.042, 0.012, 0.006), dark);
+                }
+                -0.97
+            } else {
+                -0.9
+            };
         }
         _ => {
             m.obox(&g, vec3(0.0, 0.0, -0.08), vec3(0.032, 0.05, 0.24), metal);
-            m.tube(&g, vec3(0.0, 0.012, -0.44), 0.014, 0.007, 0.14, 24, dark);
-            m.tube(&g, vec3(0.0, 0.012, -0.36), 0.024, 0.0, 0.06, 24, metal);
-            for z in [-0.4f32, -0.36, -0.32] {
-                m.tube(&g, vec3(0.0, 0.012, z), 0.0255, 0.0, 0.006, 24, dark);
+            if v.wid == 8 {
+                // Submachine gun: a short barrel inside a fat suppressor.
+                m.tube(&g, vec3(0.0, 0.012, -0.4), 0.027, 0.007, 0.085, 24, dark);
+                m.tube(&g, vec3(0.0, 0.012, -0.325), 0.029, 0.0, 0.008, 24, metal);
+            } else {
+                m.tube(&g, vec3(0.0, 0.012, -0.44), 0.014, 0.007, 0.14, 24, dark);
+                m.tube(&g, vec3(0.0, 0.012, -0.36), 0.024, 0.0, 0.06, 24, metal);
+                for z in [-0.4f32, -0.36, -0.32] {
+                    m.tube(&g, vec3(0.0, 0.012, z), 0.0255, 0.0, 0.006, 24, dark);
+                }
+                m.tube(&g, vec3(0.0, 0.012, -0.57), 0.019, 0.007, 0.025, 24, metal);
             }
-            m.tube(&g, vec3(0.0, 0.012, -0.57), 0.019, 0.007, 0.025, 24, metal);
+            match v.wid {
+                5 => {
+                    // Battle rifle: wooden handguard and stock, longer barrel.
+                    m.obox(&g, vec3(0.0, -0.004, -0.37), vec3(0.03, 0.034, 0.08), wood);
+                    m.obox(&g, vec3(0.0, -0.02, 0.245), vec3(0.03, 0.047, 0.093), wood);
+                    m.tube(&g, vec3(0.0, 0.012, -0.64), 0.012, 0.007, 0.05, 24, dark);
+                }
+                12 => {
+                    // Burst rifle: team-coloured handguard and a long flash hider.
+                    m.obox(&g, vec3(0.0, 0.034, -0.37), vec3(0.028, 0.01, 0.09), accent);
+                    m.obox(&g, vec3(0.0, -0.012, -0.37), vec3(0.03, 0.02, 0.09), dark);
+                    m.tube(&g, vec3(0.0, 0.012, -0.63), 0.016, 0.007, 0.04, 24, dark);
+                }
+                6 => {
+                    // Machine gun: heavy barrel shroud, carry handle, folded bipod.
+                    m.tube(&g, vec3(0.0, 0.012, -0.45), 0.022, 0.007, 0.1, 24, metal);
+                    m.obox(&g, vec3(0.0, 0.075, -0.2), vec3(0.006, 0.006, 0.07), dark);
+                    for x in [-0.022f32, 0.022] {
+                        m.obox(&g, vec3(x, -0.022, -0.47), vec3(0.005, 0.005, 0.1), dark);
+                    }
+                }
+                _ => {}
+            }
             // grip, trigger guard, stock
             m.obox(&(g * Mat4::from_rotation_x(-0.3)), vec3(0.0, -0.09, 0.07), vec3(0.02, 0.05, 0.026), dark);
             m.obox(&g, vec3(0.0, -0.062, 0.04), vec3(0.005, 0.004, 0.045), dark);
@@ -852,7 +947,12 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
                 m.obox(&g, vec3(-0.018, 0.075, 0.08), vec3(0.005, 0.012, 0.006), dark);
                 m.obox(&g, vec3(0.018, 0.075, 0.08), vec3(0.005, 0.012, 0.006), dark);
             }
-            muzzle_z = -0.6;
+            muzzle_z = match v.wid {
+                5 => -0.7,
+                12 => -0.68,
+                8 => -0.49,
+                _ => -0.6,
+            };
         }
     }
     if mag_h != Vec3::ZERO && mag_out < 0.97 {

@@ -8,7 +8,7 @@ use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
 fn cfg(per_team: usize) -> Config {
-    Config { port: 0, per_team, seed: 0xFE221, map: 0, tickets: 250, bot_skill: 1.0, log: false }
+    Config { port: 0, per_team, seed: 0xFE221, map: 0, rotation: Vec::new(), lobby_secs: 0, tickets: 250, bot_skill: 1.0, log: false, discover: false, ..Default::default() }
 }
 
 fn random_cmd(rng: &mut Rng, seq: u32, yaw: &mut f32) -> Cmd {
@@ -218,7 +218,7 @@ fn udp_round_trip() {
             seq += 1;
             history.push(Cmd { seq, mz: 1, yaw: 1.0, ..Default::default() });
             let recent: Vec<Cmd> = history.iter().rev().take(3).rev().copied().collect();
-            sock.send(&encode(&C2S::Cmds { cmds: recent, ack_feed: 0, kit: 1 })).unwrap();
+            sock.send(&encode(&C2S::Cmds { cmds: recent, ack_feed: 0, kit: 1, prim: 1, side: 4 })).unwrap();
         }
         if !asked_switch && start.elapsed() > Duration::from_millis(600) {
             asked_switch = true;
@@ -309,24 +309,24 @@ fn sidearm_swap_and_semi_auto() {
     send(&mut g, btn::SWAP);
     assert_eq!(g.players[me].st.slot, 1);
     assert_eq!(sim::wid(&g.players[me].st), sim::SIDEARM_ID);
-    assert_eq!(g.players[me].st.ammo, sim::SIDEARM.mag);
+    assert_eq!(g.players[me].st.ammo, sim::weapon_def(sim::SIDEARM_ID).mag);
     assert_eq!(g.players[me].st.ammo_alt, primary_left);
     send(&mut g, btn::FIRE);
-    assert_eq!(g.players[me].st.ammo, sim::SIDEARM.mag, "cannot fire while drawing");
+    assert_eq!(g.players[me].st.ammo, sim::weapon_def(sim::SIDEARM_ID).mag, "cannot fire while drawing");
     for _ in 0..30 {
         send(&mut g, 0);
     }
     for _ in 0..40 {
         send(&mut g, btn::FIRE); // held
     }
-    assert_eq!(g.players[me].st.ammo, sim::SIDEARM.mag - 1, "held trigger = one shot");
+    assert_eq!(g.players[me].st.ammo, sim::weapon_def(sim::SIDEARM_ID).mag - 1, "held trigger = one shot");
     for _ in 0..5 {
         send(&mut g, 0);
         for _ in 0..9 {
             send(&mut g, btn::FIRE);
         }
     }
-    assert_eq!(g.players[me].st.ammo, sim::SIDEARM.mag - 6, "one shot per pull");
+    assert_eq!(g.players[me].st.ammo, sim::weapon_def(sim::SIDEARM_ID).mag - 6, "one shot per pull");
     let snap = g.snapshot(None, 0, g.tick);
     assert!(snap.players.iter().any(|p| p.id as usize == me && p.flags & flag::SIDEARM != 0));
     send(&mut g, btn::SWAP);
@@ -555,4 +555,205 @@ fn every_map_is_fair_and_playable() {
         assert!(g.stats.kills > 40, "{name}: only {} kills in three minutes", g.stats.kills);
         assert!(g.stats.captures >= 2, "{name}: only {} captures in three minutes", g.stats.captures);
     }
+}
+
+#[test]
+fn loadouts_are_validated_and_carried() {
+    use ferrite_shared::sim::{fix_loadout, kit, weapon_def, PState, KITS, SIDEARMS, WEAPONS};
+    // Every class offers three distinct primaries and no handguns.
+    for k in 0..KITS.len() as u8 {
+        let p = kit(k).prims;
+        assert!(p.len() >= 3);
+        for (n, id) in p.iter().enumerate() {
+            assert!(!p[..n].contains(id), "duplicate primary");
+        }
+        for &id in p {
+            assert!((id as usize) < WEAPONS.len() && weapon_def(id).arch != 4 && id != 3);
+        }
+    }
+    for id in SIDEARMS {
+        assert_eq!(weapon_def(id).arch, 4);
+    }
+    // A primary from another class, or nonsense, falls back to the default.
+    assert_eq!(fix_loadout(0, 2, 4), (0, 0, 4));
+    assert_eq!(fix_loadout(1, 200, 200), (1, 1, 4));
+    assert_eq!(fix_loadout(2, 9, 10), (2, 9, 10));
+    assert_eq!(fix_loadout(0, 10, 0), (0, 0, 4)); // a handgun is not a primary
+    let st = PState::spawn_with(ferrite_shared::Vec3::ZERO, 2, 9, 11);
+    assert_eq!((st.prim, st.side, st.ammo, st.ammo_alt), (9, 11, weapon_def(9).mag, weapon_def(11).mag));
+
+    // Through the server: the request is applied at the next deploy.
+    let mut g = Game::new(Config { per_team: 2, ..Default::default() });
+    let me = g.join("tester").unwrap();
+    g.players[me].next_kit = 1;
+    g.players[me].next_prim = 7;
+    g.players[me].next_side = 10;
+    for _ in 0..40 {
+        g.tick();
+    }
+    assert!(g.players[me].alive);
+    assert_eq!((g.players[me].st.kit, g.players[me].st.prim, g.players[me].st.side), (1, 7, 10));
+    assert_eq!(sim::wid(&g.players[me].st), 7);
+    let r = g.roster();
+    assert_eq!((r[me].prim, r[me].side), (7, 10));
+    // Bots only ever carry what their class allows.
+    for p in &g.players {
+        assert!(kit(p.st.kit).prims.contains(&p.st.prim) && SIDEARMS.contains(&p.st.side));
+    }
+}
+
+#[test]
+fn maps_rotate_between_rounds() {
+    let mut g = Game::new(Config { per_team: 3, tickets: 6, map: 1, rotation: vec![1, 3, 0], ..Default::default() });
+    assert_eq!((g.world.map, g.next_map()), (1, 3));
+    let mut seen = vec![g.world.map];
+    for _ in 0..60 * 60 * 20 {
+        g.tick();
+        if *seen.last().unwrap() != g.world.map {
+            seen.push(g.world.map);
+            // A fresh round on the new map: everyone is standing on it.
+            assert_eq!(g.phase, 0);
+            for p in g.players.iter().filter(|p| p.alive) {
+                let gy = g.world.height(p.st.pos.x, p.st.pos.z);
+                assert!(p.st.pos.y > gy - 0.5, "{} is under the new map", p.name);
+            }
+            assert_eq!(g.snapshot(None, 0, 0).map, g.world.map);
+        }
+        if seen.len() == 4 {
+            break;
+        }
+    }
+    assert_eq!(seen, vec![1, 3, 0, 1], "rotation order");
+    // With no rotation the map never changes.
+    let mut g = Game::new(Config { per_team: 3, tickets: 6, map: 2, ..Default::default() });
+    for _ in 0..60 * 60 * 6 {
+        g.tick();
+    }
+    assert!(g.stats.rounds >= 1);
+    assert_eq!((g.world.map, g.next_map()), (2, 2));
+}
+
+#[test]
+fn effects_raised_between_ticks_are_still_delivered() {
+    // A human's commands are simulated when they arrive, between ticks, so
+    // the effects they cause (hit markers above all) appear after that
+    // tick's snapshot has gone out. They must be in the next one.
+    let mut g = Game::new(Config { per_team: 2, ..Default::default() });
+    let me = g.join("tester").unwrap();
+    for _ in 0..40 {
+        g.tick();
+    }
+    assert!(g.players[me].alive && g.players[me].st.grenades > 0);
+    let _already_sent = g.snapshot(Some(me), 0, g.fx_seq);
+    let sent = g.fx_seq;
+    g.apply_cmd(me, Cmd { seq: 1, buttons: btn::GRENADE, ..Default::default() });
+    assert!(g.fx_seq > sent, "throwing raises an effect");
+    let next = g.snapshot(Some(me), 0, sent);
+    assert!(next.fx.iter().any(|f| matches!(f, Fx::Throw { who } if *who as usize == me)), "effect lost: {:?}", next.fx);
+    assert!(g.snapshot(Some(me), 0, g.fx_seq).fx.is_empty(), "and it is sent only once");
+}
+
+#[test]
+fn lobby_waits_counts_down_and_honours_the_vote() {
+    let mut g = Game::new(Config { per_team: 2, lobby_secs: 20, tickets: 4, ..Default::default() });
+    for _ in 0..300 {
+        g.tick();
+    }
+    // Nobody here: the lobby waits, nobody deploys.
+    let s = g.snapshot(None, 0, 0);
+    assert_eq!((s.phase, s.phase_secs), (2, 0.0));
+    assert!(g.players.iter().all(|p| !p.alive));
+    let me = g.join("tester").unwrap();
+    g.tick();
+    let s = g.snapshot(Some(me), 0, 0);
+    assert!(s.phase == 2 && s.phase_secs > 19.0, "countdown starts with the first player: {}", s.phase_secs);
+    assert_eq!(s.next_map, 0);
+    g.players[me].vote = 2;
+    let s = g.snapshot(Some(me), 0, 0);
+    assert_eq!((s.next_map, s.votes[2]), (2, 1));
+    for _ in 0..120 {
+        g.tick();
+    }
+    assert_eq!(g.phase, 2, "still counting down");
+    // Everyone ready: three seconds to go.
+    g.players[me].ready = true;
+    g.tick();
+    assert!(g.snapshot(Some(me), 0, 0).phase_secs <= 3.0);
+    for _ in 0..200 {
+        g.tick();
+    }
+    assert_eq!((g.phase, g.world.map), (0, 2));
+    assert!(g.players[me].alive);
+    assert!(g.roster()[me].ready);
+    // After the round the lobby comes back with a clean slate.
+    let mut back = false;
+    for _ in 0..60 * 60 * 10 {
+        g.tick();
+        if g.phase == 2 {
+            back = true;
+            break;
+        }
+    }
+    assert!(back, "lobby returns after the round");
+    assert!(!g.players[me].ready && g.players[me].vote == 255 && !g.players[me].alive);
+}
+
+#[test]
+fn burst_rifle_fires_three_rounds_per_pull() {
+    use ferrite_shared::map::World;
+    use ferrite_shared::vec3;
+    let w = World::new(0xFE221);
+    let (x, z) = (-106.0, -12.0);
+    let mut st = sim::PState::spawn_with(vec3(x, w.height(x, z), z), 0, 12, 4);
+    assert_eq!(sim::wid(&st), 12);
+    let mut seq = 0;
+    let mut fired = 0;
+    let mut send = |st: &mut sim::PState, buttons: u8| {
+        seq += 1;
+        sim::step(st, &Cmd { seq, buttons, ..Default::default() }, &w, 0).fired as u32
+    };
+    fired += send(&mut st, btn::FIRE); // one tap
+    for _ in 0..30 {
+        fired += send(&mut st, 0);
+    }
+    assert_eq!(fired, 3, "a tap fires the whole burst");
+    assert_eq!(st.ammo, sim::weapon_def(12).mag - 3);
+    // Holding the trigger fires burst after burst, with a pause between.
+    let mut held = 0;
+    for _ in 0..48 {
+        held += send(&mut st, btn::FIRE);
+    }
+    assert_eq!(held, 6, "two bursts in 0.8 s");
+}
+
+#[test]
+fn servers_answer_discovery_queries() {
+    let info = ServerInfo { proto: PROTO, id: 7, port: 4242, name: "box".into(), map: 3, humans: 2, slots: 24, phase: 2 };
+    assert_eq!(decode_info(&encode_info(&info)), Some(info));
+    assert_eq!(decode_info(b"FERRITE!"), None);
+    assert_eq!(decode_info(b"nonsense"), None);
+
+    let mut server = ferrite_server::spawn(Config { port: 0, per_team: 2, map: 1, name: "test box".into(), ..Default::default() }).expect("server");
+    let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
+    sock.set_read_timeout(Some(Duration::from_millis(200))).unwrap();
+    let mut found = None;
+    let mut buf = [0u8; 512];
+    'outer: for _ in 0..40 {
+        // (On Windows a query sent before the server is listening makes the
+        // next read fail at once, so pace the retries.)
+        std::thread::sleep(Duration::from_millis(50));
+        sock.send_to(DISCOVERY_QUERY, ("127.0.0.1", DISCOVERY_PORT)).unwrap();
+        // Other servers on this machine may answer too: look for ours.
+        while let Ok((n, _)) = sock.recv_from(&mut buf) {
+            if let Some(i) = decode_info(&buf[..n]) {
+                if i.port == server.addr.port() {
+                    found = Some(i);
+                    break 'outer;
+                }
+            }
+        }
+    }
+    server.stop();
+    let i = found.expect("no discovery reply");
+    assert_eq!((i.proto, i.name.as_str(), i.map, i.humans, i.slots), (PROTO, "test box", 1, 0, 4));
 }

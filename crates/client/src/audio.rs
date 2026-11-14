@@ -159,7 +159,7 @@ fn footstep() -> Vec<f32> {
 }
 
 pub fn shot_sfx(wid: u8) -> Sfx {
-    match wid {
+    match ferrite_shared::sim::weapon_def(wid).arch {
         0 => Sfx::Carbine,
         1 => Sfx::Scatter,
         2 => Sfx::Long,

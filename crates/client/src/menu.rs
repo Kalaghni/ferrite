@@ -3,7 +3,7 @@
 //! the executable.
 
 use ferrite_shared::map::{map_by_name, MAPS};
-use ferrite_shared::proto::DEFAULT_PORT;
+use ferrite_shared::proto::{decode_info, ServerInfo, DEFAULT_PORT, DISCOVERY_GROUP, DISCOVERY_PORT, DISCOVERY_QUERY, PROTO};
 use macroquad::prelude as mq;
 use std::path::PathBuf;
 
@@ -11,7 +11,7 @@ use std::path::PathBuf;
 pub const TEAM_LABELS: [&str; 3] = ["EMBER", "COBALT", "AUTO"];
 
 pub enum Choice {
-    Host { port: u16, per_team: usize, map: u8 },
+    Host { port: u16, per_team: usize, map: u8, rotate: bool, lobby: u32 },
     Join(String),
     Quit,
 }
@@ -33,12 +33,17 @@ pub struct Menu {
     pub sens: f32,
     /// Map to host: index into the shared map table.
     pub map: u8,
+    /// Play every map in turn, one per round.
+    pub rotate: bool,
+    /// Class, the primary chosen for each class, and the sidearm.
+    pub loadout: [u8; 5],
     pub error: Option<String>,
     lan_ip: Option<String>,
     repeat_at: f64,
     /// Verification aid: save a picture of the home screen, then quit.
     pub shot: Option<String>,
     frames: u32,
+    lan: Lan,
 }
 
 const BG: mq::Color = mq::Color::new(0.07, 0.065, 0.065, 1.0);
@@ -55,6 +60,68 @@ fn cfg_path() -> PathBuf {
 
 /// The address other machines on the network would use to reach a match
 /// hosted here. Connecting a UDP socket only picks a route; nothing is sent.
+/// A game found on the local network.
+struct Found {
+    addr: String,
+    info: ServerInfo,
+    seen: f64,
+}
+
+/// Looks for servers on the local network: a query goes to the discovery
+/// multicast group and to the broadcast address every second or so, and
+/// whoever answers is listed until it stops answering.
+struct Lan {
+    socks: Vec<std::net::UdpSocket>,
+    found: Vec<Found>,
+    next_query: f64,
+}
+
+impl Lan {
+    fn new() -> Lan {
+        use std::net::{Ipv4Addr, UdpSocket};
+        let mut socks = Vec::new();
+        // One socket on the default route, one pinned to the LAN address so
+        // the multicast query leaves by the right interface on machines
+        // that also have a VPN or virtual adapters.
+        let mut binds = vec![Ipv4Addr::UNSPECIFIED];
+        binds.extend(ferrite_server::net::lan_ip());
+        for ip in binds {
+            if let Ok(s) = UdpSocket::bind((ip, 0)) {
+                let _ = s.set_nonblocking(true);
+                let _ = s.set_broadcast(true);
+                let _ = s.set_multicast_ttl_v4(2);
+                socks.push(s);
+            }
+        }
+        Lan { socks, found: Vec::new(), next_query: 0.0 }
+    }
+
+    fn poll(&mut self, now: f64) {
+        use std::net::Ipv4Addr;
+        if now >= self.next_query {
+            self.next_query = now + 1.2;
+            for s in &self.socks {
+                let _ = s.send_to(DISCOVERY_QUERY, (Ipv4Addr::from(DISCOVERY_GROUP), DISCOVERY_PORT));
+                let _ = s.send_to(DISCOVERY_QUERY, (Ipv4Addr::BROADCAST, DISCOVERY_PORT));
+            }
+        }
+        let mut buf = [0u8; 512];
+        for s in &self.socks {
+            while let Ok((n, from)) = s.recv_from(&mut buf) {
+                let Some(info) = decode_info(&buf[..n]) else { continue };
+                let addr = format!("{}:{}", from.ip(), info.port);
+                if let Some(f) = self.found.iter_mut().find(|f| f.addr == addr || (f.info.id == info.id && f.info.port == info.port)) {
+                    f.info = info;
+                    f.seen = now;
+                } else if self.found.len() < 6 {
+                    self.found.push(Found { addr, info, seen: now });
+                }
+            }
+        }
+        self.found.retain(|f| now - f.seen < 4.5);
+    }
+}
+
 fn lan_ip() -> Option<String> {
     let s = std::net::UdpSocket::bind(("0.0.0.0", 0)).ok()?;
     s.connect(("192.0.2.1", 9)).ok()?;
@@ -99,11 +166,14 @@ impl Menu {
             team: 2,
             sens: 0.0022,
             map: 0,
+            rotate: true,
+            loadout: [0, 0, 1, 2, 4],
             error: None,
             lan_ip: lan_ip(),
             repeat_at: 0.0,
             shot: None,
             frames: 0,
+            lan: Lan::new(),
         };
         if let Ok(text) = std::fs::read_to_string(cfg_path()) {
             for line in text.lines() {
@@ -116,6 +186,12 @@ impl Menu {
                     "team" => m.team = v.parse::<u8>().unwrap_or(2).min(2),
                     "sens" => m.sens = v.parse::<f32>().unwrap_or(0.0022).clamp(0.0004, 0.01),
                     "map" => m.map = map_by_name(v).unwrap_or(0),
+                    "rotate" => m.rotate = v != "0",
+                    "loadout" => {
+                        for (k, n) in v.split(',').take(5).enumerate() {
+                            m.loadout[k] = n.trim().parse().unwrap_or(m.loadout[k]);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -125,7 +201,9 @@ impl Menu {
 
     fn save(&self) {
         let map = MAPS[self.map as usize % MAPS.len()].name.to_lowercase();
-        let mut out = format!("name={}\nbots={}\nteam={}\nsens={}\nmap={}\n", self.f[F_NAME], self.f[F_BOTS], self.team, self.sens, map);
+        let mut out = format!("name={}\nbots={}\nteam={}\nsens={}\nmap={}\nrotate={}\n", self.f[F_NAME], self.f[F_BOTS], self.team, self.sens, map, self.rotate as u8);
+        let l = self.loadout;
+        out += &format!("loadout={},{},{},{},{}\n", l[0], l[1], l[2], l[3], l[4]);
         for s in &self.servers {
             out += &format!("server={s}\n");
         }
@@ -165,6 +243,8 @@ impl Menu {
             port: self.f[F_HPORT].parse().ok().filter(|p| *p != 0).unwrap_or(DEFAULT_PORT),
             per_team: self.f[F_BOTS].parse::<usize>().unwrap_or(12).clamp(1, 16),
             map: self.map % MAPS.len() as u8,
+            rotate: self.rotate,
+            lobby: 30,
         }
     }
 
@@ -251,7 +331,7 @@ impl Menu {
 
             let w = 760.0f32.min(sw - 40.0);
             let x = ((sw - w) / 2.0).floor();
-            let mut y = (sh * 0.07).max(20.0).floor();
+            let mut y = (sh * 0.04).max(14.0).floor();
 
             // Title with the two team colours.
             mq::draw_rectangle(x, y, 6.0, 46.0, EMBER);
@@ -260,7 +340,7 @@ impl Menu {
             let tag = "12v12 front-line conquest";
             let tm = mq::measure_text(tag, None, 18, 1.0);
             mq::draw_text(tag, x + w - tm.width, y + 36.0, 18.0, DIM);
-            y += 92.0;
+            y += 80.0;
 
             self.field(F_NAME, x, y, 260.0, "CALLSIGN", "Player", now);
             // Team picker: which side to ask the server for.
@@ -291,7 +371,11 @@ impl Menu {
             }
 
             // ---- join ----
-            let join_h = 118.0 + 44.0 * self.servers.len().max(1) as f32 + 34.0;
+            self.lan.poll(now);
+            let lan_rows = self.lan.found.len().min(if sh < 800.0 { 2 } else { 4 });
+            // With games found nearby, an empty saved list needs no placeholder.
+            let saved_rows = if lan_rows > 0 { self.servers.len() } else { self.servers.len().max(1) };
+            let join_h = 118.0 + 30.0 + 44.0 * (lan_rows + saved_rows) as f32 + 34.0;
             mq::draw_rectangle(x, y, w, join_h, PANEL);
             mq::draw_rectangle(x, y, 4.0, join_h, COBALT);
             mq::draw_text("JOIN A SERVER", x + 20.0, y + 30.0, 24.0, mq::WHITE);
@@ -306,9 +390,38 @@ impl Menu {
                 out = self.join_addr().map(Choice::Join);
             }
             let mut ry = fy + 56.0;
+            // Games answering on the local network.
+            let dots = ["", ".", "..", "..."][(now * 2.0) as usize % 4];
+            let head = if lan_rows == 0 { format!("ON YOUR NETWORK  -  searching{dots}") } else { "ON YOUR NETWORK".to_string() };
+            mq::draw_text(&head, x + 20.0, ry + 14.0, 16.0, DIM);
+            ry += 24.0;
+            for f in self.lan.found.iter().take(lan_rows) {
+                let i = &f.info;
+                let ok = i.proto == PROTO;
+                let over = hit(x + 20.0, ry, w - 40.0, 38.0);
+                mq::draw_rectangle(x + 20.0, ry, w - 40.0, 38.0, if over { mq::Color::new(0.14, 0.19, 0.25, 1.0) } else { mq::Color::new(0.08, 0.11, 0.15, 1.0) });
+                let name: String = i.name.chars().filter(|c| !c.is_control()).take(22).collect();
+                mq::draw_text(&name, x + 32.0, ry + 26.0, 22.0, mq::WHITE);
+                let state = match i.phase {
+                    2 => "in lobby",
+                    1 => "round over",
+                    _ => "in game",
+                };
+                let detail = if ok {
+                    format!("{}   {}/{} players   {}", MAPS[i.map as usize % MAPS.len()].name, i.humans, i.slots, state)
+                } else {
+                    "different game version".to_string()
+                };
+                mq::draw_text(&detail, x + 290.0, ry + 25.0, 17.0, DIM);
+                if ok && (button(x + w - 20.0 - 100.0, ry + 4.0, 96.0, 30.0, "JOIN", COBALT, 20.0) || (over && mq::is_mouse_button_pressed(mq::MouseButton::Left))) {
+                    out = Some(Choice::Join(f.addr.clone()));
+                }
+                ry += 44.0;
+            }
+            ry += 6.0;
             mq::draw_text("SAVED SERVERS", x + 20.0, ry + 14.0, 16.0, DIM);
             ry += 24.0;
-            if self.servers.is_empty() {
+            if self.servers.is_empty() && lan_rows == 0 {
                 mq::draw_text("None yet - servers you join are remembered here.", x + 20.0, ry + 26.0, 20.0, DIM);
             }
             let mut remove = None;
@@ -335,7 +448,7 @@ impl Menu {
             y += join_h + 18.0;
 
             // ---- host ----
-            let host_h = 172.0;
+            let host_h = 204.0;
             mq::draw_rectangle(x, y, w, host_h, PANEL);
             mq::draw_rectangle(x, y, 4.0, host_h, EMBER);
             mq::draw_text("HOST A MATCH", x + 20.0, y + 30.0, 24.0, mq::WHITE);
@@ -369,6 +482,14 @@ impl Menu {
             };
             mq::draw_text(&format!("{}: {}.", def.name, def.blurb), x + 20.0, fy + 64.0, 18.0, mq::Color::new(0.8, 0.78, 0.74, 1.0));
             mq::draw_text(&note, x + 20.0, fy + 88.0, 18.0, DIM);
+            // Rotation: after each round the server moves to the next map.
+            let rl = if self.rotate { "MAP ROTATION: ON" } else { "MAP ROTATION: OFF" };
+            let rc = if self.rotate { mq::Color::new(0.25, 0.3, 0.2, 1.0) } else { mq::Color::new(0.16, 0.16, 0.16, 1.0) };
+            if button(x + 20.0, fy + 100.0, 220.0, 28.0, rl, rc, 18.0) {
+                self.rotate = !self.rotate;
+            }
+            let rn = if self.rotate { "Each round is played on the next map in the list." } else { "Every round is played on this map." };
+            mq::draw_text(rn, x + 256.0, fy + 120.0, 18.0, DIM);
             y += host_h + 18.0;
 
             if button(x + w - 110.0, y, 110.0, 34.0, "QUIT", LINE, 20.0) || mq::is_key_pressed(mq::KeyCode::Escape) {

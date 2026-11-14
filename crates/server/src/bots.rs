@@ -38,6 +38,13 @@ pub struct Bot {
     alert: Option<usize>,
     alert_until: u32,
     seq: u32,
+    /// Where a lost target was last seen, and until when to go and look.
+    hunt_pos: Vec3,
+    hunt_until: u32,
+    /// Ticks spent waiting for the squad before an assault.
+    regroup: u32,
+    /// Ticks spent pushing against something without moving.
+    slow: u32,
 }
 
 impl Bot {
@@ -73,6 +80,10 @@ impl Bot {
             alert: None,
             alert_until: 0,
             seq: 0,
+            hunt_pos: Vec3::ZERO,
+            hunt_until: 0,
+            regroup: 0,
+            slow: 0,
         }
     }
 
@@ -81,7 +92,18 @@ impl Bot {
         self.alert_until = tick + 120;
     }
 
+    /// A teammate nearby was hit: look that way unless already busy.
+    pub fn alert_soft(&mut self, attacker: usize, tick: u32) {
+        if self.alert.is_none() && self.target.is_none() {
+            self.alert = Some(attacker);
+            self.alert_until = tick + 80;
+        }
+    }
+
     pub fn on_spawn(&mut self, yaw: f32) {
+        self.hunt_until = 0;
+        self.regroup = 0;
+        self.slow = 0;
         self.yaw = yaw;
         self.pitch = 0.0;
         self.target = None;
@@ -144,7 +166,9 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
     }
     let pos = me.st.pos;
     let eye = pos + vec3(0.0, sim::eye_h(me.st.crouch), 0.0);
-    let kit = me.st.kit;
+    // How the bot fights follows the family of its primary: 0 rifle,
+    // 1 shotgun, 2 long rifle.
+    let kit = sim::weapon_def(me.st.prim).arch;
     let wd = sim::weapon_def(sim::wid(&me.st));
     let side = me.st.slot == 1;
     if b.alert.is_some() && t > b.alert_until {
@@ -209,6 +233,11 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
             None => {
                 if b.target.is_some() && t - b.last_seen > 50 {
                     b.target = None;
+                    // Attackers go and look where the enemy disappeared.
+                    if !b.defender && kit != 2 && (b.last_seen_pos - pos).length() < 32.0 {
+                        b.hunt_pos = b.last_seen_pos;
+                        b.hunt_until = t + 170;
+                    }
                 }
             }
         }
@@ -221,6 +250,7 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
 
     // --- Objective ---
     if b.goal_timer == 0 {
+        b.regroup = 0;
         b.goal = choose_goal(g, me.team, pos, b);
         b.goal_timer = 180 + b.rng.below(240);
     } else {
@@ -282,7 +312,8 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
         if visible {
             engaged = true;
             let toh = vec2(to.x, to.z).normalize_or_zero();
-            let ideal = [24.0, 8.0, 60.0][kit as usize % 3];
+            // Fight at the range the weapon is good at.
+            let ideal = (sim::weapon_def(me.st.prim).falloff.0 * 0.7).clamp(8.0, 60.0);
             if b.strafe_timer == 0 {
                 b.strafe = if b.rng.chance(0.18) { 0.0 } else { b.rng.sign() };
                 b.strafe_timer = 25 + b.rng.below(50);
@@ -308,6 +339,10 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
                     mv -= toh * 0.8;
                 }
             }
+            // Caught reloading: back away and keep moving.
+            if me.st.reload > 0 && kit != 2 {
+                mv = right * (if b.strafe == 0.0 { 1.0 } else { b.strafe }) - toh * 0.7;
+            }
             ads = kit != 1 && d > 28.0;
             // Holding still in a firefight: drop to a knee for a steadier shot.
             crouch = mv.length_squared() < 0.01 && d > 15.0;
@@ -332,8 +367,49 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
     } else if let Some(a) = b.alert {
         let to = g.players[a].st.pos - pos;
         want_yaw = to.x.atan2(to.z);
+    } else if t < b.hunt_until {
+        // Check the spot the last target vanished at.
+        let to = vec2(b.hunt_pos.x - pos.x, b.hunt_pos.z - pos.z);
+        if to.length() < 3.0 {
+            b.hunt_until = 0;
+        } else {
+            mv = to.normalize();
+            want_yaw = mv.x.atan2(mv.y);
+        }
     } else if mv.length_squared() > 0.01 {
         want_yaw = mv.x.atan2(mv.y);
+    }
+
+    // --- Squad sense ---
+    let enemy = 1 - me.team as usize;
+    let assaulting = !engaged && b.target.is_none() && t >= b.hunt_until && g.points[b.goal].owner != me.team;
+    let mut holding = false;
+    if assaulting && kit == 2 && (7.0..26.0).contains(&dgoal) && g.points[b.goal].n[enemy] > 0 {
+        // Long rifles cover the assault from outside the point.
+        holding = true;
+    } else if assaulting && !b.defender && (15.0..34.0).contains(&dgoal) && b.regroup < 150 {
+        // Do not walk onto a point alone if friends are close behind.
+        let (mut near, mut coming) = (0, 0);
+        for p in g.players.iter().filter(|p| p.alive && p.team == me.team && p.id != me.id) {
+            let d = (p.st.pos - pos).length();
+            if d < 14.0 {
+                near += 1;
+            } else if d < 45.0 && (p.st.pos - gpos).length() > dgoal {
+                coming += 1;
+            }
+        }
+        if near < 2 && coming > 0 {
+            b.regroup += 1;
+            holding = true;
+        }
+    }
+    if dgoal > 44.0 {
+        b.regroup = 0;
+    }
+    if holding {
+        mv = Vec2::ZERO;
+        crouch = true;
+        want_yaw = (gpos.x - pos.x).atan2(gpos.z - pos.z);
     }
 
     // --- Self-preservation ---
@@ -357,7 +433,7 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
             break;
         }
     }
-    if !fleeing && engaged && b.cautious && me.hp < sim::kit(kit).hp * 0.35 {
+    if !fleeing && engaged && b.cautious && me.hp < sim::kit(me.st.kit).hp * 0.35 {
         // Badly hurt: give ground toward friendly territory, still shooting.
         let back = g.nav.dir(5 + me.team as usize, b.lane, pos.x, pos.z);
         mv = back + vec2(-b.yaw.cos(), b.yaw.sin()) * b.strafe * 0.5;
@@ -385,7 +461,7 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
     if ((!engaged && dgoal > 14.0) || fleeing) && cmd.mz > 0 {
         cmd.buttons |= btn::SPRINT;
     }
-    if side && t % 3 != 0 {
+    if wd.semi && t % 3 != 0 {
         fire = false; // semi-auto: pull the trigger, don't hold it
     }
     if fire {
@@ -407,11 +483,28 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
     if engaged && me.st.grenades > 0 && me.st.gren_cd == 0 {
         if let Some(j) = b.target {
             let d = (g.players[j].st.pos - pos).length();
-            if (12.0..34.0).contains(&d) && b.rng.chance(0.004) {
+            // More tempting the more enemies are bunched up; never onto friends.
+            let tp = g.players[j].st.pos;
+            let around = |team: u8, r: f32| g.players.iter().filter(|p| p.alive && p.team == team && (p.st.pos - tp).length() < r).count();
+            let bunch = around(1 - me.team, 6.0) as f32;
+            let safe = around(me.team, 7.5) == 0;
+            if safe && (12.0..34.0).contains(&d) && b.rng.chance(0.003 * bunch * bunch) {
                 cmd.buttons = (cmd.buttons | btn::GRENADE) & !btn::FIRE;
                 cmd.pitch = (b.pitch + 0.16 + d * 0.006).min(1.2);
             }
         }
+    }
+
+    // --- Obstacles: hop or climb what is in the way before backing off ---
+    let hs = vec2(me.st.vel.x, me.st.vel.z).length();
+    if cmd.mz > 0 && !engaged && me.st.on_ground && hs < 1.2 {
+        b.slow += 1;
+    } else if hs > 2.0 || cmd.mz <= 0 {
+        b.slow = 0;
+    }
+    if b.slow > 8 {
+        cmd.buttons |= btn::JUMP;
+        cmd.buttons &= !btn::CROUCH;
     }
 
     // --- Unstick ---

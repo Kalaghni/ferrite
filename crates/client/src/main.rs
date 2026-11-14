@@ -44,6 +44,15 @@ pub struct Args {
     volume: f32,
     sight: Option<u8>,
     kit: u8,
+    /// Hosting: stay on one map instead of rotating.
+    no_rotate: bool,
+    /// Hosting: lobby length in seconds (0 = none). Scripted runs skip it.
+    lobby: Option<u32>,
+    /// Weapon ids for a direct launch; the class decides what is allowed.
+    prim: u8,
+    side: u8,
+    /// Verification aid: keep the loadout panel on screen.
+    show_loadout: bool,
     /// Side of the sun shadow map in texels; 0 turns shadows off.
     shadows: u32,
     /// Verification aid: freeze the first-person reload animation here.
@@ -72,6 +81,11 @@ fn parse_args() -> Args {
         volume: 0.7,
         sight: None,
         kit: 0,
+        no_rotate: false,
+        lobby: None,
+        prim: 255,
+        side: 255,
+        show_loadout: false,
         shadows: 4096,
         vm_reload: None,
     };
@@ -118,6 +132,17 @@ fn parse_args() -> Args {
                 a.host = true;
                 used = 1;
             }
+            "--prim" => a.prim = val.parse().expect("--prim <weapon id>"),
+            "--side" => a.side = val.parse().expect("--side <weapon id>"),
+            "--show-loadout" => {
+                a.show_loadout = true;
+                used = 1;
+            }
+            "--lobby" => a.lobby = Some(val.parse().expect("--lobby <seconds, 0 for none>")),
+            "--no-rotate" => {
+                a.no_rotate = true;
+                used = 1;
+            }
             "--vm-reload" => a.vm_reload = val.parse().ok(),
             "--shadows" => {
                 a.shadows = match val.as_str() {
@@ -136,7 +161,7 @@ fn parse_args() -> Args {
             }
             "--fullscreen" => used = 1,
             "-h" | "--help" => {
-                println!("ferrite [--connect host[:port]] [--host] [--team ember|cobalt|auto] [--name N] [--map NAME] [--bots 12] [--port 27500] [--seed N] [--tickets 250] [--skill 1.0]\n        [--volume 0.7] [--shadows high|low|off] [--fullscreen] [--spectate] [--auto] [--shot file.png --shot-at SECS] [--quit-at SECS]");
+                println!("ferrite [--connect host[:port]] [--host] [--team ember|cobalt|auto] [--name N] [--map NAME] [--no-rotate] [--lobby 30] [--bots 12] [--port 27500] [--seed N] [--tickets 250] [--skill 1.0]\n        [--volume 0.7] [--shadows high|low|off] [--fullscreen] [--spectate] [--auto] [--shot file.png --shot-at SECS] [--quit-at SECS]");
                 std::process::exit(0);
             }
             other => {
@@ -205,6 +230,18 @@ pub struct App {
     pub respawn_in: f32,
     pub killer: u8,
     pub kit_choice: u8,
+    /// Primary chosen for each class, and the sidearm.
+    pub prims: [u8; 3],
+    pub side_choice: u8,
+    /// The loadout panel is open while alive (it always shows while dead).
+    pub loadout_open: bool,
+    /// The server is in its lobby; our map vote (255 = none) and ready flag.
+    pub lobby: bool,
+    pub vote: u8,
+    pub ready: bool,
+    demo_panel: bool,
+    /// Scripted runs: draw the sidearm so it can be looked at.
+    demo_side: bool,
     step_y: f32,
     pub eye: f32,
     jump_latch: bool,
@@ -274,7 +311,7 @@ pub struct App {
     /// The in-match team picker is open.
     pub team_pick: bool,
     /// Chosen sight per weapon id.
-    pub sights: [u8; 5],
+    pub sights: [u8; 20],
     pub stats: Stats,
     pub hosting: Option<String>,
     pub start: f64,
@@ -287,14 +324,33 @@ impl App {
     pub fn team(&self, id: u8) -> u8 {
         self.net.roster.iter().find(|r| r.id == id).map_or((id % 2) as u8, |r| r.team)
     }
-    pub fn kit_of(&self, id: u8) -> u8 {
-        self.net.roster.iter().find(|r| r.id == id).map_or(0, |r| r.kit)
+    /// Weapon a player is firing: their primary, or their sidearm.
+    pub fn wid_of(&self, id: u8, side: bool) -> u8 {
+        self.net.roster.iter().find(|r| r.id == id).map_or(0, |r| if side { r.side } else { r.prim })
+    }
+    /// Loadout asked for at the next deploy: class, primary, sidearm.
+    pub fn loadout(&self) -> (u8, u8, u8) {
+        (self.kit_choice, self.prims[self.kit_choice as usize % 3], self.side_choice)
+    }
+    /// The loadout panel is on screen and takes clicks.
+    pub fn loadout_shown(&self) -> bool {
+        self.demo_panel || (!self.spectator && !self.auto && !self.team_pick && (self.lobby || (self.captured && (!self.alive || self.loadout_open))))
+    }
+    /// Choose row `row` of column `col` (0 class, 1 primary, 2 sidearm).
+    pub fn pick_loadout(&mut self, col: u8, row: u8) {
+        let prims = sim::kit(self.kit_choice).prims;
+        match col {
+            0 => self.kit_choice = row.min(2),
+            1 => self.prims[self.kit_choice as usize % 3] = prims[row as usize % prims.len()],
+            _ => self.side_choice = sim::SIDEARMS[row as usize % sim::SIDEARMS.len()],
+        }
+        self.audio.play(Sfx::Step, 0.5);
     }
     pub fn render_pos(&self, alpha: f32) -> Vec3 {
         self.prev_pos + (self.st.pos - self.prev_pos) * alpha + self.smooth
     }
     pub fn sight(&self) -> u8 {
-        self.sights[sim::wid(&self.st) as usize % 5]
+        self.sights[sim::wid(&self.st) as usize % 20]
     }
     pub fn hspeed(&self) -> f32 {
         (self.st.vel.x * self.st.vel.x + self.st.vel.z * self.st.vel.z).sqrt()
@@ -312,6 +368,7 @@ impl App {
             flags: if self.st.slot == 1 { flag::SIDEARM } else { 0 },
             team: self.my_team,
             kit: self.st.kit,
+            gun: sim::weapon_def(self.st.prim).arch,
             crouch: if self.st.crouch { 1.0 } else { 0.0 },
             ..Default::default()
         }
@@ -346,7 +403,7 @@ impl App {
                         self.last_shot_snd[i] = now;
                         self.fx.muzzle(from + d * 0.9 - vec3(0.0, 0.14, 0.0));
                         let side = self.views.iter().any(|v| v.id == who && v.flags & flag::SIDEARM != 0);
-                        let s = audio::shot_sfx(if side { sim::SIDEARM_ID } else { self.kit_of(who) });
+                        let s = audio::shot_sfx(self.wid_of(who, side));
                         self.audio.play_at(s, from, listener, 0.55, 28.0);
                     }
                     if hit == 1 {
@@ -423,13 +480,7 @@ impl App {
                 if victim == self.my_id {
                     self.stats.my_deaths += 1;
                 }
-                let weapon = match weapon {
-                    0 => "Carbine",
-                    1 => "Scattergun",
-                    2 => "Longrifle",
-                    4 => "Sidearm",
-                    _ => "Frag",
-                };
+                let weapon = sim::weapon_def(weapon).name;
                 self.feed.push(KillLine {
                     killer: self.name(killer),
                     kteam: self.team(killer),
@@ -463,7 +514,8 @@ impl App {
                 self.audio.play(if ours { Sfx::CapUp } else { Sfx::CapDown }, 0.9);
             }
             Feed::MatchStart => {
-                self.banner = Some(("NEW ROUND - TAKE THE LINE".into(), scene::NEUTRAL_COL, now));
+                let map = self.net.latest().map_or(self.world.map, |s| s.map);
+                self.banner = Some((format!("{} - TAKE THE LINE", ferrite_shared::map::map_def(map).name), scene::NEUTRAL_COL, now));
                 self.feed.clear();
             }
         }
@@ -526,6 +578,9 @@ impl App {
             // Scripted input for unattended end-to-end runs.
             let t = now - self.start;
             c.mz = 1;
+            if self.demo_side && self.st.slot == 0 && t > 2.0 {
+                c.buttons |= btn::SWAP;
+            }
             c.mx = if (t * 0.7).sin() > 0.6 { 1 } else { 0 };
             if t % 3.0 < 1.3 {
                 c.buttons |= btn::FIRE;
@@ -557,7 +612,7 @@ impl App {
             if mq::is_key_down(mq::KeyCode::LeftShift) {
                 c.buttons |= btn::SPRINT;
             }
-            if mq::is_mouse_button_down(mq::MouseButton::Left) {
+            if mq::is_mouse_button_down(mq::MouseButton::Left) && !self.loadout_open {
                 c.buttons |= btn::FIRE;
             }
             if mq::is_mouse_button_down(mq::MouseButton::Right) {
@@ -626,9 +681,9 @@ impl App {
                 self.flash = 1.0;
                 self.audio.play(audio::shot_sfx(kit), 0.75);
                 self.fx.light(muzzle, 7.0, [1.0, 0.75, 0.4], 1.4, 0.06);
-                if kit != 2 {
+                if !matches!(kit, 2 | 15) {
                     let port = origin + fwd * 0.5 + right * 0.2 - vec3(0.0, 0.12, 0.0);
-                    self.fx.shell(port, right * 2.4 + vec3(0.0, 1.9, 0.0) + self.st.vel, kit == 1);
+                    self.fx.shell(port, right * 2.4 + vec3(0.0, 1.9, 0.0) + self.st.vel, wd.arch == 1);
                 }
             }
             self.mantling = out.mantle;
@@ -669,7 +724,7 @@ impl App {
         // Each command rides in three consecutive packets.
         let n = self.pending.len();
         let recent: Vec<Cmd> = self.pending.iter().skip(n.saturating_sub(3)).copied().collect();
-        self.net.send_cmds(&recent, self.kit_choice, now);
+        self.net.send_cmds(&recent, self.loadout(), now);
     }
 }
 
@@ -695,10 +750,12 @@ async fn main() {
     if direct {
         let choice = match &args.connect {
             Some(a) => menu::Choice::Join(a.clone()),
-            None => menu::Choice::Host { port: args.port, per_team: args.per_team, map: args.map.unwrap_or(0) },
+            None => menu::Choice::Host { port: args.port, per_team: args.per_team, map: args.map.unwrap_or(0), rotate: !args.no_rotate, lobby: args.lobby.unwrap_or(if args.auto || args.spectate || args.shot.is_some() || args.quit_at.is_some() { 0 } else { 30 }) },
         };
         let mut sens = 0.0022;
-        let (_, msg) = play(&args, &args.name, args.team, choice, &mut sens).await;
+        let mut loadout = [args.kit, 0, 1, 2, args.side];
+        loadout[1 + args.kit as usize % 3] = args.prim;
+        let (_, msg) = play(&args, &args.name, args.team, choice, &mut sens, &mut loadout).await;
         if let Some(m) = msg {
             eprintln!("{m}");
             for _ in 0..240 {
@@ -722,7 +779,7 @@ async fn main() {
             menu::Choice::Host { .. } => None,
         };
         let name = menu.name();
-        let (joined, msg) = play(&args, &name, menu.team, choice, &mut menu.sens).await;
+        let (joined, msg) = play(&args, &name, menu.team, choice, &mut menu.sens, &mut menu.loadout).await;
         menu.persist();
         if let (true, Some(a)) = (joined, joining) {
             menu.remember(&a);
@@ -733,7 +790,7 @@ async fn main() {
 
 /// Run one match. Returns whether we got into the match, and a message for
 /// the home screen if it ended for a reason other than the player leaving.
-async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mut f32) -> (bool, Option<String>) {
+async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mut f32, loadout: &mut [u8; 5]) -> (bool, Option<String>) {
     let mut server = None;
     let addr = match choice {
         menu::Choice::Join(a) => {
@@ -743,15 +800,19 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
                 None => return (false, Some(format!("Cannot resolve {a}"))),
             }
         }
-        menu::Choice::Host { port, per_team, map } => {
+        menu::Choice::Host { port, per_team, map, rotate, lobby } => {
             let h = match ferrite_server::spawn(ferrite_server::Config {
                 port,
                 per_team,
                 map,
+                rotation: if rotate { (0..ferrite_shared::map::MAPS.len() as u8).collect() } else { Vec::new() },
+                lobby_secs: lobby,
                 seed: args.seed,
                 tickets: args.tickets,
                 bot_skill: args.skill,
                 log: false,
+                name: format!("{}'s game", name.chars().take(16).collect::<String>()),
+                discover: true,
             }) {
                 Ok(h) => h,
                 Err(e) => return (false, Some(format!("Could not start a server: {e}"))),
@@ -770,7 +831,8 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         Ok(x) => x,
         Err(e) => return (false, Some(format!("Could not join {addr}: {e}"))),
     };
-    let world = World::with_map(welcome.seed, welcome.map);
+    let seed = welcome.seed;
+    let world = World::with_map(seed, welcome.map);
     let bounds = (
         vec3(-ferrite_shared::map::HALF_X - 8.0, -12.0, -ferrite_shared::map::HALF_Z - 8.0),
         vec3(ferrite_shared::map::HALF_X + 8.0, 34.0, ferrite_shared::map::HALF_Z + 8.0),
@@ -799,7 +861,15 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         spawn_count: 0,
         respawn_in: 0.0,
         killer: SPECTATOR_ID,
-        kit_choice: args.kit,
+        kit_choice: loadout[0] % 3,
+        prims: [0u8, 1, 2].map(|k| sim::fix_loadout(k, loadout[1 + k as usize], 0).1),
+        side_choice: sim::fix_loadout(0, 0, loadout[4]).2,
+        loadout_open: false,
+        lobby: false,
+        vote: 255,
+        ready: false,
+        demo_panel: args.show_loadout,
+        demo_side: args.auto && args.side != 255,
         step_y: 0.0,
         eye: sim::EYE,
         jump_latch: false,
@@ -863,10 +933,10 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         death_pos: Vec3::ZERO,
         show_net: false,
         team_pick: false,
-        sights: match args.sight {
-            Some(s) => [s.min(5); 5],
-            None => [scene::IRON, scene::IRON, scene::SCOPE4, 0, scene::IRON],
-        },
+        sights: std::array::from_fn(|w| match args.sight {
+            Some(s) => s.min(5),
+            None => scene::sights_for(w as u8)[0],
+        }),
         stats: Stats::default(),
         hosting,
         start,
@@ -881,6 +951,7 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
     let mut shot_done = false;
     let mut peak_tris = 0usize;
     let mut grabbed = false;
+    let mut lobby_sent = 0.0f64;
     let mut sway = (0.0f32, 0.0f32);
     let mut ended: Option<String> = None;
 
@@ -920,15 +991,74 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
             app.team_pick = true;
             app.captured = false;
         }
+        // Loadout panel: always up while dead, or opened with L. Click a
+        // row, or use the number keys.
+        if !app.alive {
+            app.loadout_open = false;
+        } else if app.loadout_open && mq::is_key_pressed(mq::KeyCode::Escape) {
+            app.loadout_open = false;
+            picked = true; // swallow this Esc
+        } else if mq::is_key_pressed(mq::KeyCode::L) && app.captured && !app.spectator && !app.auto && !app.team_pick {
+            app.loadout_open = !app.loadout_open;
+        }
+        // Lobby: vote for a map, say when you are ready.
+        let in_lobby = app.net.latest().is_some_and(|s| s.phase == 2);
+        if in_lobby != app.lobby {
+            app.lobby = in_lobby;
+            app.vote = 255;
+            app.ready = false;
+            app.loadout_open = false;
+            if !in_lobby && !app.auto && !app.spectator {
+                app.captured = true; // the match is starting: take the mouse
+            }
+        }
+        if app.lobby && !app.spectator && !app.team_pick {
+            let before = (app.vote, app.ready);
+            if mq::is_key_pressed(mq::KeyCode::Enter) {
+                app.ready = !app.ready;
+            }
+            if !picked && mq::is_mouse_button_pressed(mq::MouseButton::Left) {
+                let (mx, my) = mq::mouse_position();
+                let inside = |r: (f32, f32, f32, f32)| mx >= r.0 && mx < r.0 + r.2 && my >= r.1 && my < r.1 + r.3;
+                let (cards, ready_btn) = hud::lobby_rects(mq::screen_width(), mq::screen_height());
+                for (k, r) in cards.into_iter().enumerate() {
+                    if inside(r) {
+                        app.vote = if app.vote == k as u8 { 255 } else { k as u8 };
+                        picked = true;
+                    }
+                }
+                if inside(ready_btn) {
+                    app.ready = !app.ready;
+                    picked = true;
+                }
+            }
+            // Resent a few times a second: these ride on plain UDP.
+            if before != (app.vote, app.ready) || now - lobby_sent > 0.3 {
+                if before != (app.vote, app.ready) {
+                    app.audio.play(Sfx::Step, 0.5);
+                }
+                lobby_sent = now;
+                app.net.send_lobby(app.vote, app.ready);
+            }
+        }
+        if app.loadout_shown() && !picked && mq::is_mouse_button_pressed(mq::MouseButton::Left) {
+            let (mx, my) = mq::mouse_position();
+            for (c, r, x, y, w, h) in hud::loadout_rects(mq::screen_width(), mq::screen_height(), app.kit_choice) {
+                if mx >= x && mx < x + w && my >= y && my < y + h {
+                    app.pick_loadout(c, r);
+                    picked = true;
+                }
+            }
+        }
         if picked || app.team_pick {
         } else if mq::is_key_pressed(mq::KeyCode::Escape) && app.captured {
             app.captured = false;
-        } else if mq::is_mouse_button_pressed(mq::MouseButton::Left) && !app.captured && !app.auto && !app.spectator {
+        } else if mq::is_mouse_button_pressed(mq::MouseButton::Left) && !app.captured && !app.auto && !app.spectator && !app.lobby {
             app.captured = true;
         }
         // The mouse is only held while you are alive: dead, it is visible and
         // free to leave the window, and it is taken back when you deploy.
-        let want_grab = app.captured && app.alive;
+        let want_grab = app.captured && app.alive && !app.loadout_open;
         if want_grab != grabbed {
             grabbed = want_grab;
             mq::set_cursor_grab(grabbed);
@@ -957,18 +1087,34 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         }
         sway.0 *= 1.0 - (10.0 * dt).min(1.0);
         sway.1 *= 1.0 - (10.0 * dt).min(1.0);
-        for (k, key) in [mq::KeyCode::Key1, mq::KeyCode::Key2, mq::KeyCode::Key3].into_iter().enumerate() {
-            if mq::is_key_pressed(key) {
-                app.kit_choice = k as u8;
+        // 1-3 class, 4 next primary, 5 next sidearm, for the next deploy.
+        use mq::KeyCode as K;
+        for (k, key) in [K::Key1, K::Key2, K::Key3, K::Key4, K::Key5].into_iter().enumerate() {
+            if mq::is_key_pressed(key) && !app.spectator {
+                let (kit, prim, side) = app.loadout();
+                match k {
+                    3 => {
+                        let prims = sim::kit(kit).prims;
+                        let at = prims.iter().position(|&p| p == prim).unwrap_or(0);
+                        app.pick_loadout(1, (at as u8 + 1) % prims.len() as u8);
+                    }
+                    4 => {
+                        let at = sim::SIDEARMS.iter().position(|&s| s == side).unwrap_or(0);
+                        app.pick_loadout(2, (at as u8 + 1) % sim::SIDEARMS.len() as u8);
+                    }
+                    _ => app.pick_loadout(0, k as u8),
+                }
+                let (kit, prim, side) = app.loadout();
+                app.sub_banner = Some((format!("NEXT DEPLOY: {} - {} - {}", sim::kit(kit).name, sim::weapon_def(prim).name, sim::weapon_def(side).name), now));
             }
         }
         if mq::is_key_pressed(mq::KeyCode::T) && app.alive && !app.spectator {
             // Cycle the sight on the weapon in hand.
             let w = sim::wid(&app.st);
             let opts = scene::sights_for(w);
-            let cur = opts.iter().position(|&s| s == app.sights[w as usize % 5]).unwrap_or(0);
+            let cur = opts.iter().position(|&s| s == app.sights[w as usize % 20]).unwrap_or(0);
             let next = opts[(cur + 1) % opts.len()];
-            app.sights[w as usize % 5] = next;
+            app.sights[w as usize % 20] = next;
             app.sub_banner = Some((format!("{}  -  {}", sim::weapon_def(w).name, scene::SIGHT_NAMES[next as usize]), now));
             app.audio.play(Sfx::Step, 0.5);
         }
@@ -984,6 +1130,18 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
 
         // ---- network in ----
         app.net.poll(now);
+        // The server moved to the next map in its rotation: rebuild the
+        // world, its mesh and its shadow map.
+        if let Some(m) = app.net.latest().map(|s| s.map) {
+            if m != app.world.map {
+                app.world = World::with_map(seed, m);
+                let fresh = gfx::Gpu::new(scene::build_world(&app.world), scene::build_sky(), args.shadows, scene::SUN.normalize(), bounds);
+                std::mem::replace(&mut gpu, fresh).destroy();
+                app.fx = fx::Fx::new();
+                app.corpses.clear();
+                app.pending.clear();
+            }
+        }
         let fresh = std::mem::take(&mut app.net.fresh);
         for s in &fresh {
             app.dmask = s.dmask;
@@ -1066,8 +1224,8 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         // ---- remote players ----
         let rt = app.net.render_tick(now);
         app.views.clear();
-        let roster: Vec<(u8, u8, u8)> = app.net.roster.iter().map(|r| (r.id, r.team, r.kit)).collect();
-        for (id, team, kit) in roster {
+        let roster: Vec<(u8, u8, u8, u8)> = app.net.roster.iter().map(|r| (r.id, r.team, r.kit, r.prim)).collect();
+        for (id, team, kit, prim) in roster {
             if id == app.my_id && !app.spectator {
                 continue;
             }
@@ -1139,6 +1297,7 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
                 hp: r.hp,
                 team,
                 kit,
+                gun: sim::weapon_def(prim).arch,
                 phase: app.walk[i],
                 moving: (speed / 3.0).min(1.0),
                 crouch: app.rcrouch[i],
@@ -1266,7 +1425,8 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
                 &mut vm_add,
                 &scene::ViewModel {
                     sight,
-                    kit,
+                    kit: wd.arch,
+                    wid: kit,
                     team: app.my_team,
                     ads: app.ads,
                     recoil: app.recoil,
@@ -1345,6 +1505,7 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         mq::next_frame().await
     }
     *sens = app.sens;
+    *loadout = [app.kit_choice, app.prims[0], app.prims[1], app.prims[2], app.side_choice];
 
     app.net.bye();
     let s = &app.stats;

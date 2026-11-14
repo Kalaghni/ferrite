@@ -45,6 +45,10 @@ pub const GRENADE_WEAPON: u8 = 3;
 
 pub struct WeaponDef {
     pub name: &'static str,
+    pub blurb: &'static str,
+    /// Family the weapon handles and looks like: 0 rifle, 1 shotgun,
+    /// 2 long rifle, 4 handgun.
+    pub arch: u8,
     pub damage: f32,
     pub pellets: u32,
     pub interval: u8,
@@ -62,133 +66,436 @@ pub struct WeaponDef {
     pub heat: u8,
     /// Extra cone half-angle at full heat.
     pub bloom: f32,
+    /// Movement speed multiplier while it is in hand.
+    pub mobility: f32,
+    /// Rounds fired per trigger pull (0 = not a burst weapon), and the
+    /// pause after a burst.
+    pub burst: u8,
+    pub burst_gap: u8,
 }
 
 pub struct KitDef {
     pub name: &'static str,
     pub blurb: &'static str,
-    pub weapon: WeaponDef,
+    /// Primaries this class may carry; the first is the default.
+    pub prims: &'static [u8],
     pub hp: f32,
     pub grenades: u8,
     pub speed: f32,
 }
 
 pub static KITS: [KitDef; 3] = [
-    KitDef {
-        name: "VANGUARD",
-        blurb: "Carbine - 2 frags - all-round line fighter",
-        weapon: WeaponDef {
-            name: "Carbine",
-            damage: 20.0,
-            pellets: 1,
-            interval: 6,
-            mag: 30,
-            reload: 120,
-            spread_hip: 0.020,
-            spread_ads: 0.005,
-            head_mult: 1.7,
-            falloff: (35.0, 90.0, 0.55),
-            recoil: 0.011,
-            ads_fov: 48.0,
-            semi: false,
-            heat: 18,
-            bloom: 0.024,
-        },
-        hp: 100.0,
-        grenades: 2,
-        speed: 1.0,
+    KitDef { name: "VANGUARD", blurb: "100 HP - 2 frags - line fighter", prims: &[0, 12, 8, 6], hp: 100.0, grenades: 2, speed: 1.0 },
+    KitDef { name: "BREACHER", blurb: "130 HP - 1 frag - faster - clears points", prims: &[1, 7, 13, 14, 8], hp: 130.0, grenades: 1, speed: 1.05 },
+    KitDef { name: "MARKSMAN", blurb: "90 HP - 1 frag - its rifles mark targets", prims: &[2, 9, 15, 5], hp: 90.0, grenades: 1, speed: 1.0 },
+];
+
+/// Default sidearm. Weapon ids index `WEAPONS`; 3 is the frag grenade.
+pub const SIDEARM_ID: u8 = 4;
+/// Sidearms any class may carry.
+pub const SIDEARMS: [u8; 4] = [4, 10, 11, 16];
+
+pub static WEAPONS: [WeaponDef; 17] = [
+    WeaponDef {
+        name: "Carbine",
+        blurb: "Automatic rifle - steady all-rounder",
+        arch: 0,
+        damage: 20.0,
+        pellets: 1,
+        interval: 6,
+        mag: 30,
+        reload: 120,
+        spread_hip: 0.02,
+        spread_ads: 0.005,
+        head_mult: 1.7,
+        falloff: (35.0, 90.0, 0.55),
+        recoil: 0.011,
+        ads_fov: 48.0,
+        semi: false,
+        heat: 18,
+        bloom: 0.024,
+        mobility: 1.0,
+        burst: 0,
+        burst_gap: 0,
     },
-    KitDef {
-        name: "BREACHER",
-        blurb: "Scattergun - heavy armour - clears points",
-        weapon: WeaponDef {
-            name: "Scattergun",
-            damage: 12.0,
-            pellets: 9,
-            interval: 46,
-            mag: 6,
-            reload: 150,
-            spread_hip: 0.065,
-            spread_ads: 0.05,
-            head_mult: 1.3,
-            falloff: (9.0, 30.0, 0.2),
-            recoil: 0.05,
-            ads_fov: 58.0,
-            semi: false,
-            heat: 0,
-            bloom: 0.0,
-        },
-        hp: 130.0,
-        grenades: 1,
-        speed: 1.05,
+    WeaponDef {
+        name: "Scattergun",
+        blurb: "Pump shotgun - one shot kills up close",
+        arch: 1,
+        damage: 12.0,
+        pellets: 9,
+        interval: 46,
+        mag: 6,
+        reload: 150,
+        spread_hip: 0.065,
+        spread_ads: 0.05,
+        head_mult: 1.3,
+        falloff: (9.0, 30.0, 0.2),
+        recoil: 0.05,
+        ads_fov: 58.0,
+        semi: false,
+        heat: 0,
+        bloom: 0.0,
+        mobility: 1.0,
+        burst: 0,
+        burst_gap: 0,
     },
-    KitDef {
-        name: "MARKSMAN",
-        blurb: "Longrifle - hits mark targets for your team",
-        weapon: WeaponDef {
-            name: "Longrifle",
-            damage: 75.0,
-            pellets: 1,
-            interval: 62,
-            mag: 5,
-            reload: 160,
-            spread_hip: 0.05,
-            spread_ads: 0.0006,
-            head_mult: 2.0,
-            falloff: (220.0, 300.0, 0.8),
-            recoil: 0.045,
-            ads_fov: 22.0,
-            semi: false,
-            heat: 0,
-            bloom: 0.0,
-        },
-        hp: 90.0,
-        grenades: 1,
-        speed: 1.0,
+    WeaponDef {
+        name: "Longrifle",
+        blurb: "Bolt-action - 4x scope, marks targets",
+        arch: 2,
+        damage: 75.0,
+        pellets: 1,
+        interval: 62,
+        mag: 5,
+        reload: 160,
+        spread_hip: 0.05,
+        spread_ads: 0.0006,
+        head_mult: 2.0,
+        falloff: (220.0, 300.0, 0.8),
+        recoil: 0.045,
+        ads_fov: 22.0,
+        semi: false,
+        heat: 0,
+        bloom: 0.0,
+        mobility: 1.0,
+        burst: 0,
+        burst_gap: 0,
+    },
+    WeaponDef {
+        name: "Frag",
+        blurb: "Fragmentation grenade",
+        arch: 0,
+        damage: 0.0,
+        pellets: 1,
+        interval: 1,
+        mag: 1,
+        reload: 1,
+        spread_hip: 0.0,
+        spread_ads: 0.0,
+        head_mult: 1.0,
+        falloff: (1.0, 2.0, 1.0),
+        recoil: 0.0,
+        ads_fov: 60.0,
+        semi: false,
+        heat: 0,
+        bloom: 0.0,
+        mobility: 1.0,
+        burst: 0,
+        burst_gap: 0,
+    },
+    WeaponDef {
+        name: "Sidearm",
+        blurb: "Pistol - 12 rounds, quick and accurate",
+        arch: 4,
+        damage: 27.0,
+        pellets: 1,
+        interval: 8,
+        mag: 12,
+        reload: 84,
+        spread_hip: 0.013,
+        spread_ads: 0.005,
+        head_mult: 1.8,
+        falloff: (18.0, 50.0, 0.5),
+        recoil: 0.02,
+        ads_fov: 56.0,
+        semi: true,
+        heat: 34,
+        bloom: 0.03,
+        mobility: 1.06,
+        burst: 0,
+        burst_gap: 0,
+    },
+    WeaponDef {
+        name: "Warden",
+        blurb: "Battle rifle - hits hard at range, kicks",
+        arch: 0,
+        damage: 31.0,
+        pellets: 1,
+        interval: 10,
+        mag: 20,
+        reload: 135,
+        spread_hip: 0.026,
+        spread_ads: 0.0035,
+        head_mult: 1.8,
+        falloff: (55.0, 120.0, 0.65),
+        recoil: 0.019,
+        ads_fov: 44.0,
+        semi: false,
+        heat: 30,
+        bloom: 0.03,
+        mobility: 0.98,
+        burst: 0,
+        burst_gap: 0,
+    },
+    WeaponDef {
+        name: "Bulwark",
+        blurb: "Machine gun - 60 rounds, heavy and slow",
+        arch: 0,
+        damage: 21.0,
+        pellets: 1,
+        interval: 6,
+        mag: 60,
+        reload: 230,
+        spread_hip: 0.034,
+        spread_ads: 0.008,
+        head_mult: 1.5,
+        falloff: (40.0, 100.0, 0.6),
+        recoil: 0.012,
+        ads_fov: 48.0,
+        semi: false,
+        heat: 12,
+        bloom: 0.03,
+        mobility: 0.9,
+        burst: 0,
+        burst_gap: 0,
+    },
+    WeaponDef {
+        name: "Rattler",
+        blurb: "Self-loading shotgun - fast, weaker shells",
+        arch: 1,
+        damage: 10.0,
+        pellets: 6,
+        interval: 22,
+        mag: 8,
+        reload: 170,
+        spread_hip: 0.075,
+        spread_ads: 0.06,
+        head_mult: 1.3,
+        falloff: (8.0, 26.0, 0.2),
+        recoil: 0.035,
+        ads_fov: 58.0,
+        semi: true,
+        heat: 0,
+        bloom: 0.0,
+        mobility: 1.0,
+        burst: 0,
+        burst_gap: 0,
+    },
+    WeaponDef {
+        name: "Wasp",
+        blurb: "Submachine gun - very fast, short range",
+        arch: 0,
+        damage: 16.0,
+        pellets: 1,
+        interval: 4,
+        mag: 32,
+        reload: 100,
+        spread_hip: 0.022,
+        spread_ads: 0.009,
+        head_mult: 1.5,
+        falloff: (14.0, 40.0, 0.45),
+        recoil: 0.008,
+        ads_fov: 52.0,
+        semi: false,
+        heat: 12,
+        bloom: 0.03,
+        mobility: 1.04,
+        burst: 0,
+        burst_gap: 0,
+    },
+    WeaponDef {
+        name: "Ranger",
+        blurb: "Self-loader - 2.5x optic, marks targets",
+        arch: 2,
+        damage: 46.0,
+        pellets: 1,
+        interval: 15,
+        mag: 10,
+        reload: 140,
+        spread_hip: 0.035,
+        spread_ads: 0.0012,
+        head_mult: 2.0,
+        falloff: (120.0, 220.0, 0.75),
+        recoil: 0.03,
+        ads_fov: 30.0,
+        semi: true,
+        heat: 40,
+        bloom: 0.02,
+        mobility: 1.0,
+        burst: 0,
+        burst_gap: 0,
+    },
+    WeaponDef {
+        name: "Magnum",
+        blurb: "Revolver - six heavy rounds",
+        arch: 4,
+        damage: 52.0,
+        pellets: 1,
+        interval: 24,
+        mag: 6,
+        reload: 130,
+        spread_hip: 0.016,
+        spread_ads: 0.003,
+        head_mult: 2.0,
+        falloff: (30.0, 70.0, 0.6),
+        recoil: 0.05,
+        ads_fov: 54.0,
+        semi: true,
+        heat: 60,
+        bloom: 0.03,
+        mobility: 1.04,
+        burst: 0,
+        burst_gap: 0,
+    },
+    WeaponDef {
+        name: "Stinger",
+        blurb: "Machine pistol - automatic, 20 rounds",
+        arch: 4,
+        damage: 13.0,
+        pellets: 1,
+        interval: 4,
+        mag: 20,
+        reload: 90,
+        spread_hip: 0.03,
+        spread_ads: 0.014,
+        head_mult: 1.5,
+        falloff: (10.0, 30.0, 0.4),
+        recoil: 0.012,
+        ads_fov: 56.0,
+        semi: false,
+        heat: 16,
+        bloom: 0.04,
+        mobility: 1.06,
+        burst: 0,
+        burst_gap: 0,
+    },
+    WeaponDef {
+        name: "Lancer",
+        blurb: "Burst rifle - three rounds a pull, long reach",
+        arch: 0,
+        damage: 24.0,
+        pellets: 1,
+        interval: 4,
+        mag: 30,
+        reload: 125,
+        spread_hip: 0.024,
+        spread_ads: 0.003,
+        head_mult: 1.8,
+        falloff: (50.0, 110.0, 0.6),
+        recoil: 0.012,
+        ads_fov: 46.0,
+        semi: false,
+        heat: 14,
+        bloom: 0.02,
+        mobility: 1.0,
+        burst: 3,
+        burst_gap: 16,
+    },
+    WeaponDef {
+        name: "Slugger",
+        blurb: "Slug shotgun - one heavy round, mid range",
+        arch: 1,
+        damage: 85.0,
+        pellets: 1,
+        interval: 50,
+        mag: 5,
+        reload: 150,
+        spread_hip: 0.03,
+        spread_ads: 0.006,
+        head_mult: 1.5,
+        falloff: (30.0, 70.0, 0.4),
+        recoil: 0.055,
+        ads_fov: 52.0,
+        semi: false,
+        heat: 0,
+        bloom: 0.0,
+        mobility: 1.0,
+        burst: 0,
+        burst_gap: 0,
+    },
+    WeaponDef {
+        name: "Drummer",
+        blurb: "Automatic shotgun - 12-round drum, wide",
+        arch: 1,
+        damage: 8.0,
+        pellets: 6,
+        interval: 15,
+        mag: 12,
+        reload: 200,
+        spread_hip: 0.085,
+        spread_ads: 0.07,
+        head_mult: 1.2,
+        falloff: (7.0, 22.0, 0.2),
+        recoil: 0.03,
+        ads_fov: 58.0,
+        semi: false,
+        heat: 0,
+        bloom: 0.0,
+        mobility: 0.95,
+        burst: 0,
+        burst_gap: 0,
+    },
+    WeaponDef {
+        name: "Hammerhead",
+        blurb: "Heavy rifle - three huge rounds, very slow",
+        arch: 2,
+        damage: 115.0,
+        pellets: 1,
+        interval: 90,
+        mag: 3,
+        reload: 200,
+        spread_hip: 0.07,
+        spread_ads: 0.0004,
+        head_mult: 2.0,
+        falloff: (300.0, 400.0, 0.9),
+        recoil: 0.08,
+        ads_fov: 22.0,
+        semi: false,
+        heat: 0,
+        bloom: 0.0,
+        mobility: 0.9,
+        burst: 0,
+        burst_gap: 0,
+    },
+    WeaponDef {
+        name: "Deuce",
+        blurb: "Sawn-off - two barrels, point blank only",
+        arch: 4,
+        damage: 11.0,
+        pellets: 7,
+        interval: 12,
+        mag: 2,
+        reload: 110,
+        spread_hip: 0.09,
+        spread_ads: 0.08,
+        head_mult: 1.2,
+        falloff: (5.0, 16.0, 0.15),
+        recoil: 0.07,
+        ads_fov: 56.0,
+        semi: true,
+        heat: 0,
+        bloom: 0.0,
+        mobility: 1.04,
+        burst: 0,
+        burst_gap: 0,
     },
 ];
 
-/// Weapon id of the sidearm every kit carries (kit primaries are 0..=2,
-/// 3 is the frag grenade).
-pub const SIDEARM_ID: u8 = 4;
-
-pub static SIDEARM: WeaponDef = WeaponDef {
-    name: "Sidearm",
-    damage: 27.0,
-    pellets: 1,
-    interval: 8,
-    mag: 12,
-    reload: 84,
-    spread_hip: 0.013,
-    spread_ads: 0.005,
-    head_mult: 1.8,
-    falloff: (18.0, 50.0, 0.5),
-    recoil: 0.02,
-    ads_fov: 56.0,
-    semi: true,
-    heat: 34,
-    bloom: 0.03,
-};
-
 pub fn weapon_def(wid: u8) -> &'static WeaponDef {
-    if wid == SIDEARM_ID {
-        &SIDEARM
-    } else {
-        &kit(wid).weapon
-    }
+    &WEAPONS[wid as usize % WEAPONS.len()]
 }
 
 /// Weapon id currently in the player's hands.
 pub fn wid(s: &PState) -> u8 {
     if s.slot == 1 {
-        SIDEARM_ID
+        s.side
     } else {
-        s.kit
+        s.prim
     }
 }
 
 pub fn kit(k: u8) -> &'static KitDef {
     &KITS[(k as usize) % KITS.len()]
+}
+
+/// Clamp a requested loadout to something the class may carry.
+pub fn fix_loadout(k: u8, prim: u8, side: u8) -> (u8, u8, u8) {
+    let k = k % KITS.len() as u8;
+    let kd = kit(k);
+    let prim = if kd.prims.contains(&prim) { prim } else { kd.prims[0] };
+    let side = if SIDEARMS.contains(&side) { side } else { SIDEARM_ID };
+    (k, prim, side)
 }
 
 /// The predicted part of a player. Everything `step` reads or writes.
@@ -212,6 +519,9 @@ pub struct PState {
     pub grenades: u8,
     pub gren_cd: u8,
     pub kit: u8,
+    /// Weapon ids of the primary and the sidearm carried.
+    pub prim: u8,
+    pub side: u8,
     pub surge: bool,
     pub crouch: bool,
     /// Ticks left in a slide (sprint, then crouch).
@@ -220,17 +530,24 @@ pub struct PState {
     pub slide_cd: u8,
     /// Barrel heat, 0..=HEAT_MAX. Widens the cone; cools between shots.
     pub heat: u8,
+    /// Rounds still to come in the burst being fired.
+    pub burst: u8,
 }
 
 impl PState {
     pub fn spawn(pos: Vec3, k: u8) -> PState {
+        PState::spawn_with(pos, k, 255, 255)
+    }
+
+    pub fn spawn_with(pos: Vec3, k: u8, prim: u8, side: u8) -> PState {
+        let (k, prim, side) = fix_loadout(k, prim, side);
         let kd = kit(k);
         PState {
             pos,
             vel: Vec3::ZERO,
             on_ground: false,
-            ammo: kd.weapon.mag,
-            ammo_alt: SIDEARM.mag,
+            ammo: weapon_def(prim).mag,
+            ammo_alt: weapon_def(side).mag,
             slot: 0,
             swap: 0,
             trig: false,
@@ -238,12 +555,15 @@ impl PState {
             reload: 0,
             grenades: kd.grenades,
             gren_cd: 0,
-            kit: k % 3,
+            kit: k,
+            prim,
+            side,
             surge: false,
             crouch: false,
             slide: 0,
             slide_cd: 0,
             heat: 0,
+            burst: 0,
         }
     }
 }
@@ -448,9 +768,7 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
     if s.crouch {
         speed *= 0.5;
     }
-    if s.slot == 1 {
-        speed *= 1.06; // lighter on your feet with the sidearm out
-    }
+    speed *= wd.mobility; // a handgun is lighter on your feet, a machine gun is not
     if s.surge {
         speed *= 1.18;
     }
@@ -506,6 +824,7 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
         s.reload = 0;
         s.cooldown = 0;
         s.heat = 0;
+        s.burst = 0;
         s.swap = if s.slot == 1 { 16 } else { 26 };
         out.swapped = true;
         wd = weapon_def(wid(s));
@@ -521,9 +840,20 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
         s.reload = if s.surge { wd.reload / 2 } else { wd.reload };
         out.reload_started = true;
     }
-    if fire_btn && s.reload == 0 && s.cooldown == 0 && s.swap == 0 && s.ammo > 0 && (!wd.semi || !s.trig) {
+    if s.reload > 0 || s.ammo == 0 {
+        s.burst = 0;
+    }
+    // A burst, once started, finishes on its own.
+    let pull = (fire_btn && (!wd.semi || !s.trig)) || s.burst > 0;
+    if pull && s.reload == 0 && s.cooldown == 0 && s.swap == 0 && s.ammo > 0 {
         s.ammo -= 1;
         s.cooldown = wd.interval;
+        if wd.burst > 0 {
+            s.burst = if s.burst > 0 { s.burst - 1 } else { wd.burst - 1 };
+            if s.burst == 0 {
+                s.cooldown = wd.burst_gap;
+            }
+        }
         out.fired = true;
         out.heat = s.heat;
         s.heat = (s.heat + wd.heat).min(HEAT_MAX);

@@ -5,7 +5,7 @@ use ferrite_shared::proto::*;
 use ferrite_shared::TICK_HZ;
 use std::collections::HashMap;
 use std::io;
-use std::net::{SocketAddr, UdpSocket};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -16,6 +16,36 @@ struct Conn {
     ack_feed: u32,
     fx_sent: u32,
     team_switch: Instant,
+}
+
+/// The address this machine uses on its local network, if it has one.
+pub fn lan_ip() -> Option<Ipv4Addr> {
+    let s = UdpSocket::bind(("0.0.0.0", 0)).ok()?;
+    s.connect(("192.0.2.1", 9)).ok()?;
+    match s.local_addr().ok()?.ip() {
+        std::net::IpAddr::V4(ip) if !ip.is_unspecified() && !ip.is_loopback() => Some(ip),
+        _ => None,
+    }
+}
+
+/// Socket that hears discovery queries: multicast on every interface we can
+/// name, plus plain broadcast. The address is shared, so several servers on
+/// one machine all hear a multicast query.
+fn discovery_socket() -> io::Result<UdpSocket> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let s = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+    s.set_reuse_address(true)?;
+    #[cfg(unix)]
+    s.set_reuse_port(true)?;
+    s.bind(&SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, DISCOVERY_PORT).into())?;
+    s.set_nonblocking(true)?;
+    let group = Ipv4Addr::from(DISCOVERY_GROUP);
+    let any = s.join_multicast_v4(&group, &Ipv4Addr::UNSPECIFIED);
+    let lan = lan_ip().map(|ip| s.join_multicast_v4(&group, &ip));
+    if any.is_err() && !matches!(lan, Some(Ok(()))) {
+        // Broadcast queries still arrive; multicast ones will not.
+    }
+    Ok(s.into())
 }
 
 pub struct ServerHandle {
@@ -55,6 +85,21 @@ pub fn run(cfg: Config, sock: UdpSocket, stop: Arc<AtomicBool>) {
     sock.set_nonblocking(true).expect("nonblocking socket");
     let mut game = Game::new(cfg);
     let mut conns: HashMap<SocketAddr, Conn> = HashMap::new();
+    let instance = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32) ^ std::process::id();
+    let game_port = sock.local_addr().map(|a| a.port()).unwrap_or(game.cfg.port);
+    let disc = if game.cfg.discover {
+        match discovery_socket() {
+            Ok(d) => Some(d),
+            Err(e) => {
+                if log {
+                    println!("LAN discovery is off: {e}");
+                }
+                None
+            }
+        }
+    } else {
+        None
+    };
     let tick_dur = Duration::from_secs_f64(1.0 / TICK_HZ as f64);
     let mut next = Instant::now() + tick_dur;
     let mut buf = [0u8; 2048];
@@ -79,6 +124,25 @@ pub fn run(cfg: Config, sock: UdpSocket, stop: Arc<AtomicBool>) {
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(_) => break, // e.g. Windows ICMP "connection reset" noise
+            }
+        }
+        // Someone on the network is looking for games.
+        if let Some(d) = &disc {
+            let mut q = [0u8; 64];
+            while let Ok((n, from)) = d.recv_from(&mut q) {
+                if &q[..n] == DISCOVERY_QUERY {
+                    let info = ServerInfo {
+                        proto: PROTO,
+                        id: instance,
+                        port: game_port,
+                        name: game.cfg.name.clone(),
+                        map: game.world.map,
+                        humans: game.humans() as u8,
+                        slots: game.players.len() as u8,
+                        phase: game.phase,
+                    };
+                    let _ = d.send_to(&encode_info(&info), from);
+                }
             }
         }
         let now = Instant::now();
@@ -110,7 +174,7 @@ pub fn run(cfg: Config, sock: UdpSocket, stop: Arc<AtomicBool>) {
         if t % 2 == 0 {
             for (addr, c) in conns.iter_mut() {
                 let snap = game.snapshot(c.player, c.ack_feed, c.fx_sent);
-                c.fx_sent = t;
+                c.fx_sent = game.fx_seq;
                 let bytes = encode(&S2C::Snap(snap));
                 bytes_out += bytes.len() as u64;
                 let _ = sock.send_to(&bytes, addr);
@@ -178,7 +242,7 @@ fn handle(game: &mut Game, conns: &mut HashMap<SocketAddr, Conn>, sock: &UdpSock
                 }
                 conns.insert(
                     addr,
-                    Conn { player, last_heard: Instant::now(), ack_feed: game.feed.len() as u32, fx_sent: game.tick, team_switch: Instant::now() - Duration::from_secs(60) },
+                    Conn { player, last_heard: Instant::now(), ack_feed: game.feed.len() as u32, fx_sent: game.fx_seq, team_switch: Instant::now() - Duration::from_secs(60) },
                 );
             }
             let c = &conns[&addr];
@@ -190,12 +254,14 @@ fn handle(game: &mut Game, conns: &mut HashMap<SocketAddr, Conn>, sock: &UdpSock
             let _ = sock.send_to(&encode(&w), addr);
             let _ = sock.send_to(&encode(&S2C::Roster(game.roster())), addr);
         }
-        C2S::Cmds { mut cmds, ack_feed, kit } => {
+        C2S::Cmds { mut cmds, ack_feed, kit, prim, side } => {
             let Some(c) = conns.get_mut(&addr) else { return };
             c.last_heard = Instant::now();
             c.ack_feed = c.ack_feed.max(ack_feed.min(game.feed.len() as u32));
             if let Some(i) = c.player {
-                game.players[i].next_kit = kit % 3;
+                let (kit, prim, side) = ferrite_shared::sim::fix_loadout(kit, prim, side);
+                let p = &mut game.players[i];
+                (p.next_kit, p.next_prim, p.next_side) = (kit, prim, side);
                 cmds.truncate(8);
                 cmds.sort_by_key(|c| c.seq);
                 for cmd in cmds {
@@ -216,6 +282,14 @@ fn handle(game: &mut Game, conns: &mut HashMap<SocketAddr, Conn>, sock: &UdpSock
                     println!("[{}] {} switched to team {}", game.tick, game.players[i].name, team);
                 }
                 let _ = sock.send_to(&encode(&S2C::Roster(game.roster())), addr);
+            }
+        }
+        C2S::Lobby { vote, ready } => {
+            let Some(c) = conns.get_mut(&addr) else { return };
+            c.last_heard = Instant::now();
+            if let Some(i) = c.player {
+                game.players[i].vote = vote;
+                game.players[i].ready = ready;
             }
         }
         C2S::Bye => {

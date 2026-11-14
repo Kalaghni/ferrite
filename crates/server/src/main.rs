@@ -4,7 +4,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 fn main() {
-    let mut cfg = Config { log: true, ..Default::default() };
+    let mut cfg = Config { log: true, lobby_secs: 30, ..Default::default() };
     let mut bench: Option<u32> = None;
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -27,18 +27,50 @@ fn main() {
                 }
                 return;
             }
+            "--rotation" => {
+                // "all", "off", or a comma-separated list of map names.
+                cfg.rotation = match val.as_str() {
+                    "off" | "none" => vec![u8::MAX],
+                    "all" => (0..ferrite_shared::map::MAPS.len() as u8).collect(),
+                    list => list
+                        .split(',')
+                        .map(|n| {
+                            ferrite_shared::map::map_by_name(n.trim()).unwrap_or_else(|| {
+                                eprintln!("unknown map '{n}' in --rotation. Try --maps for the list.");
+                                std::process::exit(2);
+                            })
+                        })
+                        .collect(),
+                };
+            }
+            "--lobby" => cfg.lobby_secs = val.parse().expect("--lobby <seconds, 0 for none>"),
+            "--name" => cfg.name = val.chars().filter(|c| !c.is_control()).take(24).collect(),
+            "--no-discovery" => {
+                cfg.discover = false;
+                i += 1;
+                continue;
+            }
             "--tickets" => cfg.tickets = val.parse().expect("--tickets <n>"),
             "--skill" => cfg.bot_skill = val.parse().expect("--skill <f32>"),
             "--bench" => bench = Some(val.parse().expect("--bench <simulated seconds>")),
             "-h" | "--help" => {
-                println!("ferrite-server [--port 27500] [--map NAME|N] [--maps] [--bots 12] [--seed N] [--tickets 250] [--skill 1.0] [--bench SECS]");
+                println!("ferrite-server [--port 27500] [--map NAME|N] [--maps] [--rotation all|off|a,b,c] [--lobby 30] [--name NAME] [--no-discovery] [--bots 12] [--seed N] [--tickets 250] [--skill 1.0] [--bench SECS]");
                 return;
             }
             other => panic!("unknown argument {other}"),
         }
         i += 2;
     }
+    // A dedicated server plays every map in turn unless told otherwise.
+    if cfg.rotation.is_empty() {
+        cfg.rotation = (0..ferrite_shared::map::MAPS.len() as u8).collect();
+    } else if cfg.rotation == [u8::MAX] {
+        cfg.rotation.clear();
+    } else if !args.iter().any(|a| a == "--map") {
+        cfg.map = cfg.rotation[0];
+    }
     if let Some(secs) = bench {
+        cfg.lobby_secs = 0;
         // Headless soak: simulate as fast as possible and report cost.
         let mut g = Game::new(cfg);
         println!("map: {}", ferrite_shared::map::map_def(g.world.map).name);

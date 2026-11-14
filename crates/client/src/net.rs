@@ -143,14 +143,15 @@ impl Net {
         now * 60.0 + self.clock_offset - INTERP_TICKS
     }
 
-    pub fn send_cmds(&mut self, cmds: &[Cmd], kit: u8, now: f64) {
+    pub fn send_cmds(&mut self, cmds: &[Cmd], loadout: (u8, u8, u8), now: f64) {
+        let (kit, prim, side) = loadout;
         if let Some(c) = cmds.last() {
             self.sent.push_back((c.seq, now));
             if self.sent.len() > 240 {
                 self.sent.pop_front();
             }
         }
-        let _ = self.sock.send(&encode(&C2S::Cmds { cmds: cmds.to_vec(), ack_feed: self.ack_feed, kit }));
+        let _ = self.sock.send(&encode(&C2S::Cmds { cmds: cmds.to_vec(), ack_feed: self.ack_feed, kit, prim, side }));
     }
 
     /// Ask the server to move us to `team`. Sent a few times because the
@@ -159,6 +160,10 @@ impl Net {
         for _ in 0..3 {
             let _ = self.sock.send(&encode(&C2S::Team(team)));
         }
+    }
+
+    pub fn send_lobby(&self, vote: u8, ready: bool) {
+        let _ = self.sock.send(&encode(&C2S::Lobby { vote, ready }));
     }
 
     pub fn bye(&self) {

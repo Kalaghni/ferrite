@@ -9,9 +9,43 @@ use crate::sim::PState;
 use bincode::Options;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-pub const PROTO: u32 = 8;
+pub const PROTO: u32 = 10;
 pub const DEFAULT_PORT: u16 = 27500;
 pub const SPECTATOR_ID: u8 = 255;
+
+/// LAN discovery. A client sends `DISCOVERY_QUERY` to this multicast group
+/// (and to the broadcast address, for networks that drop multicast); every
+/// server answers the sender directly with `DISCOVERY_REPLY` + `ServerInfo`.
+pub const DISCOVERY_PORT: u16 = 27499;
+pub const DISCOVERY_GROUP: [u8; 4] = [239, 255, 70, 82];
+pub const DISCOVERY_QUERY: &[u8] = b"FERRITE?";
+pub const DISCOVERY_REPLY: &[u8] = b"FERRITE!";
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ServerInfo {
+    pub proto: u32,
+    /// Random per server run: one server reached over two networks answers
+    /// twice, and this is how the list knows it is the same one.
+    pub id: u32,
+    /// UDP port the game itself is on (the address is the reply's source).
+    pub port: u16,
+    pub name: String,
+    pub map: u8,
+    pub humans: u8,
+    pub slots: u8,
+    pub phase: u8,
+}
+
+pub fn encode_info(i: &ServerInfo) -> Vec<u8> {
+    let mut v = DISCOVERY_REPLY.to_vec();
+    v.extend(encode(i));
+    v
+}
+
+pub fn decode_info(b: &[u8]) -> Option<ServerInfo> {
+    let i: ServerInfo = decode(b.strip_prefix(DISCOVERY_REPLY)?)?;
+    (i.name.len() <= 40).then_some(i)
+}
 
 pub mod btn {
     pub const JUMP: u8 = 1;
@@ -60,10 +94,13 @@ pub struct Cmd {
 pub enum C2S {
     /// `team`: 0 or 1 to ask for a side, anything else for auto-balance.
     Hello { proto: u32, name: String, spectator: bool, team: u8 },
-    Cmds { cmds: Vec<Cmd>, ack_feed: u32, kit: u8 },
+    /// `kit`, `prim`, `side`: the loadout wanted at the next deploy.
+    Cmds { cmds: Vec<Cmd>, ack_feed: u32, kit: u8, prim: u8, side: u8 },
     Bye,
     /// Ask to change sides mid-match.
     Team(u8),
+    /// In the lobby: the map voted for (255 = no vote) and whether ready.
+    Lobby { vote: u8, ready: bool },
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -159,10 +196,17 @@ pub struct Snapshot {
     pub grenades: Vec<NetGrenade>,
     pub fx: Vec<Fx>,
     pub feed: Vec<(u32, Feed)>,
-    /// 0 = playing, 1 = round over.
+    /// 0 = playing, 1 = round over, 2 = lobby (choose map and loadout).
+    /// In the lobby `phase_secs` counts down to the start, or is 0 while
+    /// the server waits for a player; `next_map` is the map that will be
+    /// played and `votes` the votes per map.
     pub phase: u8,
     pub winner: u8,
     pub phase_secs: f32,
+    /// Map being played, and the one the rotation moves to next round.
+    pub map: u8,
+    pub next_map: u8,
+    pub votes: [u8; 8],
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -171,10 +215,14 @@ pub struct RosterEntry {
     pub name: String,
     pub team: u8,
     pub kit: u8,
+    pub prim: u8,
+    pub side: u8,
     pub kills: u16,
     pub deaths: u16,
     pub score: u32,
     pub bot: bool,
+    /// Ready in the lobby.
+    pub ready: bool,
 }
 
 fn opts() -> impl Options {

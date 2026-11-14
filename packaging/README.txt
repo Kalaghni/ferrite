@@ -16,7 +16,15 @@ PLAY
 RUN A DEDICATED SERVER
   Run start-server.bat (Windows) or ./start-server.sh (Linux, macOS).
   It listens on UDP port 27500 and logs a status line every 10 seconds.
-  Options: --port N  --map NAME  --bots N  --skill X  --tickets N  --seed N
+  Options: --port N  --map NAME  --rotation all|off|a,b,c  --lobby SECS
+           --bots N  --skill X  --tickets N  --seed N
+  Games on your network show up on the home screen by themselves. --name NAME
+  sets what a dedicated server is called there; --no-discovery hides it.
+  (Discovery uses UDP 27499; the game itself uses UDP 27500.)
+  Every round starts in a lobby (map vote, loadouts, ready-up). --lobby 0
+  turns it off.
+  The server moves to the next map after every round. --rotation quarry,depot
+  plays only those; --rotation off stays on one map.
   Maps: foundry valley, quarry, ridgeline, depot (--maps lists them). A name
   can be shortened: --map ridge. Players get the map from the server.
   Players join by typing this machine's address into the home screen.
@@ -37,7 +45,7 @@ CONTROLS
   Crouch while sprinting to slide. Hold Space while pushing into a ledge to
   climb it. Long bursts open your spread; fire short ones at range.
   LMB fire       RMB aim          R reload        G grenade
-  Q/F/wheel swap to sidearm       T change sight  1/2/3 pick kit
+  Q/F/wheel swap to sidearm       T change sight  L loadout
   M change team  Tab scoreboard   F3 net stats    -/= mouse sensitivity
   Esc release mouse, then Q to leave the match
 

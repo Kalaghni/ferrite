@@ -21,15 +21,31 @@ pub struct Config {
     pub seed: u64,
     /// Index into `ferrite_shared::map::MAPS`.
     pub map: u8,
+    /// Maps played in turn, one per round, starting after `map`. Fewer
+    /// than two entries means the map never changes.
+    pub rotation: Vec<u8>,
+    /// Length of the lobby before each round, in seconds. 0 = no lobby:
+    /// rounds follow each other directly.
+    pub lobby_secs: u32,
     pub tickets: i32,
     pub bot_skill: f32,
     pub log: bool,
+    /// Name shown to players looking for games on their network.
+    pub name: String,
+    /// Answer LAN discovery queries.
+    pub discover: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { port: DEFAULT_PORT, per_team: 12, seed: 0xFE221, map: 0, tickets: 250, bot_skill: 1.0, log: false }
+        Config { port: DEFAULT_PORT, per_team: 12, seed: 0xFE221, map: 0, rotation: Vec::new(), lobby_secs: 0, tickets: 250, bot_skill: 1.0, log: false, name: host_name(), discover: true }
     }
+}
+
+/// This machine's name, for the server list.
+pub fn host_name() -> String {
+    let n = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_default();
+    if n.trim().is_empty() { "FERRITE server".to_string() } else { n.trim().chars().take(24).collect() }
 }
 
 const HIST: usize = 64;
@@ -46,6 +62,11 @@ pub struct Player {
     pub name: String,
     pub team: u8,
     pub next_kit: u8,
+    pub next_prim: u8,
+    pub next_side: u8,
+    /// Lobby: map voted for (255 = none) and ready flag.
+    pub vote: u8,
+    pub ready: bool,
     pub st: PState,
     pub yaw: f32,
     pub pitch: f32,
@@ -111,7 +132,12 @@ pub struct Game {
     crate_hp: Vec<f32>,
     pub grenades: Vec<Grenade>,
     next_gren: u16,
+    /// Effects, each with a sequence number so every client gets each one
+    /// exactly once, whenever in the tick it happened.
     pub fx: Vec<(u32, Fx)>,
+    pub fx_seq: u32,
+    /// Map the lobby falls back to when nobody votes.
+    lobby_map: u8,
     pub feed: Vec<Feed>,
     pub phase: u8,
     pub winner: u8,
@@ -145,6 +171,8 @@ impl Game {
             grenades: Vec::new(),
             next_gren: 0,
             fx: Vec::new(),
+            fx_seq: 0,
+            lobby_map: cfg.map,
             feed: Vec::new(),
             phase: 0,
             winner: NEUTRAL,
@@ -163,6 +191,10 @@ impl Game {
                 name: String::new(),
                 team,
                 next_kit: 0,
+                next_prim: 0,
+                next_side: sim::SIDEARM_ID,
+                vote: 255,
+                ready: false,
                 st: PState::spawn(Vec3::ZERO, 0),
                 yaw: 0.0,
                 pitch: 0.0,
@@ -191,8 +223,13 @@ impl Game {
             g.make_bot(&mut p);
             g.players.push(p);
         }
-        for i in 0..n {
-            g.spawn_player(i);
+        if g.cfg.lobby_secs > 0 {
+            // Start in the lobby and wait there for the first player.
+            g.phase = 2;
+        } else {
+            for i in 0..n {
+                g.spawn_player(i);
+            }
         }
         g
     }
@@ -201,6 +238,12 @@ impl Game {
         let i = p.id as usize;
         p.name = BOT_NAMES[i % BOT_NAMES.len()].to_string();
         p.next_kit = [0, 0, 1, 2][(i / 2) % 4];
+        // Bots carry a mix of what their class allows, weighted to the default.
+        let prims = sim::kit(p.next_kit).prims;
+        p.next_prim = if self.rng.below(5) < 2 { prims[0] } else { prims[self.rng.below(prims.len() as u32) as usize] };
+        p.next_side = if self.rng.below(2) == 0 { sim::SIDEARM_ID } else { sim::SIDEARMS[self.rng.below(sim::SIDEARMS.len() as u32) as usize] };
+        p.vote = 255;
+        p.ready = false;
         let skill = self.cfg.bot_skill * self.rng.range(0.7, 1.15);
         p.bot = Some(Bot::new(self.cfg.seed ^ (i as u64 * 977 + 13), skill, i));
         p.kills = 0;
@@ -241,6 +284,10 @@ impl Game {
         p.last_seq = 0;
         p.last_cmd_tick = t;
         p.next_kit = 0;
+        p.next_prim = 0;
+        p.next_side = sim::SIDEARM_ID;
+        p.vote = 255;
+        p.ready = false;
         p.alive = false;
         p.respawn_at = t + 20;
         Some(slot)
@@ -293,7 +340,8 @@ impl Game {
     }
 
     fn push_fx(&mut self, fx: Fx) {
-        self.fx.push((self.tick, fx));
+        self.fx_seq += 1;
+        self.fx.push((self.fx_seq, fx));
     }
 
     fn pos_at(&self, j: usize, tick_f: f64) -> Vec3 {
@@ -404,7 +452,7 @@ impl Game {
                 if head {
                     dmg *= wd.head_mult;
                 }
-                if kit == 2 {
+                if wd.arch == 2 {
                     self.players[j].marked_until = t + 6 * TICK_HZ;
                 }
                 self.damage(j, Some(i), dmg, head, kit);
@@ -454,6 +502,19 @@ impl Game {
         let kill = p.hp <= 0.0;
         if let (Some(b), Some(a)) = (p.bot.as_mut(), attacker) {
             b.alert(a, t);
+        }
+        // Squadmates close by notice where the fire is coming from.
+        if let Some(a) = attacker {
+            let (vp, vteam) = (self.players[j].st.pos, self.players[j].team);
+            if self.players[a].team != vteam {
+                for q in self.players.iter_mut().filter(|q| q.alive && q.team == vteam) {
+                    if (q.st.pos - vp).length() < 18.0 {
+                        if let Some(b) = q.bot.as_mut() {
+                            b.alert_soft(a, t);
+                        }
+                    }
+                }
+            }
         }
         if let Some(a) = attacker {
             self.push_fx(Fx::Hit { attacker: a as u8, victim: j as u8, dmg: dmg.min(255.0) as u8, head, kill });
@@ -537,7 +598,7 @@ impl Game {
         }
         let front = self.world.points[self.orders[team as usize].min(NUM_POINTS - 1)];
         let p = &mut self.players[i];
-        p.st = PState::spawn(pos, p.next_kit);
+        p.st = PState::spawn_with(pos, p.next_kit, p.next_prim, p.next_side);
         p.hp = sim::kit(p.next_kit).hp;
         p.alive = true;
         p.protect_until = t + 2 * TICK_HZ;
@@ -706,7 +767,96 @@ impl Game {
         }
     }
 
+    /// The map the next round will be played on.
+    pub fn next_map(&self) -> u8 {
+        let r = &self.cfg.rotation;
+        if r.len() < 2 {
+            return self.world.map;
+        }
+        match r.iter().position(|&m| m == self.world.map) {
+            Some(k) => r[(k + 1) % r.len()],
+            None => r[0],
+        }
+    }
+
+    pub fn humans(&self) -> usize {
+        self.players.iter().filter(|p| p.bot.is_none()).count()
+    }
+
+    /// Votes per map from the players in the lobby.
+    pub fn votes(&self) -> [u8; 8] {
+        let mut v = [0u8; 8];
+        for p in self.players.iter().filter(|p| p.bot.is_none()) {
+            if (p.vote as usize) < ferrite_shared::map::MAPS.len() {
+                v[p.vote as usize] += 1;
+            }
+        }
+        v
+    }
+
+    /// The map the lobby will start: most votes, the rotation's choice
+    /// when nobody voted or the vote is tied with it.
+    pub fn lobby_choice(&self) -> u8 {
+        let v = self.votes();
+        let best = *v.iter().max().unwrap_or(&0);
+        if best == 0 || v[self.lobby_map as usize % 8] == best {
+            return self.lobby_map;
+        }
+        v.iter().position(|&n| n == best).unwrap_or(0) as u8
+    }
+
+    fn enter_lobby(&mut self) {
+        self.lobby_map = if self.stats.rounds == 0 { self.world.map } else { self.next_map() };
+        self.phase = 2;
+        self.phase_until = 0;
+        self.winner = NEUTRAL;
+        self.grenades.clear();
+        self.points = initial_points();
+        self.tickets = [self.cfg.tickets; 2];
+        for p in self.players.iter_mut() {
+            p.alive = false;
+            p.vote = 255;
+            p.ready = false;
+        }
+    }
+
+    /// Lobby: wait for a player, count down (straight to three seconds
+    /// once every player is ready), then start on the chosen map.
+    fn tick_lobby(&mut self) {
+        let t = self.tick;
+        if self.humans() == 0 {
+            self.phase_until = 0;
+            return;
+        }
+        if self.phase_until == 0 {
+            self.phase_until = t + self.cfg.lobby_secs * TICK_HZ;
+        }
+        let all_ready = self.players.iter().filter(|p| p.bot.is_none()).all(|p| p.ready);
+        if all_ready && self.phase_until > t + 3 * TICK_HZ {
+            self.phase_until = t + 3 * TICK_HZ;
+        }
+        if t >= self.phase_until {
+            let map = self.lobby_choice();
+            self.start_round(map);
+        }
+    }
+
     fn reset_round(&mut self) {
+        let next = self.next_map();
+        self.start_round(next);
+    }
+
+    fn start_round(&mut self, next: u8) {
+        if next != self.world.map {
+            self.world = World::with_map(self.cfg.seed, next);
+            self.nav = Nav::build(&self.world);
+            self.fx.clear();
+            for p in self.players.iter_mut() {
+                p.hist = [Vec3::ZERO; HIST];
+                p.marked_until = 0;
+            }
+        }
+        self.orders = [1, 3];
         self.points = initial_points();
         self.tickets = [self.cfg.tickets; 2];
         self.dmask = 0;
@@ -733,6 +883,10 @@ impl Game {
         for p in self.players.iter_mut() {
             p.credits = (p.credits + 1.0).min(12.0);
             p.st.surge = t < p.surge_until;
+        }
+        if self.phase == 2 {
+            self.tick_lobby();
+            return;
         }
         for i in 0..self.players.len() {
             if let Some(mut bot) = self.players[i].bot.take() {
@@ -786,15 +940,21 @@ impl Game {
                 self.tickets[0] = self.tickets[0].max(0);
                 self.tickets[1] = self.tickets[1].max(0);
                 self.phase = 1;
-                self.phase_until = t + 12 * TICK_HZ;
+                self.phase_until = t + 10 * TICK_HZ;
                 self.stats.rounds += 1;
                 self.feed.push(Feed::MatchEnd { winner: self.winner });
             }
         } else if t >= self.phase_until {
-            self.reset_round();
+            if self.cfg.lobby_secs > 0 && self.humans() > 0 {
+                self.enter_lobby();
+            } else {
+                self.reset_round();
+            }
         }
-        let cutoff = t.saturating_sub(20);
-        self.fx.retain(|(ft, _)| *ft >= cutoff);
+        if self.fx.len() > 600 {
+            let cut = self.fx.len() - 400;
+            self.fx.drain(..cut);
+        }
     }
 
     pub fn snapshot(&self, me: Option<usize>, ack_feed: u32, fx_after: u32) -> Snapshot {
@@ -854,20 +1014,24 @@ impl Game {
         for (i, p) in self.points.iter().enumerate() {
             points[i] = PointNet { owner: p.owner, progress: (p.progress * 100.0) as i8, n: p.n };
         }
+        // Hit confirmations are private to the two players involved, and
+        // they go in first: in a big firefight the tracers alone would fill
+        // the packet and the hit markers would be the ones left out.
+        let m = me.map_or(SPECTATOR_ID, |m| m as u8);
         let mut fx: Vec<Fx> = Vec::new();
-        for (ft, f) in &self.fx {
-            if *ft <= fx_after {
-                continue;
-            }
-            // Hit confirmations are private to the two players involved.
-            if let Fx::Hit { attacker, victim, .. } = f {
-                let m = me.map_or(SPECTATOR_ID, |m| m as u8);
-                if *attacker != m && *victim != m {
+        for pass in 0..2 {
+            for (ft, f) in &self.fx {
+                if *ft <= fx_after {
                     continue;
                 }
-            }
-            if fx.len() < 56 {
-                fx.push(*f);
+                let mine = matches!(f, Fx::Hit { attacker, victim, .. } if *attacker == m || *victim == m);
+                let other_hit = matches!(f, Fx::Hit { .. }) && !mine;
+                if other_hit || mine != (pass == 0) {
+                    continue;
+                }
+                if fx.len() < 56 {
+                    fx.push(*f);
+                }
             }
         }
         let feed = self
@@ -910,6 +1074,9 @@ impl Game {
             phase: self.phase,
             winner: self.winner,
             phase_secs: self.phase_until.saturating_sub(t) as f32 / TICK_HZ as f32,
+            map: self.world.map,
+            next_map: if self.phase == 2 { self.lobby_choice() } else { self.next_map() },
+            votes: self.votes(),
         }
     }
 
@@ -921,10 +1088,13 @@ impl Game {
                 name: p.name.clone(),
                 team: p.team,
                 kit: if p.alive { p.st.kit } else { p.next_kit },
+                prim: p.st.prim,
+                side: p.st.side,
                 kills: p.kills,
                 deaths: p.deaths,
                 score: p.score,
                 bot: p.bot.is_some(),
+                ready: p.ready,
             })
             .collect()
     }
@@ -936,6 +1106,10 @@ fn dummy() -> Player {
         name: String::new(),
         team: 0,
         next_kit: 0,
+        next_prim: 0,
+        next_side: sim::SIDEARM_ID,
+                vote: 255,
+                ready: false,
         st: PState::spawn(Vec3::ZERO, 0),
         yaw: 0.0,
         pitch: 0.0,
