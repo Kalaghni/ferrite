@@ -367,16 +367,21 @@ fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
         }
         draw_rectangle_lines(x, y, cw, ch, if next { 3.0 } else { 2.0 }, if next { col(WHITE, 0.95) } else if over { Color::new(0.412, 0.678, 1.0, 1.0) } else { Color::new(0.706, 0.761, 0.882, 0.38) });
         draw_rectangle(x + 12.0, y + ch - 6.0, cw - 24.0, 2.0, col(if mine { tc } else { [0.412, 0.678, 1.0] }, 0.8));
-        text(&def.name.to_uppercase(), x + 12.0, y + 27.0, 22.0, col(WHITE, 1.0));
+        // Keep all map names inside their cards as the catalogue grows.
+        let name_size = (22.0 * (cw - 24.0) / crate::ui::width(def.name, 22.0).max(1.0)).min(22.0);
+        text(def.name, x + 12.0, y + 27.0, name_size, col(WHITE, 1.0));
         let v = snap.votes[k % 8];
         text(&format!("{} vote{}", v, if v == 1 { "" } else { "s" }), x + 12.0, y + 46.0, 16.0, col(WHITE, 0.75));
         let tag = match (next, mine) {
+            (true, true) if cw < 230.0 => "VOTED / NEXT",
+            (true, false) if cw < 230.0 => "NEXT MAP",
             (true, true) => "YOUR VOTE - WILL BE PLAYED",
             (true, false) => "WILL BE PLAYED",
             (false, true) => "YOUR VOTE",
             _ => "",
         };
-        text(tag, x + 12.0, y + 64.0, 14.0, col(WHITE, 0.9));
+        let tag_size = (14.0 * (cw - 24.0) / crate::ui::width(tag, 14.0).max(1.0)).min(14.0);
+        text(tag, x + 12.0, y + 64.0, tag_size, col(WHITE, 0.9));
     }
     if !app.spectator {
         let over = mx >= rb.0 && mx < rb.0 + rb.2 && my >= rb.1 && my < rb.1 + rb.3;
@@ -940,11 +945,11 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
                 _ => {
                     draw_line(cx, cy, cx - 9.0, cy + 13.0, 2.5, red);
                     draw_line(cx, cy, cx + 9.0, cy + 13.0, 2.5, red);
-                    for (i, wd) in [7.0f32, 5.0, 3.5].iter().enumerate() {
-                        let y = cy + 24.0 + i as f32 * 12.0;
+                    for (i, wd) in [6.0f32, 4.5, 3.0].iter().enumerate() {
+                        let y = cy + 19.0 + i as f32 * 5.0;
                         draw_line(cx - wd, y, cx + wd, y, 1.5, col(DARK, 0.85 * a));
                     }
-                    draw_line(cx, cy + 16.0, cx, cy + 52.0, 1.5, col(DARK, 0.85 * a));
+                    draw_line(cx, cy + 16.0, cx, cy + 30.0, 1.5, col(DARK, 0.85 * a));
                 }
             }
         }

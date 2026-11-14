@@ -215,6 +215,8 @@ fn udp_round_trip() {
     let (mut asked_switch, mut roster_team) = (false, first_team);
     let (mut parts, mut got_total) = (Vec::new(), 0usize);
     let (mut ack_chat, mut heard, mut icon_listed, mut icon_back) = (0u32, Vec::new(), false, false);
+    let requested_finishes = [1, 6];
+    let (mut saw_finish_loadout, mut saw_finishes) = (false, false);
     sock.set_read_timeout(Some(Duration::from_millis(4))).unwrap();
     while start.elapsed() < Duration::from_millis(1500) {
         if last_send.elapsed() >= Duration::from_micros(16_666) {
@@ -222,7 +224,7 @@ fn udp_round_trip() {
             seq += 1;
             history.push(Cmd { seq, mz: 1, yaw: 1.0, ..Default::default() });
             let recent: Vec<Cmd> = history.iter().rev().take(3).rev().copied().collect();
-            sock.send(&encode(&C2S::Cmds { cmds: recent, ack_feed: 0, kit: 1, prim: 1, side: 4, skin: 2, wskin: [0, 0], ack_chat })).unwrap();
+            sock.send(&encode(&C2S::Cmds { cmds: recent, ack_feed: 0, kit: 1, prim: 1, side: 4, skin: 2, wskin: requested_finishes, ack_chat })).unwrap();
             // Said three times, heard once.
             if seq == 20 || seq == 21 || seq == 22 {
                 sock.send(&encode(&C2S::Chat { id: 1, team: false, text: "hello  there\u{7}".into() })).unwrap();
@@ -242,6 +244,7 @@ fn udp_round_trip() {
                     max_ack = max_ack.max(s.ack_seq);
                     if let Some(me) = s.me {
                         saw_self |= me.alive;
+                        saw_finish_loadout |= me.alive && me.st.prim == 1 && me.st.side == 4;
                     }
                 }
                 Some(S2C::Roster { at, total, entries }) => {
@@ -259,6 +262,7 @@ fn udp_round_trip() {
                         in_roster |= r.iter().any(|e| e.id == id && e.name == "net-test" && !e.bot);
                         if let Some(e) = r.iter().find(|e| e.id == id) {
                             roster_team = e.team;
+                            saw_finishes |= e.prim == 1 && e.side == 4 && e.wskin == requested_finishes;
                         }
                     }
                 }
@@ -279,6 +283,7 @@ fn udp_round_trip() {
     assert!(snaps >= 30, "only {snaps} snapshots in 1.5 s (expected ~45)");
     assert!(max_ack + 12 >= seq, "server acked {max_ack} of {seq}");
     assert!(saw_self && in_roster);
+    assert!(saw_finish_loadout && saw_finishes, "issued weapons reach snapshots and non-factory finishes reach the roster");
     assert_eq!(got_total, 8, "the roster arrives whole, in parts");
     let said: Vec<_> = heard.iter().filter(|l| l.from == id).collect();
     assert_eq!(said.len(), 1, "{heard:?}");
@@ -772,7 +777,8 @@ fn servers_answer_discovery_queries() {
     assert_eq!(decode_info(b"nonsense"), None);
 
     let mut server = ferrite_server::spawn(Config { port: 0, per_team: 2, map: 1, name: "test box".into(), ..Default::default() }).expect("server");
-    let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let sock = UdpSocket::bind("0.0.0.0:0").unwrap();
+    sock.set_multicast_loop_v4(true).unwrap();
     sock.set_read_timeout(Some(Duration::from_millis(200))).unwrap();
     let mut found = None;
     let mut buf = [0u8; 512];
@@ -781,6 +787,9 @@ fn servers_answer_discovery_queries() {
         // next read fail at once, so pace the retries.)
         std::thread::sleep(Duration::from_millis(50));
         sock.send_to(DISCOVERY_QUERY, ("127.0.0.1", DISCOVERY_PORT)).unwrap();
+        // Windows may deliver unicast to only one socket sharing this
+        // port. Multicast also reaches our test server with a game open.
+        let _ = sock.send_to(DISCOVERY_QUERY, (std::net::Ipv4Addr::from(DISCOVERY_GROUP), DISCOVERY_PORT));
         // Other servers on this machine may answer too: look for ours.
         while let Ok((n, _)) = sock.recv_from(&mut buf) {
             if let Some(i) = decode_info(&buf[..n]) {
@@ -1009,12 +1018,15 @@ fn melee_hits_close_and_kills_from_behind() {
 }
 
 #[test]
-fn weapon_finishes_are_validated() {
+fn weapon_finishes_are_validated_and_replicated() {
     use ferrite_shared::sim::{fix_weapon_skin, weapon_skin, weapon_skins_for, WEAPONS, WEAPON_SKINS};
-    // The factory finish fits every weapon and is always first.
+    // Finish ids are stored in settings and sent over the network. Factory
+    // remains id zero; every existing gun offers all six new finishes.
+    let names: Vec<_> = WEAPON_SKINS.iter().map(|s| s.name).collect();
+    assert_eq!(names, ["FACTORY", "OXIDE", "ARCTIC", "WOODLAND", "MIDNIGHT", "HAZARD", "SANDSTORM"]);
     for wid in 0..WEAPONS.len() as u8 {
         let fits = weapon_skins_for(wid);
-        assert_eq!(fits[0], 0);
+        assert_eq!(fits, (0..WEAPON_SKINS.len() as u8).collect::<Vec<_>>());
         for s in 0..=255u8 {
             let fixed = fix_weapon_skin(wid, s);
             assert!(fits.contains(&fixed));
@@ -1023,16 +1035,61 @@ fn weapon_finishes_are_validated() {
     }
     assert!(WEAPON_SKINS[0].weapons.is_empty() && WEAPON_SKINS[0].body.is_none());
     assert_eq!(weapon_skin(200).name, WEAPON_SKINS[200 % WEAPON_SKINS.len()].name);
-    // What a client asks for is checked when the weapons are issued.
-    let mut g = Game::new(cfg(2));
+
+    let mut g = Game::new(Config { max_bots: 0, ..cfg(2) });
     let me = g.join("tester").unwrap();
-    g.players[me].next_wskin = [200, 201];
-    for _ in 0..120 {
-        g.tick();
-    }
+    g.players[me].next_wskin = [1, 6];
+    for _ in 0..40 { g.tick(); }
     assert!(g.players[me].alive);
-    let e = &g.roster()[me];
-    assert_eq!(e.wskin, [fix_weapon_skin(e.prim, 200), fix_weapon_skin(e.side, 201)]);
+    assert_eq!(g.players[me].wskin, [1, 6]);
+    // Choosing a finish while alive affects the next deploy, preserving
+    // the currently issued loadout until then.
+    g.players[me].next_wskin = [2, 5];
+    g.tick();
+    assert_eq!(g.players[me].wskin, [1, 6]);
+
+    // Exercise every finish on both primary and sidearm, across classes
+    // and weapon families. The periodic roster carries their finish ids;
+    // the movement snapshot carries the corresponding issued weapons.
+    for (skin, kit, prim, side) in [(1, 0, 0, 4), (2, 1, 1, 10), (3, 2, 2, 11), (4, 0, 6, 16), (5, 1, 14, 4), (6, 2, 15, 10)] {
+        let wants = [skin, 7 - skin];
+        let p = &mut g.players[me];
+        (p.next_kit, p.next_prim, p.next_side) = (kit, prim, side);
+        p.next_wskin = wants;
+        p.alive = false;
+        p.hp = 0.0;
+        p.respawn_at = g.tick;
+        g.tick();
+        assert!(g.players[me].alive);
+        assert_eq!(g.players[me].wskin, wants);
+        let snap = g.snapshot(Some(me), 0, g.tick);
+        let state = snap.me.unwrap();
+        assert_eq!((state.st.kit, state.st.prim, state.st.side), (kit, prim, side));
+        let entries = g.roster();
+        let packet = encode(&S2C::Roster { at: 0, total: entries.len() as u8, entries });
+        let Some(S2C::Roster { entries, .. }) = decode::<S2C>(&packet) else { panic!("roster did not round-trip") };
+        let e = entries.iter().find(|e| e.id as usize == me).unwrap();
+        assert_eq!((e.prim, e.side, e.wskin), (prim, side, wants));
+    }
+    // Malformed finish ids are rejected when weapons are issued, without
+    // changing either the class or the underlying weapon selection.
+    let p = &mut g.players[me];
+    p.next_wskin = [200, 201];
+    p.alive = false;
+    p.hp = 0.0;
+    p.respawn_at = g.tick;
+    g.tick();
+    assert_eq!(g.players[me].wskin, [0, 0]);
+
+    let bots = Game::new(cfg(12));
+    let mut finishes = std::collections::HashSet::new();
+    for e in bots.roster() {
+        for (wid, finish) in [(e.prim, e.wskin[0]), (e.side, e.wskin[1])] {
+            assert_eq!(fix_weapon_skin(wid, finish), finish);
+            finishes.insert(finish);
+        }
+    }
+    assert!(finishes.len() > 1 && finishes.iter().any(|&s| s != 0), "bots wear a valid mix of finishes");
 }
 
 #[test]

@@ -35,6 +35,10 @@ pub struct Mesh {
 }
 
 impl Mesh {
+    pub fn triangles(&self) -> usize {
+        (self.i.len() + self.chunks.iter().map(|(_, i)| i.len()).sum::<usize>()) / 3
+    }
+
     pub fn clear(&mut self) {
         self.v.clear();
         self.i.clear();
@@ -303,33 +307,96 @@ void main() {
 }"#;
 
 struct DynBuf {
+    pages: Vec<DynPage>,
+    cap_hint: usize,
+    tex: TextureId,
+    n: i32,
+}
+
+struct DynPage {
     b: Bindings,
     cap_v: usize,
     cap_i: usize,
     n: i32,
 }
 
-impl DynBuf {
-    fn new(ctx: &mut dyn RenderingBackend, cap_v: usize, tex: TextureId) -> DynBuf {
+impl DynPage {
+    fn new(ctx: &mut dyn RenderingBackend, cap_v: usize, tex: TextureId) -> Self {
         let cap_i = cap_v * 3 / 2 + 6;
         let vb = ctx.new_buffer(BufferType::VertexBuffer, BufferUsage::Stream, BufferSource::empty::<Vertex>(cap_v));
         let ib = ctx.new_buffer(BufferType::IndexBuffer, BufferUsage::Stream, BufferSource::empty::<u16>(cap_i));
-        DynBuf { b: Bindings { vertex_buffers: vec![vb], index_buffer: ib, images: vec![tex] }, cap_v, cap_i, n: 0 }
+        Self { b: Bindings { vertex_buffers: vec![vb], index_buffer: ib, images: vec![tex] }, cap_v, cap_i, n: 0 }
+    }
+}
+
+/// Mesh pages retain local u16 indices. Submit each page independently so
+/// a full squad's detailed equipment cannot silently drop other soldiers.
+fn mesh_pages(m: &Mesh) -> impl Iterator<Item = (&[Vertex], &[u16])> {
+    m.chunks.iter().map(|(v, i)| (v.as_slice(), i.as_slice())).chain(std::iter::once((m.v.as_slice(), m.i.as_slice()))).filter(|(v, _)| !v.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_large_dynamic_mesh_keeps_every_page_and_the_tail() {
+        let mut mesh = Mesh::default();
+        // A detailed platoon exceeds the u16 page limit, with geometry
+        // remaining in the current page after the first two are sealed.
+        let quads = MAX_V / 2 + 17;
+        for k in 0..quads {
+            let a = Vec3::new(k as f32, 0.0, 0.0);
+            mesh.quad(a, a + Vec3::X, a + Vec3::X + Vec3::Y, a + Vec3::Y, rgb(0.5, 0.5, 0.5));
+        }
+        let pages: Vec<_> = mesh_pages(&mesh).collect();
+        assert!(pages.len() >= 3);
+        assert_eq!(pages.iter().map(|(v, _)| v.len()).sum::<usize>(), quads * 4);
+        assert_eq!(pages.iter().map(|(_, i)| i.len()).sum::<usize>(), quads * 6);
+        assert_eq!(mesh.triangles(), quads * 2);
+        for (v, i) in pages {
+            assert!(i.iter().all(|&n| (n as usize) < v.len()));
+        }
+        mesh.clear();
+        assert_eq!(mesh_pages(&mesh).count(), 0);
+    }
+}
+
+impl DynBuf {
+    fn new(ctx: &mut dyn RenderingBackend, cap_v: usize, tex: TextureId) -> Self {
+        Self { pages: vec![DynPage::new(ctx, cap_v, tex)], cap_hint: cap_v, tex, n: 0 }
     }
 
     fn upload(&mut self, ctx: &mut dyn RenderingBackend, m: &Mesh) {
         self.n = 0;
-        // Dynamic geometry is expected to fit one chunk; overflow is dropped.
-        let (v, i) = match m.chunks.first() {
-            Some((v, i)) => (v.as_slice(), i.as_slice()),
-            None => (m.v.as_slice(), m.i.as_slice()),
-        };
-        if v.is_empty() || v.len() > self.cap_v || i.len() > self.cap_i {
-            return;
+        for page in &mut self.pages {
+            page.n = 0;
         }
-        ctx.buffer_update(self.b.vertex_buffers[0], BufferSource::slice(v));
-        ctx.buffer_update(self.b.index_buffer, BufferSource::slice(i));
-        self.n = i.len() as i32;
+        for (k, (v, i)) in mesh_pages(m).enumerate() {
+            let capacity = self.cap_hint.max(v.len());
+            if k == self.pages.len() {
+                self.pages.push(DynPage::new(ctx, capacity, self.tex));
+            }
+            let page = &mut self.pages[k];
+            if v.len() > page.cap_v || i.len() > page.cap_i {
+                for vb in &page.b.vertex_buffers {
+                    ctx.delete_buffer(*vb);
+                }
+                ctx.delete_buffer(page.b.index_buffer);
+                *page = DynPage::new(ctx, capacity.max(i.len() * 2 / 3 + 1), self.tex);
+            }
+            ctx.buffer_update(page.b.vertex_buffers[0], BufferSource::slice(v));
+            ctx.buffer_update(page.b.index_buffer, BufferSource::slice(i));
+            page.n = i.len() as i32;
+            self.n += page.n;
+        }
+    }
+
+    fn draw(&self, ctx: &mut dyn RenderingBackend) {
+        for page in self.pages.iter().filter(|p| p.n > 0) {
+            ctx.apply_bindings(&page.b);
+            ctx.draw(0, page.n, 1);
+        }
     }
 }
 
@@ -430,8 +497,8 @@ impl Gpu {
     /// Free the GPU objects of a finished match.
     pub fn destroy(self) {
         let ctx = unsafe { get_internal_gl() }.quad_context;
-        let dynamic = [&self.d_opaque.b, &self.d_alpha.b, &self.d_add.b, &self.d_view.b, &self.d_view_add.b, &self.d_overlay.b];
-        for b in self.statics.iter().chain(self.sky.iter()).map(|(b, _)| b).chain(dynamic) {
+        let dynamic = [&self.d_opaque, &self.d_alpha, &self.d_add, &self.d_view, &self.d_view_add, &self.d_overlay];
+        for b in self.statics.iter().chain(self.sky.iter()).map(|(b, _)| b).chain(dynamic.iter().flat_map(|d| d.pages.iter().map(|p| &p.b))) {
             for v in &b.vertex_buffers {
                 ctx.delete_buffer(*v);
             }
@@ -585,8 +652,7 @@ impl Gpu {
         ctx.apply_pipeline(&self.opaque);
         depth_mask(true);
         ctx.apply_uniforms(UniformsSource::table(&u));
-        ctx.apply_bindings(&self.d_overlay.b);
-        ctx.draw(0, self.d_overlay.n, 1);
+        self.d_overlay.draw(ctx);
         ctx.end_render_pass();
     }
 
@@ -636,8 +702,7 @@ impl Gpu {
                 ctx.draw(0, *n, 1);
             }
             if self.d_opaque.n > 0 {
-                ctx.apply_bindings(&self.d_opaque.b);
-                ctx.draw(0, self.d_opaque.n, 1);
+                self.d_opaque.draw(ctx);
             }
             ctx.end_render_pass();
         }
@@ -663,22 +728,19 @@ impl Gpu {
             ctx.draw(0, *n, 1);
         }
         if self.d_opaque.n > 0 {
-            ctx.apply_bindings(&self.d_opaque.b);
-            ctx.draw(0, self.d_opaque.n, 1);
+            self.d_opaque.draw(ctx);
         }
         if self.d_alpha.n > 0 {
             ctx.apply_pipeline(&self.alpha);
             depth_mask(false);
             ctx.apply_uniforms(UniformsSource::table(&uni(&f.vp, f.cam, f.sun, 1.0, 1.0, 1.0, true)));
-            ctx.apply_bindings(&self.d_alpha.b);
-            ctx.draw(0, self.d_alpha.n, 1);
+            self.d_alpha.draw(ctx);
         }
         if self.d_add.n > 0 {
             ctx.apply_pipeline(&self.add);
             depth_mask(false);
             ctx.apply_uniforms(UniformsSource::table(&uni(&f.vp, f.cam, f.sun, 2.0, 0.6, 1.0, true)));
-            ctx.apply_bindings(&self.d_add.b);
-            ctx.draw(0, self.d_add.n, 1);
+            self.d_add.draw(ctx);
         }
         depth_mask(true);
         ctx.end_render_pass();
@@ -689,14 +751,12 @@ impl Gpu {
             ctx.begin_default_pass(PassAction::Clear { color: None, depth: Some(1.0), stencil: None });
             ctx.apply_pipeline(&self.opaque);
             ctx.apply_uniforms(UniformsSource::table(&uni(&f.view_vp, Vec3::ZERO, f.view_sun, 0.0, 0.0, 0.3 + 0.7 * f.view_lit, false)));
-            ctx.apply_bindings(&self.d_view.b);
-            ctx.draw(0, self.d_view.n, 1);
+            self.d_view.draw(ctx);
             if self.d_view_add.n > 0 {
                 ctx.apply_pipeline(&self.add);
                 depth_mask(false);
                 ctx.apply_uniforms(UniformsSource::table(&uni(&f.view_vp, Vec3::ZERO, f.view_sun, 2.0, 0.0, 1.0, false)));
-                ctx.apply_bindings(&self.d_view_add.b);
-                ctx.draw(0, self.d_view_add.n, 1);
+                self.d_view_add.draw(ctx);
                 depth_mask(true);
             }
             ctx.end_render_pass();

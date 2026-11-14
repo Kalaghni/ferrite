@@ -448,6 +448,7 @@ pub struct App {
     rair: [f32; 64],
     rslide: [f32; 64],
     rreload: [f32; 64],
+    rreload_phase: [f32; 64],
     rfire: [f32; 64],
     rhurt: [f32; 64],
     rhp: [u8; 64],
@@ -589,6 +590,16 @@ impl App {
             team: self.my_team,
             kit: self.st.kit,
             gun: sim::weapon_def(self.st.prim).arch,
+            wid: sim::wid(&self.st),
+            wskin: self.wskin_of(self.my_id, self.st.slot == 1),
+            reload_phase: if self.st.reload > 0 {
+                let wd = sim::weapon_def(sim::wid(&self.st));
+                let total = if self.st.surge { wd.reload / 2 } else { wd.reload }.max(1);
+                (1.0 - self.st.reload as f32 / total as f32).clamp(0.0, 1.0)
+            } else {
+                -1.0
+            },
+            cycle: 0.0,
             skin: self.skin_choice,
             crouch: if self.st.crouch { 1.0 } else { 0.0 },
             ..Default::default()
@@ -1029,7 +1040,7 @@ async fn main() {
         let prefs = menu::Prefs { shadows: args.shadows, ..Default::default() };
         // Who we are comes from the settings file even on a direct launch.
         // A scripted run reads it but leaves the file alone.
-        let saved = menu::Menu::load(&args.name, args.port, args.per_team);
+        let mut saved = menu::Menu::load(&args.name, args.port, args.per_team);
         if !scripted {
             saved.persist();
         }
@@ -1039,6 +1050,10 @@ async fn main() {
         };
         let mut wskins = saved.wskins;
         let (_, msg) = play(&args, &args.name, args.team, choice, &mut sens, &mut loadout, &mut volume, &mut music, &art, &prefs, saved.uuid, &icon, &mut wskins).await;
+        if !scripted {
+            saved.wskins = wskins;
+            saved.persist();
+        }
         if let Some(m) = msg {
             eprintln!("{m}");
             for _ in 0..240 {
@@ -1247,6 +1262,7 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         rair: [0.0; 64],
         rslide: [0.0; 64],
         rreload: [0.0; 64],
+        rreload_phase: [-1.0; 64],
         rfire: [0.0; 64],
         rhurt: [0.0; 64],
         rhp: [0; 64],
@@ -1797,6 +1813,20 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
             let (crouch_t, air_t) = (on(r.flags & flag::CROUCH != 0), on(!grounded));
             let slide_t = on(r.flags2 & flag2::SLIDE != 0);
             let reload_t = on(r.flags2 & (flag2::RELOAD | flag2::DRAW) != 0);
+            let wid = app.wid_of(id, r.flags & flag::SIDEARM != 0);
+            let wd = sim::weapon_def(wid);
+            // The wire carries an action flag, so advance a local phase from
+            // its rising edge. Drawing a weapon only lowers the arms.
+            if r.flags2 & flag2::RELOAD != 0 {
+                let ticks = if r.flags & flag::SURGE != 0 { wd.reload / 2 } else { wd.reload }.max(1);
+                app.rreload_phase[i] = if app.rreload_phase[i] < 0.0 || !fresh_pos {
+                    0.0
+                } else {
+                    (app.rreload_phase[i] + dt * 60.0 / ticks as f32).min(1.0)
+                };
+            } else {
+                app.rreload_phase[i] = -1.0;
+            }
             if fresh_pos && dt > 0.0 {
                 // Velocity in the soldier's own frame drives the stride and lean.
                 let (f, rt_dir) = (sim::view_dir(r.yaw, 0.0), sim::right_of(r.yaw));
@@ -1859,6 +1889,13 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
                 team,
                 kit,
                 gun: sim::weapon_def(prim).arch,
+                wid,
+                reload_phase: app.rreload_phase[i],
+                cycle: if app.rfire[i] > 0.0 && wd.interval > 20 {
+                    (1.0 - (now - app.last_shot_snd[i]) as f32 * 60.0 / wd.interval as f32).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                },
                 skin: app.skin_of(id),
                 wskin: wskin[(r.flags & flag::SIDEARM != 0) as usize],
                 melee: app.rmelee[i],
@@ -2086,9 +2123,9 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
                     recoil: app.rfire[i],
                     bob: app.walk[i] * 1.35,
                     bob_amt: (speed / sim::WALK).min(1.5),
-                    reload: if kv.flags2 & flag2::RELOAD != 0 { 0.4 } else { -1.0 },
+                    reload: app.rreload_phase[i],
                     draw: if kv.flags2 & flag2::DRAW != 0 { 0.5 } else { 0.0 },
-                    cycle: 0.0,
+                    cycle: app.last_view[i].cycle,
                     sway: (0.0, 0.0),
                     flash: app.rfire[i],
                     sprint: ((speed - 6.4) / 1.6).clamp(0.0, 1.0) * (1.0 - app.rfire[i]),
@@ -2124,7 +2161,7 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
             view_add: if scoped { &empty } else { &vm_add },
         });
 
-        let frame_tris = gpu.tris + (opaque.i.len() + alpha.i.len() + add.i.len()) / 3;
+        let frame_tris = gpu.tris + opaque.triangles() + alpha.triangles() + add.triangles();
         peak_tris = peak_tris.max(frame_tris);
         // Weapon models go on top of the loadout panel.
         let icons = hud::draw(&app, &vp, now, scoped, frame_tris);

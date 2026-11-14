@@ -109,6 +109,15 @@ pub static KITS: [KitDef; 3] = [
     KitDef { name: "MARKSMAN", blurb: "90 HP - 1 frag - its rifles mark targets", prims: &[2, 9, 15, 5], hp: 90.0, grenades: 1, speed: 1.0 },
 ];
 
+/// Procedural paint treatment on a weapon's receiver and furniture.
+/// Geometry follows the weapon in first person, world and loadout views.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WeaponPattern {
+    Plain,
+    Digital,
+    Bands,
+}
+
 /// A finish for a weapon: colours that replace the gun's own. `None`
 /// leaves that part as the weapon comes. Purely cosmetic.
 pub struct WeaponSkinDef {
@@ -124,13 +133,94 @@ pub struct WeaponSkinDef {
     pub accent: Option<[f32; 3]>,
     /// Small dark parts: sights, trigger, magazine.
     pub detail: Option<[f32; 3]>,
+    /// Paint pattern on solid panels, clear of the bore and sight picture.
+    pub pattern: WeaponPattern,
+    /// Secondary paint colour; `None` leaves the finish unpatterned.
+    pub pattern_color: Option<[f32; 3]>,
 }
 
 /// Every finish. Index 0 is the gun as it comes and fits everything; add
 /// more below it and they appear in the loadout panel for the weapons
 /// they list. Ids travel over the wire, so only ever append.
-pub static WEAPON_SKINS: [WeaponSkinDef; 1] =
-    [WeaponSkinDef { name: "FACTORY", blurb: "As issued", weapons: &[], body: None, furniture: None, accent: None, detail: None }];
+pub static WEAPON_SKINS: [WeaponSkinDef; 7] = [
+    WeaponSkinDef {
+        name: "FACTORY",
+        blurb: "As issued",
+        weapons: &[],
+        body: None,
+        furniture: None,
+        accent: None,
+        detail: None,
+        pattern: WeaponPattern::Plain,
+        pattern_color: None,
+    },
+    WeaponSkinDef {
+        name: "OXIDE",
+        blurb: "Burnt copper bands over charcoal furniture",
+        weapons: &[],
+        body: Some([0.36, 0.16, 0.09]),
+        furniture: Some([0.13, 0.14, 0.15]),
+        accent: Some([0.83, 0.43, 0.20]),
+        detail: Some([0.08, 0.09, 0.10]),
+        pattern: WeaponPattern::Bands,
+        pattern_color: Some([0.62, 0.30, 0.14]),
+    },
+    WeaponSkinDef {
+        name: "ARCTIC",
+        blurb: "Ivory and slate digital camouflage",
+        weapons: &[],
+        body: Some([0.78, 0.81, 0.79]),
+        furniture: Some([0.25, 0.30, 0.33]),
+        accent: Some([0.43, 0.61, 0.66]),
+        detail: Some([0.10, 0.13, 0.15]),
+        pattern: WeaponPattern::Digital,
+        pattern_color: Some([0.40, 0.47, 0.49]),
+    },
+    WeaponSkinDef {
+        name: "WOODLAND",
+        blurb: "Olive and earth digital camouflage",
+        weapons: &[],
+        body: Some([0.27, 0.33, 0.20]),
+        furniture: Some([0.23, 0.20, 0.15]),
+        accent: Some([0.61, 0.55, 0.31]),
+        detail: Some([0.10, 0.12, 0.09]),
+        pattern: WeaponPattern::Digital,
+        pattern_color: Some([0.43, 0.40, 0.28]),
+    },
+    WeaponSkinDef {
+        name: "MIDNIGHT",
+        blurb: "Navy receiver with blue-grey bands",
+        weapons: &[],
+        body: Some([0.10, 0.16, 0.24]),
+        furniture: Some([0.09, 0.10, 0.13]),
+        accent: Some([0.30, 0.50, 0.64]),
+        detail: Some([0.055, 0.065, 0.085]),
+        pattern: WeaponPattern::Bands,
+        pattern_color: Some([0.19, 0.27, 0.36]),
+    },
+    WeaponSkinDef {
+        name: "HAZARD",
+        blurb: "Industrial ochre with black warning bands",
+        weapons: &[],
+        body: Some([0.65, 0.45, 0.08]),
+        furniture: Some([0.13, 0.14, 0.13]),
+        accent: Some([0.94, 0.72, 0.19]),
+        detail: Some([0.065, 0.07, 0.07]),
+        pattern: WeaponPattern::Bands,
+        pattern_color: Some([0.13, 0.15, 0.15]),
+    },
+    WeaponSkinDef {
+        name: "SANDSTORM",
+        blurb: "Sand and umber digital camouflage",
+        weapons: &[],
+        body: Some([0.65, 0.57, 0.42]),
+        furniture: Some([0.33, 0.28, 0.22]),
+        accent: Some([0.80, 0.73, 0.55]),
+        detail: Some([0.12, 0.11, 0.095]),
+        pattern: WeaponPattern::Digital,
+        pattern_color: Some([0.43, 0.36, 0.26]),
+    },
+];
 
 pub fn weapon_skin(id: u8) -> &'static WeaponSkinDef {
     &WEAPON_SKINS[id as usize % WEAPON_SKINS.len()]
@@ -1026,4 +1116,53 @@ pub fn ray_player(o: Vec3, d: Vec3, pos: Vec3, crouch: bool) -> Option<(f32, boo
         }
     }
     best
+}
+
+#[cfg(test)]
+mod finish_tests {
+    use super::*;
+
+    #[test]
+    fn finish_ids_and_palettes_are_valid() {
+        // These indices are persisted in settings and sent over the wire.
+        // New finishes may be appended; existing ids must stay stable.
+        let names = ["FACTORY", "OXIDE", "ARCTIC", "WOODLAND", "MIDNIGHT", "HAZARD", "SANDSTORM"];
+        assert!(WEAPON_SKINS.len() <= u8::MAX as usize);
+        for (id, name) in names.into_iter().enumerate() {
+            assert_eq!(WEAPON_SKINS[id].name, name);
+        }
+        let factory = weapon_skin(0);
+        assert_eq!(factory.pattern, WeaponPattern::Plain);
+        assert!([factory.body, factory.furniture, factory.accent, factory.detail, factory.pattern_color].iter().all(Option::is_none));
+        for (id, skin) in WEAPON_SKINS.iter().enumerate() {
+            assert!(!skin.name.is_empty() && !skin.blurb.is_empty());
+            assert!(!WEAPON_SKINS[..id].iter().any(|other| other.name == skin.name), "duplicate finish {}", skin.name);
+            for color in [skin.body, skin.furniture, skin.accent, skin.detail, skin.pattern_color].into_iter().flatten() {
+                assert!(color.into_iter().all(|v| v.is_finite() && (0.0..=1.0).contains(&v)), "{} has an invalid colour", skin.name);
+            }
+            assert_eq!(skin.pattern == WeaponPattern::Plain, skin.pattern_color.is_none(), "{} has incomplete pattern data", skin.name);
+            if let Some(detail) = skin.detail {
+                assert!(detail.into_iter().all(|v| v <= 0.25), "{} needs dark iron sights and small parts", skin.name);
+            }
+            if let Some(pattern) = skin.pattern_color {
+                let body = skin.body.expect("patterned finishes need a base coat");
+                let contrast: f32 = body.into_iter().zip(pattern).map(|(a, b)| (a - b).abs()).sum();
+                assert!(contrast >= 0.2, "{} needs a visible secondary paint colour", skin.name);
+            }
+        }
+    }
+
+    #[test]
+    fn every_carried_gun_accepts_all_shipped_finishes_and_rejects_unknown_ids() {
+        let ids: Vec<u8> = (0..WEAPON_SKINS.len() as u8).collect();
+        for wid in KITS.iter().flat_map(|kit| kit.prims.iter()).chain(SIDEARMS.iter()).copied() {
+            assert_eq!(weapon_skins_for(wid), ids, "{} is missing a shipped finish", weapon_def(wid).name);
+            for &id in &ids {
+                assert_eq!(fix_weapon_skin(wid, id), id);
+            }
+            for id in WEAPON_SKINS.len() as u16..=u8::MAX as u16 {
+                assert_eq!(fix_weapon_skin(wid, id as u8), 0, "unknown finish {id} must fall back to Factory");
+            }
+        }
+    }
 }
