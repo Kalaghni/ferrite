@@ -1,6 +1,8 @@
 # FERRITE 0.6
 
-![A COBALT soldier advancing on point B through the valley](docs/screenshot.png)
+![The FERRITE launcher: host, join or change settings](docs/launcher.png)
+
+![COBALT squadmates pushing toward point C in Foundry Valley](docs/screenshot.png)
 
 An original low-poly multiplayer FPS in Rust. Two teams of twelve, EMBER and COBALT, fight over five control points strung across a valley. Only the front line can be contested, so the battle has a shape: it masses, breaks, and moves.
 

@@ -3,7 +3,7 @@
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
 $tgz = Join-Path $env:TEMP 'ferrite-src.tgz'
-tar -czf $tgz --exclude=./target --exclude=./.git --exclude=./docs .
+tar -czf $tgz --exclude=./target --exclude=./.git --exclude=./docs --exclude=./resources --exclude=./verification --exclude=./dist .
 scp -q $tgz josh-docker:/root/ferrite-src.tgz
 Remove-Item $tgz
 # docker writes build progress to stderr; don't let PowerShell treat that as fatal
