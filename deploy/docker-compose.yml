@@ -11,7 +11,7 @@ services:
     restart: unless-stopped
     volumes:
       - ferrite-data:/data
-    command: ["--port", "27500", "--bots", "12", "--max-bots", "8", "--rotation", "slag-cathedral,relay", "--name", "josh-docker", "--stats", "/data/ferrite-stats.txt"]
+    command: ["--port", "27500", "--bots", "12", "--rotation", "slag-cathedral,relay", "--name", "josh-docker", "--stats", "/data/ferrite-stats.txt"]
 
 volumes:
   ferrite-data:
