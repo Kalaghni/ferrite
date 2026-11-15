@@ -1,4 +1,4 @@
-# FERRITE 0.8.1
+# FERRITE 0.9.0
 
 ![The FERRITE launcher: host, join or change settings](docs/launcher.png)
 
@@ -21,6 +21,16 @@ v0.6 adds a new launcher and lobby look (key art, palette and typeface from the 
 
 v0.7 adds text chat, a melee strike, a killcam, player icons, callsigns backed by a player id (your record follows you when you rename), a kill feed that puts people ahead of bots, the plumbing for weapon finishes, a Windows installer, and updates from inside the launcher.
 
+## v0.9
+
+- **Slag Cathedral.** A bell foundry on the scale of a cathedral: a vaulted crucible nave, furnace towers, raised side galleries and covered service flanks, with its own score. Two lava channels cross the casting floor and burn anyone who stands in them; bridges and a running jump get you over. Bell yards, lavafalls, a steam organ and leaded glass tell the story of a works still running with nobody on shift. See the [map guide](docs/maps/slag-cathedral.md).
+- **Relay, rebuilt.** The four antenna masts are now towers you can climb: walk the stair to a railed deck 6 or 9 metres up and hold the view over an objective. A listening dish stands in each half, and the station has its own evening light, far ranges and Morse beacons. See the [map guide](docs/maps/relay.md).
+- **Custom controls.** SETTINGS > CONTROLS has MOVE, FIGHT, UI and KIT pages for rebinding keyboard and mouse actions. Click an action to replace its bindings, or click + to add another key or mouse button. Mouse 4 and Mouse 5 are supported; conflicting assignments on other actions are rejected. Escape cancels, Delete / Backspace clears, and RESET KEYBINDS restores defaults. Bindings are saved between launches.
+- **Controllers.** SETTINGS > CONTROLS > PAD enables controllers and adjusts stick sensitivity, deadzone and Y inversion. Left stick moves, right stick looks, LT aims, RT fires; A jumps, B crouches, X reloads, Y swaps, LB throws a grenade, RB / right stick melees, and left stick toggles sprint. D-pad changes sight / loadout / team / stats; View / Back shows the scoreboard and Start pauses. In menus, move the cursor with a stick or D-pad, A selects and B goes back.
+- **Live finishes.** Weapon finishes repaint equipped guns immediately and replicate to other players. Finishes selected for a different pending gun apply when that gun is issued.
+
+The network protocol and two maps changed, so everyone in a match needs v0.9.0, including the dedicated server. See the [v0.9.0 release notes](docs/release-notes/v0.9.0.md). On Debian / Ubuntu, source builds also need `libudev-dev` and `pkg-config` for controller support.
+
 ## v0.8.1
 
 Fixes the repeated update prompt after installing v0.8.0: those packages were labelled 0.8.0 while their executables still reported 0.7.0. The compiled version is now 0.8.1, restarts target the installed executable, and release checks reject mismatched tags or binaries. Both executables support `--version` / `-V` for verification. See the [v0.8.1 release notes](docs/release-notes/v0.8.1.md).
@@ -30,7 +40,7 @@ Fixes the repeated update prompt after installing v0.8.0: those packages were la
 - **Two new maps.** Spillway brings drained waterworks, pump halls and a floodgate; Relay adds a highland communications station, antenna towers and rocky pine flanks. Six maps are now in the rotation. The original four retain their terrain, cover and objectives.
 - **New soldier shapes and animation.** All six looks have layered, faceted armor and team-marked field packs based on the launcher artwork, with articulated movement, planted feet and hands that follow the weapon's action.
 - **Cleaner guns and sights.** The existing guns have corrected barrels, receivers, magazines and reload actions, shared between first person, soldiers and loadout previews. Iron sights and optics have connected mounts, protected posts and clear, aligned aiming apertures.
-- **Six weapon finishes.** Oxide, Arctic, Woodland, Midnight, Hazard and Sandstorm add bands or digital camouflage to every gun. Click the large loadout models or press 7 / 8 to cycle finishes; the choice is saved per weapon and applies at the next deploy.
+- **Six weapon finishes.** Oxide, Arctic, Woodland, Midnight, Hazard and Sandstorm add bands or digital camouflage to every gun. Click the large loadout models or press 7 / 8 to cycle finishes; the choice is saved per weapon and appears immediately on the equipped gun.
 - **Rendering and finish fixes.** Larger model batches render in full, local corpses keep their weapon finish, and finish changes persist after direct host/join launches. Map voting fits all six choices.
 
 The weapon roster and gameplay statistics are unchanged. See the [full v0.8 release notes](docs/release-notes/v0.8.0.md) for fixes and verification details.
@@ -48,8 +58,8 @@ Either way the game keeps itself current: the launcher checks this repository's 
 **macOS:** the build is not signed with an Apple Developer ID, so a copy downloaded in a browser is blocked by Gatekeeper. The simplest way round it is to download from Terminal, which does not get flagged:
 
 ```sh
-curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.8.1/ferrite-v0.8.1-macos-universal.tar.gz | tar xz
-./ferrite-v0.8.1-macos-universal/ferrite
+curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.9.0/ferrite-v0.9.0-macos-universal.tar.gz | tar xz
+./ferrite-v0.9.0-macos-universal/ferrite
 ```
 
 If you already downloaded it in a browser, run `xattr -dr com.apple.quarantine .` in the unpacked folder once.
@@ -73,7 +83,7 @@ cargo run --release -p ferrite-server                         # dedicated server
 cargo run --release -p ferrite-server -- --map depot          # ...on another map
 ```
 
-Six maps ship with the game. The host picks one on the home screen (or with `--map NAME`); a dedicated server takes `--map quarry`, and `--maps` lists them. Maps rotate each round by default: `--rotation quarry,depot` plays just those, `--rotation off` (or `--no-rotate` when hosting from the client) stays on one. Clients are told the map when they join.
+Seven maps ship with the game, including Slag Cathedral. The host picks one on the home screen (or with `--map NAME`); a dedicated server takes `--map quarry`, and `--maps` lists them. Maps rotate each round by default: `--rotation quarry,depot` plays just those, `--rotation off` (or `--no-rotate` when hosting from the client) stays on one. Clients are told the map when they join.
 
 | Map | Character |
 |---|---|
@@ -82,7 +92,7 @@ Six maps ship with the game. The host picks one on the home screen (or with `--m
 | Ridgeline | Pine forest split by a rock-crowned ridge with three passes through it |
 | Depot | Flat container yard: close quarters and short sightlines |
 | Spillway | Drained waterworks: a sunken channel, pump halls, floodgate and outer service lanes |
-| Relay | Highland communications station: antenna towers, generator shelters and rocky pine flanks |
+| Relay | Highland listening station: four climbable towers with railed decks, two great dishes and rocky pine flanks |
 
 Spillway and Relay extend the rotation; the original four maps retain their terrain, cover and objective layouts. All six share the five-point front line and mirrored routes for both teams.
 
@@ -113,7 +123,7 @@ Useful flags: `--name`, `--team ember|cobalt|auto`, `--bots N` (players per team
 - **Callsigns and ids.** On first launch the game makes a random id and keeps it in `ferrite-client.txt`. Servers file your record under that id rather than your callsign, so renaming keeps your kills and someone borrowing your name does not get them. The id is sent to the servers you join and never shown to other players. It is an identity, not a login: there is still no authentication (see below). Records from before v0.7 were kept by name; the first player to come back under that name takes theirs over.
 - **Player icons.** A 16 x 16 icon sits beside your callsign in the kill feed, the scoreboard, chat, the lobby and above your head for teammates. Pick one of nine emblems in eight colours on the home screen, or use your own picture: drop a PNG on the launcher window (or leave one beside the game as `icon.png`) and it is cropped square and shrunk to fit. Other players' clients fetch it from the server the first time they see you.
 - **Kill feed.** A kill by or of a person is a full-size line with icons that stays eight seconds, and yours are outlined in gold; bots shooting bots are small, dim, and gone in four.
-- **Weapon finishes.** Factory plus six finishes fit every existing gun: Oxide, Arctic, Woodland, Midnight, Hazard and Sandstorm. Metal, furniture and small parts use coordinated palettes with bands or digital camouflage. Click the large primary or sidearm model in the loadout panel, or press 7 / 8, to cycle its finish; your choice is remembered separately for each weapon and applies at your next deploy. The server validates it, and the same finish appears in first person, on soldiers, in the killcam and in the loadout preview. Bots use a mix of finishes.
+- **Weapon finishes.** Factory plus six finishes fit every existing gun: Oxide, Arctic, Woodland, Midnight, Hazard and Sandstorm. Metal, furniture and small parts use coordinated palettes with bands or digital camouflage. Click the large primary or sidearm model in the loadout panel, or press 7 / 8, to cycle its finish; your choice is remembered separately for each weapon and appears immediately on the equipped gun. A finish for a different pending gun appears when that gun is deployed. The server validates it, and the same finish appears in first person, on soldiers, in the killcam and in the loadout preview. Bots use a mix of finishes.
 - **One front.** Points A-E must be taken in order from your side. You can only push a point that touches ground you hold, so both teams always know where the fight is - and flanking means going around it, not ignoring it.
 - **Numbers matter.** Capture speed scales with how many more of you are on the point (up to 3). Lone wolves stall; squads take ground.
 - **Surge.** Capturing a point gives the whole team eight seconds of faster movement and half-time reloads. A capture is the moment to push the next point, not to rest.
@@ -161,7 +171,7 @@ crates/client   window, renderer, prediction, effects, synthesised audio, HUD, l
 ## Verification
 
 ```sh
-cargo test --workspace                                            # 41 tests across client, server and shared code
+cargo test --workspace                                            # gameplay, controls, networking and updater regression tests
 cargo run --release -p ferrite-server -- --bench 900              # headless 15-minute bot war + timing
 cargo run --release -p ferrite -- --spectate                      # watch a match
 cargo run --release -p ferrite -- --auto --quit-at 30             # scripted client, prints session stats
@@ -169,7 +179,7 @@ cargo run --release -p ferrite -- --auto --quit-at 30             # scripted cli
 
 The tests cover: prediction equals server state exactly over 900 random commands; replay after delayed delivery converges; command-flood rate limiting; NaN/out-of-range/replayed input and malformed packets; a five-minute 12v12 soak asserting territory stays contiguous, nobody leaves the map or falls through terrain, and snapshots stay under 1400 bytes; a real UDP join / drive / acknowledge / leave round trip; and the newer mechanics - crouch, sidearm, team switching, slide, climbing (a 1.9 m ledge yes, a 3.2 m wall no), spread bloom, assists, loadout validation, map rotation, burst fire, the lobby, and delivery of effects raised between ticks (the bug that used to eat hit markers). New in v0.7: chat reaching only the people it should, in packet-sized pieces; melee reach, facing, the kill from behind and the lock-out while swinging; records following a player id through a rename, a name clash and a server restart; and, over real UDP, the roster arriving in parts, a chat line said three times and heard once, and an icon going up with the hello and coming back on request.
 
-New in v0.8: complete geometry fingerprints for the original maps; seeded navigation and symmetry checks for Spillway and Relay; soldier pose and weapon-action bounds; all seven finish ids, next-deploy application, roster and real UDP replication, and valid bot finishes; paint confined to weapon surfaces; clear optic apertures; and dynamic meshes spanning multiple pages. The discovery test also works while another local game is running.
+New in v0.8: complete geometry fingerprints for the original maps; seeded navigation and symmetry checks for Spillway and Relay; soldier pose and weapon-action bounds; all seven finish ids, live cosmetic changes without redeployment, safe handling of pending loadouts, roster and real UDP replication, and valid bot finishes; paint confined to weapon surfaces; clear optic apertures; and dynamic meshes spanning multiple pages. The discovery test also works while another local game is running.
 
 Scripted-run aids added for these: `--seek` (the scripted player walks to the front line, so it gets shot), `--shot-killcam`, `--say TEXT`, `--icon N`, `--vm-melee 0.75`, and `--update --pretend-version 0.5.0` to exercise the updater against a real release.
 

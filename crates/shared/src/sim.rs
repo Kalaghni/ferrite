@@ -44,6 +44,13 @@ pub const HEAT_MAX: u8 = 100;
 pub const GRENADE_WEAPON: u8 = 3;
 /// Weapon id a melee kill is reported under.
 pub const MELEE_WEAPON: u8 = 17;
+/// Kill-feed id for burning to death in lava. Not an entry in `WEAPONS`.
+pub const LAVA_WEAPON: u8 = 254;
+
+/// What the kill feed calls a weapon id, including environmental deaths.
+pub fn weapon_name(wid: u8) -> &'static str {
+    if wid == LAVA_WEAPON { "Lava" } else { weapon_def(wid).name }
+}
 /// A swing: how long before another (or a shot), how far it reaches from
 /// the eye, and what it does from the front. From behind it kills.
 pub const MELEE_TICKS: u8 = 34;
@@ -899,8 +906,7 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
     let mut out = StepOut::default();
     let fire_btn = c.buttons & btn::FIRE != 0;
     let ads = c.buttons & btn::ADS != 0;
-    let mz = c.mz.clamp(-1, 1) as f32;
-    let mx = c.mx.clamp(-1, 1) as f32;
+    let (mx, mz) = c.movement();
     // Crouch: lower profile, steadier aim, slower. Standing back up needs
     // headroom, so you cannot pop up inside something.
     let hv = vec3(s.vel.x, 0.0, s.vel.z);

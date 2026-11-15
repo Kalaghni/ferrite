@@ -443,6 +443,15 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
         crouch = false;
     }
 
+    // Never strafe or back-pedal into lava mid-fight. Route-following is
+    // left alone: the flow field already takes the bridges.
+    if engaged && mv.length_squared() > 0.01 && !g.world.lava(pos.x, pos.z, 0.0) {
+        let ahead = vec2(pos.x, pos.z) + mv.normalize() * 1.4;
+        if g.world.lava(ahead.x, ahead.y, 0.3) {
+            mv = Vec2::ZERO;
+        }
+    }
+
     // --- Turn toward the desired view ---
     let dy = wrap_angle(want_yaw - b.yaw);
     let dp = want_pitch - b.pitch;

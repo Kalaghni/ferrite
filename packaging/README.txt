@@ -1,6 +1,17 @@
 FERRITE - 12v12 front-line conquest
 https://github.com/Kalaghni/ferrite
 
+NEW IN v0.9
+  Slag Cathedral: a bell foundry on the scale of a cathedral, with a vaulted
+  casting nave, raised galleries, covered service lanes and a dedicated map
+  score. Enable music during matches to hear it while fighting.
+  Two lava channels cross its casting floor. Standing in one burns you;
+  use the grated bridges or take a running jump.
+  Relay: the four antenna masts are now towers you can climb. Walk the
+  stair to a railed deck 6 or 9 metres up. Rails stop you falling, not
+  bullets; the two plate parapets are the cover.
+  Everyone in a match needs v0.9.0, including the dedicated server.
+
 NEW IN v0.8
   Two new maps: Spillway (drained waterworks) and Relay (highland signal
   station). The original four maps keep their layouts.
@@ -10,8 +21,9 @@ NEW IN v0.8
   aiming apertures.
   Six finishes fit every gun: Oxide, Arctic, Woodland, Midnight, Hazard and
   Sandstorm. In the loadout, click the large primary/sidearm models or use
-  7 / 8 to cycle finishes. Choices are saved per weapon and apply at the
-  next deploy. The weapon roster and gameplay statistics are unchanged.
+  7 / 8 to cycle finishes. Choices are saved per weapon and appear on the
+  equipped gun immediately. A different pending gun receives its selected
+  finish when deployed. The weapon roster and gameplay statistics are unchanged.
 
 PLAY
   Run ferrite (ferrite.exe on Windows). The home screen lets you:
@@ -48,7 +60,7 @@ RUN A DEDICATED SERVER
   turns it off.
   The server moves to the next map after every round. --rotation quarry,depot
   plays only those; --rotation off stays on one map.
-  Maps: foundry valley, quarry, ridgeline, depot, spillway, relay
+  Maps: foundry valley, quarry, ridgeline, depot, spillway, relay, slag cathedral
   (--maps lists them). A name can be shortened: --map ridge. Players get
   the map from the server.
   Players join by typing this machine's address into the home screen.
@@ -75,6 +87,19 @@ CONTROLS
   Enter or Y: chat to everyone    U: chat to your team    (Tab switches)
   In the lobby, R is the ready key.
   Esc release mouse, then Q to leave the match
+
+CUSTOM CONTROLS AND CONTROLLERS
+  SETTINGS > CONTROLS: MOVE, FIGHT, UI and KIT pages rebind keyboard/mouse
+  actions. Click a row to replace its inputs; click + to add an alternative.
+  Mouse 4 and Mouse 5 side buttons are supported. To use V and Mouse 5 for
+  melee, replace the row with V, then click + and press Mouse 5.
+  Escape cancels, Delete clears, and RESET KEYBINDS restores defaults.
+  Assignments are saved per installation.
+  PAD settings enable controllers and adjust sensitivity, deadzone and Y
+  inversion. LS moves, RS looks, LT aims, RT fires. A jumps, B crouches,
+  X reloads, Y swaps, LB throws a grenade, RB/RS melees, LS toggles sprint.
+  D-pad: sight/loadout/team/stats. View/Back: scoreboard. Start: pause.
+  Menus use stick/D-pad cursor movement, A select and B back.
 
 GRAPHICS
   ferrite --shadows low      smaller shadow map, for older graphics cards

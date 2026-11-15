@@ -38,6 +38,7 @@ fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
 /// Ground colour at `c`: the map's palette, worn to dirt around its
 /// objectives and to rock on slopes.
 fn ground_col(w: &World, c: Vec3, n: Vec3, jitter: f32) -> Col {
+    if w.map == slag_cathedral::ID { return slag_cathedral::ground(w, c, n, jitter); }
     let [grass, dry, dirt] = map_def(w.map).ground;
     let patch = vnoise(c.x / 24.0, c.z / 24.0, w.seed as u32 ^ 7);
     let mut col = mix3(grass, dry, smooth(0.3, 0.75, patch));
@@ -47,6 +48,9 @@ fn ground_col(w: &World, c: Vec3, n: Vec3, jitter: f32) -> Col {
     }
     col = mix3(col, dirt, 1.0 - smooth(7.0, 16.0, near));
     col = mix3(col, [0.47, 0.40, 0.35], smooth(0.06, 0.22, 1.0 - n.y));
+    if w.map == relay::ID {
+        col = relay::ground_tint(w, col, c, n);
+    }
     let k = 0.9 + 0.2 * jitter;
     rgb(col[0] * k, col[1] * k, col[2] * k)
 }
@@ -122,6 +126,8 @@ pub fn build_world(w: &World) -> Mesh {
     }
     const CONTAINER: [[f32; 3]; 4] = [[0.66, 0.27, 0.16], [0.18, 0.46, 0.48], [0.80, 0.60, 0.18], [0.34, 0.38, 0.47]];
     for (i, b) in w.blocks.iter().enumerate() {
+        if w.map == slag_cathedral::ID { slag_cathedral::block(&mut m, b, i); continue; }
+        if w.map == relay::ID && relay::owns(b) { continue; }
         let j = 0.9 + 0.2 * hash01(i as u32, 91);
         match b.kind {
             BlockKind::Crate => {}
@@ -178,6 +184,10 @@ pub fn build_world(w: &World) -> Mesh {
             }
             BlockKind::Trunk => {}
         }
+    }
+    if w.map == slag_cathedral::ID {
+        slag_cathedral::build(&mut m, w);
+        return m;
     }
     const LEAF: [[f32; 3]; 5] =
         [[0.74, 0.33, 0.13], [0.86, 0.57, 0.16], [0.63, 0.20, 0.15], [0.42, 0.47, 0.20], [0.24, 0.40, 0.25]];
@@ -244,7 +254,43 @@ pub fn build_world(w: &World) -> Mesh {
             m.tri_n(base + off - wd, base + off + wd, tip, n, shade(col, 0.85 + 0.3 * hash01(k, 50 + b)));
         }
     }
+    if w.map == relay::ID {
+        relay::build(&mut m, w);
+    }
     m
+}
+
+/// Existing maps retain their original lighting and shadow volume.
+pub fn fog_for(map: u8) -> [f32; 4] {
+    match map {
+        slag_cathedral::ID => slag_cathedral::FOG,
+        relay::ID => relay::FOG,
+        _ => FOG,
+    }
+}
+pub fn sun_for(map: u8) -> Vec3 {
+    match map {
+        slag_cathedral::ID => slag_cathedral::SUN,
+        relay::ID => relay::SUN,
+        _ => SUN,
+    }
+}
+pub fn shadow_bounds(map: u8) -> (Vec3, Vec3) {
+    (vec3(-HALF_X - 8.0, -12.0, -HALF_Z - 8.0), vec3(HALF_X + 8.0, if map == slag_cathedral::ID { 52.0 } else { 34.0 }, HALF_Z + 8.0))
+}
+pub fn build_sky_for(map: u8) -> Mesh {
+    match map {
+        slag_cathedral::ID => slag_cathedral::sky(),
+        relay::ID => relay::sky(),
+        _ => build_sky(),
+    }
+}
+pub fn map_lights(w: &World, eye: Vec3, existing: [crate::gfx::Light; 4]) -> [crate::gfx::Light; 4] {
+    match w.map {
+        slag_cathedral::ID => slag_cathedral::lights(w, eye, existing),
+        relay::ID => relay::lights(w, eye, existing),
+        _ => existing,
+    }
 }
 
 pub fn build_sky() -> Mesh {
@@ -317,6 +363,8 @@ pub fn crates(m: &mut Mesh, w: &World, dmask: u64) {
 /// Objective beacons: flag pole, ground ring and a light pillar readable
 /// from across the map.
 pub fn beacons(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, owners: &[(u8, f32, bool)], time: f32) {
+    if w.map == slag_cathedral::ID { slag_cathedral::atmosphere(alpha, add, w, time); }
+    if w.map == relay::ID { relay::atmosphere(m, alpha, add, w, time); }
     for (k, &(owner, progress, contested)) in owners.iter().enumerate() {
         let c = w.points[k];
         let oc = team_col(owner);
@@ -384,3 +432,8 @@ mod players;
 mod weapons;
 pub use players::*;
 pub use weapons::*;
+
+#[path = "scene/slag_cathedral.rs"]
+mod slag_cathedral;
+#[path = "scene/relay.rs"]
+mod relay;

@@ -309,11 +309,7 @@ fn handle(game: &mut Game, conns: &mut HashMap<SocketAddr, Conn>, sock: &UdpSock
             c.ack_feed = c.ack_feed.max(ack_feed.min(game.feed.len() as u32));
             c.chat_ack = c.chat_ack.max(ack_chat.min(game.chat_seq));
             if let Some(i) = c.player {
-                let (kit, prim, side) = ferrite_shared::sim::fix_loadout(kit, prim, side);
-                let p = &mut game.players[i];
-                (p.next_kit, p.next_prim, p.next_side) = (kit, prim, side);
-                p.skin = skin % ferrite_shared::sim::SKINS.len() as u8;
-                p.next_wskin = wskin; // checked against the weapons at the next deploy
+                game.players[i].select_loadout(kit, prim, side, skin, wskin);
                 cmds.truncate(8);
                 cmds.sort_by_key(|c| c.seq);
                 for cmd in cmds {

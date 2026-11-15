@@ -1042,11 +1042,37 @@ fn weapon_finishes_are_validated_and_replicated() {
     for _ in 0..40 { g.tick(); }
     assert!(g.players[me].alive);
     assert_eq!(g.players[me].wskin, [1, 6]);
-    // Choosing a finish while alive affects the next deploy, preserving
-    // the currently issued loadout until then.
-    g.players[me].next_wskin = [2, 5];
-    g.tick();
-    assert_eq!(g.players[me].wskin, [1, 6]);
+    // This is the same selection path used by C2S::Cmds. Cosmetics must
+    // change on the live issued guns, without a death, respawn or loadout change.
+    let (issued, hp, spawn) = (g.players[me].st, g.players[me].hp, g.players[me].spawn_count);
+    let p = &mut g.players[me];
+    p.select_loadout(issued.kit, issued.prim, issued.side, p.skin, [2, 5]);
+    assert_eq!(p.wskin, [2, 5], "live finish changes remained stuck on the spawn-time palette");
+    assert_eq!((p.st, p.hp, p.spawn_count), (issued, hp, spawn));
+    let roster = g.roster();
+    assert_eq!(roster.iter().find(|p| p.id as usize == me).unwrap().wskin, [2, 5]);
+
+    // A new primary/class is still queued for deployment; its finish must
+    // not repaint the old primary, but the unchanged sidearm can update now.
+    let p = &mut g.players[me];
+    p.select_loadout(2, 2, issued.side, p.skin, [6, 3]);
+    assert_eq!((p.next_kit, p.next_prim, p.next_side, p.next_wskin), (2, 2, issued.side, [6, 3]));
+    assert_eq!(p.wskin, [2, 3]);
+    assert_eq!((p.st, p.hp, p.spawn_count), (issued, hp, spawn));
+
+    // Conversely, a different pending sidearm cannot recolour the old one.
+    let p = &mut g.players[me];
+    let pending_side = if issued.side == 10 { 4 } else { 10 };
+    p.select_loadout(issued.kit, issued.prim, pending_side, p.skin, [4, 6]);
+    assert_eq!(p.wskin, [4, 3]);
+    assert_eq!(p.next_wskin, [4, 6]);
+    assert_eq!(p.st, issued);
+
+    // Malformed live finishes resolve to Factory without replacing a gun.
+    let p = &mut g.players[me];
+    p.select_loadout(issued.kit, issued.prim, issued.side, p.skin, [255, 254]);
+    assert_eq!(p.wskin, [0, 0]);
+    assert_eq!(p.st, issued);
 
     // Exercise every finish on both primary and sidearm, across classes
     // and weapon families. The periodic roster carries their finish ids;
@@ -1090,6 +1116,62 @@ fn weapon_finishes_are_validated_and_replicated() {
         }
     }
     assert!(finishes.len() > 1 && finishes.iter().any(|&s| s != 0), "bots wear a valid mix of finishes");
+}
+
+/// Follow the real Cmds -> server -> roster path while the same live guns
+/// remain issued. A preview-only or next-deploy-only fix cannot pass this.
+#[test]
+fn live_weapon_finishes_replicate_without_redeploying() {
+    let mut server = ferrite_server::spawn(Config { max_bots: 0, ..cfg(1) }).unwrap();
+    let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
+    sock.connect(("127.0.0.1", server.addr.port())).unwrap();
+    sock.set_read_timeout(Some(Duration::from_millis(10))).unwrap();
+    let mut bytes = [0u8; 8192];
+    let hello = encode(&C2S::Hello { proto: PROTO, name: "finish-test".into(), spectator: false, team: 0, uuid: [8; 16], icon: Vec::new() });
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let mut id = None;
+    while Instant::now() < deadline && id.is_none() {
+        sock.send(&hello).unwrap();
+        if let Ok(n) = sock.recv(&mut bytes) {
+            if let Some(S2C::Welcome { id: who, .. }) = decode::<S2C>(&bytes[..n]) { id = Some(who); }
+        }
+    }
+    let id = id.expect("no cosmetic test welcome");
+    let mut baseline = None;
+    for (kit, prim, side, wants, expected) in [
+        (0, 0, 4, [0, 0], [0, 0]),
+        (0, 0, 4, [2, 5], [2, 5]),
+        (2, 2, 4, [6, 3], [2, 3]),
+        (0, 0, 10, [4, 6], [4, 3]),
+        (0, 0, 4, [200, 201], [0, 0]),
+    ] {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut last_send = Instant::now() - Duration::from_secs(1);
+        let (mut saw_state, mut saw_finish) = (false, false);
+        while Instant::now() < deadline && !(saw_state && saw_finish) {
+            if last_send.elapsed() >= Duration::from_millis(40) {
+                sock.send(&encode(&C2S::Cmds { cmds: Vec::new(), ack_feed: 0, kit, prim, side, skin: 0, wskin: wants, ack_chat: 0 })).unwrap();
+                last_send = Instant::now();
+            }
+            let Ok(n) = sock.recv(&mut bytes) else { continue };
+            match decode::<S2C>(&bytes[..n]) {
+                Some(S2C::Snap(s)) => if let Some(me) = s.me.filter(|me| me.alive) {
+                    let issued = (me.spawn_count, me.st.kit, me.st.prim, me.st.side, me.st.ammo, me.hp);
+                    if let Some(before) = baseline { assert_eq!(issued, before, "cosmetic selection changed the issued gameplay loadout"); }
+                    else { baseline = Some(issued); }
+                    assert_eq!((me.st.kit, me.st.prim, me.st.side), (0, 0, 4));
+                    saw_state = true;
+                },
+                Some(S2C::Roster { entries, .. }) => {
+                    saw_finish |= entries.iter().any(|e| e.id == id && e.prim == 0 && e.side == 4 && e.wskin == expected);
+                }
+                _ => {}
+            }
+        }
+        assert!(saw_state && saw_finish, "live finish request {wants:?} did not replicate as {expected:?}");
+    }
+    sock.send(&encode(&C2S::Bye)).unwrap();
+    server.stop();
 }
 
 #[test]

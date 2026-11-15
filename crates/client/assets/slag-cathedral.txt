@@ -1,0 +1,5 @@
+Slag Cathedral
+Map-specific soundtrack supplied by the project owner for this map.
+Source: Slag Cathedral.wav (48 kHz stereo PCM, 154.285708 seconds).
+Embedded version: Vorbis quality 5, 44.1 kHz stereo, 154.285714 seconds.
+The original WAV remains untouched.

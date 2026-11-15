@@ -2,6 +2,7 @@
 //! cargo run -p ferrite --example asset_review -- players target/players.png run
 //! Modes: players, weapons, skins, sights, or a map name.
 //! Optional player pose: run/crouch/slide/air/reload/melee/fall; weapons accepts a finish ID.
+//! Slag Cathedral views: overview / nave / gallery / furnace / approach.
 
 #[allow(dead_code)]
 #[path = "../src/gfx.rs"]
@@ -86,16 +87,16 @@ async fn main() {
             }
         }
     }
-    let bounds = (vec3(-HALF_X, -14.0, -HALF_Z), vec3(HALF_X, 40.0, HALF_Z));
+    let bounds = if gallery { (vec3(-HALF_X, -14.0, -HALF_Z), vec3(HALF_X, 40.0, HALF_Z)) } else { scene::shadow_bounds(map) };
     let mut gpu = gfx::Gpu::new(
         stage,
         if gallery {
             gfx::Mesh::default()
         } else {
-            scene::build_sky()
+            scene::build_sky_for(map)
         },
         if gallery { 0 } else { 2048 },
-        scene::SUN.normalize(),
+        scene::sun_for(map).normalize(),
         bounds,
     );
     let ids: Vec<u8> = (0..sim::WEAPONS.len() as u8)
@@ -105,7 +106,8 @@ async fn main() {
     let mut frames = 0;
     loop {
         let time = if output.is_some() {
-            0.65
+            // An optional fourth argument freezes animation at that second.
+            args.get(3).and_then(|s| s.parse().ok()).unwrap_or(0.65)
         } else {
             mq::get_time() as f32
         };
@@ -190,8 +192,36 @@ async fn main() {
         let aspect = mq::screen_width() / mq::screen_height();
         let (eye, target) = if models {
             (vec3(2.7, 5.0, 13.0), vec3(0.0, 0.6, 0.0))
+        } else if map == ferrite_shared::map::slag_cathedral::MAP_ID && !gallery {
+            match pose {
+                "nave" => (vec3(-31.5, 4.8, 0.0), vec3(10.0, 14.0, 0.0)),
+                "gallery" => (vec3(-22.0, 5.1, 15.0), vec3(11.0, 9.0, -3.0)),
+                "furnace" => (vec3(-51.0, 5.0, -49.0), vec3(-17.0, 19.0, -31.0)),
+                "approach" => (vec3(-57.0, 3.2, -7.0), vec3(0.0, 15.0, 0.0)),
+                // "ex,ey,ez,tx,ty,tz": an arbitrary camera for art review.
+                custom if custom.contains(',') => {
+                    let v: Vec<f32> = custom
+                        .split(',')
+                        .filter_map(|s| s.trim().parse().ok())
+                        .collect();
+                    if v.len() == 6 {
+                        (vec3(v[0], v[1], v[2]), vec3(v[3], v[4], v[5]))
+                    } else {
+                        (vec3(96.0, 59.0, -99.0), vec3(0.0, 9.0, 0.0))
+                    }
+                }
+                _ => (vec3(96.0, 59.0, -99.0), vec3(0.0, 9.0, 0.0)),
+            }
         } else {
-            (vec3(110.0, 135.0, 150.0), vec3(0.0, 0.0, 0.0))
+            let v: Vec<f32> = pose
+                .split(',')
+                .filter_map(|s| s.trim().parse().ok())
+                .collect();
+            if !gallery && v.len() == 6 {
+                (vec3(v[0], v[1], v[2]), vec3(v[3], v[4], v[5]))
+            } else {
+                (vec3(110.0, 135.0, 150.0), vec3(0.0, 0.0, 0.0))
+            }
         };
         let view = Mat4::look_at_rh(eye, target, Vec3::Y);
         let projection = if models {
@@ -203,30 +233,32 @@ async fn main() {
             vp: projection * view,
             sky_vp: projection * Mat4::look_to_rh(Vec3::ZERO, (target - eye).normalize(), Vec3::Y),
             cam: eye,
-            sun: scene::SUN.normalize(),
+            sun: scene::sun_for(map).normalize(),
             fog: if gallery {
                 [0.055, 0.07, 0.1, 0.0]
             } else {
-                scene::FOG
+                scene::fog_for(map)
             },
-            lights: [gfx::Light::default(); 4],
+            lights: if gallery { [gfx::Light::default(); 4] } else { scene::map_lights(&w, eye, [gfx::Light::default(); 4]) },
             opaque: &opaque,
             alpha: &alpha,
             add: &add,
             view_vp: Mat4::IDENTITY,
-            view_sun: scene::SUN,
+            view_sun: scene::sun_for(map),
             view_lit: 1.0,
             view_opaque: &empty,
             view_add: &empty,
         });
-        label("FERRITE / ASSET REVIEW", 40.0, 48.0, 30.0, mq::WHITE);
-        label(
-            &format!("{} / {}", mode.to_uppercase(), pose.to_uppercase()),
-            40.0,
-            77.0,
-            20.0,
-            mq::LIGHTGRAY,
-        );
+        if gallery || (map != ferrite_shared::map::slag_cathedral::MAP_ID && !pose.contains(',')) {
+            label("FERRITE / ASSET REVIEW", 40.0, 48.0, 30.0, mq::WHITE);
+            label(
+                &format!("{} / {}", mode.to_uppercase(), pose.to_uppercase()),
+                40.0,
+                77.0,
+                20.0,
+                mq::LIGHTGRAY,
+            );
+        }
         if weapons {
             let cw = (mq::screen_width() - 80.0) / 4.0;
             let ch = (mq::screen_height() - 150.0) / 4.0;

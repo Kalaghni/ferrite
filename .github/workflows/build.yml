@@ -58,10 +58,17 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev
+          sudo apt-get install -y libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev libudev-dev pkg-config
 
       - name: Test
         run: cargo test --workspace --release
+
+      - name: Test native mouse button mappings
+        run: |
+          exe=target/mouse-button-tests
+          if [ "$RUNNER_OS" = "Windows" ]; then exe="$exe.exe"; fi
+          rustc --edition=2018 --test vendor/miniquad/src/event.rs -o "$exe"
+          "$exe"
 
       - name: Build
         run: |

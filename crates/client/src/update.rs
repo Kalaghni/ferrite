@@ -269,11 +269,10 @@ impl Updater {
         self.state = State::Installing(tag);
     }
 
-    /// Start the installed executable; keep the launcher visible if spawning fails.
-    pub fn restart(&mut self) {
-        if self.launch_installed(std::env::args_os().skip(1), |command| command.spawn().map(|_| ())) {
-            std::process::exit(0);
-        }
+    /// Start the installed executable. The caller exits through normal cleanup
+    /// on success, or keeps the launcher visible if spawning fails.
+    pub fn restart(&mut self) -> bool {
+        self.launch_installed(std::env::args_os().skip(1), |command| command.spawn().map(|_| ()))
     }
 
     fn launch_installed(

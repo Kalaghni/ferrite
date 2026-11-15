@@ -7,7 +7,9 @@ use ferrite_shared::map::{map_by_name, MAPS};
 use ferrite_shared::proto::{decode_info, ServerInfo, DEFAULT_PORT, DISCOVERY_GROUP, DISCOVERY_PORT, DISCOVERY_QUERY, PROTO};
 use crate::audio::{Music, Scene};
 use crate::update::{self, State as Up};
-use crate::{gfx, ident, scene};
+use crate::{controller, gfx, ident, scene};
+use crate::bindings::{Action, Bindings, Input};
+use std::cell::Cell;
 use ferrite_shared::proto::{icon_hash, uuid_parse, uuid_text};
 use ferrite_shared::glam::{vec3, Mat4, Vec3};
 use ferrite_shared::map::World;
@@ -30,11 +32,13 @@ pub struct Prefs {
     pub invert_y: bool,
     /// Aim with a click instead of holding the button.
     pub toggle_aim: bool,
+    pub bindings: Bindings,
+    pub controller: controller::Settings,
 }
 
 impl Default for Prefs {
     fn default() -> Prefs {
-        Prefs { fov: 66.0, fullscreen: false, shadows: 4096, show_fps: false, invert_y: false, toggle_aim: false }
+        Prefs { fov: 66.0, fullscreen: false, shadows: 4096, show_fps: false, invert_y: false, toggle_aim: false, bindings: Bindings::default(), controller: controller::Settings::default() }
     }
 }
 
@@ -97,6 +101,11 @@ pub struct Menu {
     pub prefs: Prefs,
     /// Settings tab: 0 audio, 1 video, 2 controls.
     pub tab: u8,
+    controls_page: u8,
+    binding_capture: Option<Action>,
+    binding_add: bool,
+    binding_note: Option<String>,
+    binding_cancel_rect: Option<(f32, f32, f32, f32)>,
     /// That map, built for drawing: (map index, world, renderer).
     preview: Option<(u8, World, gfx::Gpu)>,
     /// Output devices found when the settings page was opened: (id, name).
@@ -197,13 +206,15 @@ fn split_addr(a: &str) -> (String, String) {
     }
 }
 
+thread_local! { static CAPTURING_INPUT: Cell<bool> = const { Cell::new(false) }; }
+
 fn hit(x: f32, y: f32, w: f32, h: f32) -> bool {
-    let (mx, my) = mq::mouse_position();
+    let (mx, my) = controller::mouse_position();
     mx >= x && mx < x + w && my >= y && my < y + h
 }
 
 fn clicked() -> bool {
-    mq::is_mouse_button_pressed(mq::MouseButton::Left)
+    !CAPTURING_INPUT.with(Cell::get) && controller::left_pressed()
 }
 
 /// Plain button. `solid` is the fill for a call to action; without one it
@@ -278,6 +289,11 @@ impl Menu {
             seed: 0xFE221,
             prefs: Prefs::default(),
             tab: 0,
+            controls_page: 0,
+            binding_capture: None,
+            binding_add: false,
+            binding_note: None,
+            binding_cancel_rect: None,
             preview: None,
             devices: Vec::new(),
             page: 0,
@@ -313,6 +329,10 @@ impl Menu {
                     "show_fps" => m.prefs.show_fps = v == "1",
                     "invert_y" => m.prefs.invert_y = v == "1",
                     "toggle_aim" => m.prefs.toggle_aim = v == "1",
+                    "controller_enabled" => m.prefs.controller.enabled = v != "0",
+                    "controller_sensitivity" => m.prefs.controller.sensitivity = v.parse::<f32>().ok().filter(|n| n.is_finite()).unwrap_or(2.8).clamp(0.4, 7.0),
+                    "controller_deadzone" => m.prefs.controller.deadzone = v.parse::<f32>().ok().filter(|n| n.is_finite()).unwrap_or(0.18).clamp(0.05, 0.4),
+                    "controller_invert_y" => m.prefs.controller.invert_y = v == "1",
                     "audio_device" if !v.is_empty() => m.audio_device = Some(v.to_string()),
                     "loadout" => {
                         for (k, n) in v.split(',').take(6).enumerate() {
@@ -329,10 +349,11 @@ impl Menu {
                     "icon" => m.icon_kind = v.parse::<u8>().unwrap_or(0),
                     "icon_colour" => m.icon_colour = v.parse::<u8>().unwrap_or(0) % ident::COLOURS.len() as u8,
                     "icon_data" => m.custom = ident::from_hex(v),
-                    _ => {}
+                    _ => { m.prefs.bindings.read_entry(k.trim(), v); }
                 }
             }
         }
+        m.prefs.bindings.normalize();
         // First launch: this is who we are from now on. (It is written to
         // the settings file the next time they are saved.)
         if m.uuid == [0; 16] {
@@ -414,6 +435,8 @@ impl Menu {
         out += &format!("difficulty={}\nvolume={:.2}\nmusic_volume={:.2}\nmusic={}\nmusic_in_match={}\n", self.difficulty, self.volume, self.music_vol, self.music_on as u8, self.music_in_match as u8);
         let p = &self.prefs;
         out += &format!("fov={}\nfullscreen={}\nshadows={}\nshow_fps={}\ninvert_y={}\ntoggle_aim={}\n", p.fov, p.fullscreen as u8, p.shadows, p.show_fps as u8, p.invert_y as u8, p.toggle_aim as u8);
+        out += &p.bindings.write_config();
+        out += &format!("controller_enabled={}\ncontroller_sensitivity={}\ncontroller_deadzone={}\ncontroller_invert_y={}\n", p.controller.enabled as u8, p.controller.sensitivity, p.controller.deadzone, p.controller.invert_y as u8);
         if let Some(d) = &self.audio_device {
             out += &format!("audio_device={d}
 ");
@@ -511,6 +534,8 @@ impl Menu {
 
     fn go(&mut self, page: u8) {
         self.page = page;
+        self.binding_capture = None;
+        self.binding_note = None;
         if page == 3 {
             self.devices = quad_snd::output_devices();
         }
@@ -589,8 +614,8 @@ impl Menu {
         if self.preview.as_ref().map(|p| p.0) != Some(map) {
             self.drop_map();
             let world = World::with_map(self.seed, map);
-            let bounds = (vec3(-HALF_X - 8.0, -12.0, -HALF_Z - 8.0), vec3(HALF_X + 8.0, 34.0, HALF_Z + 8.0));
-            let gpu = gfx::Gpu::new(scene::build_world(&world), scene::build_sky(), self.prefs.shadows.min(2048), scene::SUN.normalize(), bounds);
+            let bounds = scene::shadow_bounds(world.map);
+            let gpu = gfx::Gpu::new(scene::build_world(&world), scene::build_sky_for(world.map), self.prefs.shadows.min(2048), scene::sun_for(world.map).normalize(), bounds);
             self.preview = Some((map, world, gpu));
         }
         let Some((_, world, gpu)) = &mut self.preview else { return };
@@ -615,9 +640,9 @@ impl Menu {
             vp: proj * view,
             sky_vp: proj * Mat4::look_to_rh(Vec3::ZERO, dir, Vec3::Y),
             cam: eye,
-            sun: scene::SUN.normalize(),
-            fog: scene::FOG,
-            lights: [gfx::Light::default(); 4],
+            sun: scene::sun_for(world.map).normalize(),
+            fog: scene::fog_for(world.map),
+            lights: scene::map_lights(world, eye, [gfx::Light::default(); 4]),
             opaque: &opaque,
             alpha: &alpha,
             add: &add,
@@ -643,6 +668,144 @@ impl Menu {
         button(x + w - 110.0, y - 2.0, 110.0, 34.0, "< BACK", None, 18.0)
     }
 
+    fn capture_binding(&mut self) {
+        let Some(action) = self.binding_capture else { return };
+        let cancel_clicked = self.binding_cancel_rect.is_some_and(|(x, y, w, h)| hit(x, y, w, h) && controller::left_pressed());
+        if cancel_clicked || mq::is_key_pressed(mq::KeyCode::Escape) || controller::menu_back() {
+            self.binding_capture = None;
+            self.binding_note = Some("Assignment cancelled.".into());
+        } else if mq::is_key_pressed(mq::KeyCode::Backspace) || mq::is_key_pressed(mq::KeyCode::Delete) {
+            self.prefs.bindings.clear(action);
+            self.binding_capture = None;
+            self.binding_note = Some(format!("{} is now unbound.", action.label()));
+            self.save();
+        } else if let Some(input) = Input::capture() {
+            let result = if self.binding_add {
+                self.prefs.bindings.add(action, input)
+            } else {
+                self.prefs.bindings.replace(action, input)
+            };
+            match result {
+                Ok(()) => {
+                    self.binding_capture = None;
+                    self.binding_note = Some(format!("{}: {}", action.label(), self.prefs.bindings.display(action)));
+                    self.save();
+                }
+                Err(message) => self.binding_note = Some(message),
+            }
+        }
+    }
+
+    fn controls(&mut self, x: f32, mut y: f32, w: f32, sh: f32) {
+        self.binding_cancel_rect = None;
+        let tabs = ["MOUSE", "PAD", "MOVE", "FIGHT", "UI", "KIT"];
+        let gap = 6.0;
+        let width = (w - gap * 5.0) / 6.0;
+        for (index, name) in tabs.into_iter().enumerate() {
+            let bx = x + index as f32 * (width + gap);
+            let selected = self.controls_page as usize == index;
+            if button(bx, y, width, 30.0, name, selected.then_some(th::COBALT), 16.0) {
+                self.controls_page = index as u8;
+                self.binding_capture = None;
+                self.binding_note = None;
+            }
+        }
+        y += 44.0;
+        let setting_row = |label: &str, value: String, y: f32| -> i32 {
+            ui::plate(x, y, w, 42.0, th::GLASS_STRONG, th::STROKE);
+            ui::text(label, x + 12.0, y + 28.0, 18.0, th::WHITE);
+            ui::text_c(&value, x + w - 108.0, y + 28.0, 18.0, th::COBALT_BRIGHT);
+            button(x + w - 43.0, y + 5.0, 36.0, 32.0, "+", None, 20.0) as i32
+                - button(x + w - 198.0, y + 5.0, 36.0, 32.0, "-", None, 20.0) as i32
+        };
+        if self.controls_page == 0 {
+            let d = setting_row("MOUSE SENSITIVITY", format!("{:.2}", self.sens * 1000.0), y);
+            if d != 0 { self.sens = (self.sens * if d > 0 { 1.1 } else { 1.0 / 1.1 }).clamp(0.0004, 0.01); }
+            y += 50.0;
+            if setting_row("INVERT MOUSE Y", if self.prefs.invert_y { "ON" } else { "OFF" }.into(), y) != 0 { self.prefs.invert_y = !self.prefs.invert_y; }
+            y += 50.0;
+            if setting_row("AIM", if self.prefs.toggle_aim { "TOGGLE" } else { "HOLD" }.into(), y) != 0 { self.prefs.toggle_aim = !self.prefs.toggle_aim; }
+            ui::text("MOVE, FIGHT, UI and KIT contain keyboard and mouse bindings.", x, y + 76.0, 17.0, th::MUTED);
+            ui::text("Escape and chat editing keep their familiar navigation keys.", x, y + 100.0, 17.0, th::QUIET);
+            return;
+        }
+        if self.controls_page == 1 {
+            let mut status = controller::status();
+            while ui::width(&status, 17.0) > w && status.len() > 4 { status.pop(); }
+            ui::text(&status, x, y + 16.0, 17.0, th::COBALT_BRIGHT);
+            y += 28.0;
+            if setting_row("CONTROLLER", if self.prefs.controller.enabled { "ON" } else { "OFF" }.into(), y) != 0 { self.prefs.controller.enabled = !self.prefs.controller.enabled; }
+            y += 50.0;
+            let d = setting_row("LOOK SENSITIVITY", format!("{:.1}", self.prefs.controller.sensitivity), y);
+            self.prefs.controller.sensitivity = ((self.prefs.controller.sensitivity * 10.0).round() + d as f32 * 2.0).clamp(4.0, 70.0) / 10.0;
+            y += 50.0;
+            let d = setting_row("STICK DEADZONE", format!("{:.0}%", self.prefs.controller.deadzone * 100.0), y);
+            self.prefs.controller.deadzone = ((self.prefs.controller.deadzone * 100.0).round() + d as f32).clamp(5.0, 40.0) / 100.0;
+            y += 50.0;
+            if setting_row("INVERT STICK Y", if self.prefs.controller.invert_y { "ON" } else { "OFF" }.into(), y) != 0 { self.prefs.controller.invert_y = !self.prefs.controller.invert_y; }
+            ui::text("LS move / press sprint. RS look. LT aim. RT fire. START pause.", x, y + 70.0, 15.0, th::MUTED);
+            ui::text("A jump. B crouch. X reload. Y swap. LB grenade. RB / RS melee.", x, y + 92.0, 15.0, th::MUTED);
+            ui::text("D-pad: sight / loadout / team / stats. BACK shows the scoreboard.", x, y + 114.0, 15.0, th::QUIET);
+            ui::text("Menus: stick / D-pad move the cursor. A select. B back. X clear.", x, y + 136.0, 15.0, th::QUIET);
+            return;
+        }
+        use Action::*;
+        let actions: &[Action] = match self.controls_page {
+            2 => &[Forward, Backward, StrafeLeft, StrafeRight, Jump, Sprint, Crouch],
+            3 => &[Fire, Aim, Reload, Grenade, SwapWeapon, Melee, CycleSight],
+            4 => &[Loadout, ChangeTeam, Scoreboard, ChatAll, ChatTeam, ToggleStats, SensitivityDown, SensitivityUp],
+            _ => &[ClassVanguard, ClassBreacher, ClassMarksman, NextPrimary, NextSidearm, NextLook, PrimaryFinish, SidearmFinish],
+        };
+        let row_h = ((sh - y - 126.0) / 8.0).clamp(25.0, 36.0).floor();
+        for (row, &action) in actions.iter().enumerate() {
+            let by = y + row as f32 * row_h;
+            let active = self.binding_capture == Some(action);
+            ui::plate(x, by, w, row_h - 3.0, th::GLASS_STRONG, if active { th::EMBER } else { th::STROKE });
+            ui::text(action.label(), x + 10.0, by + row_h * 0.67, 17.0, th::WHITE);
+            let bx = x + w * 0.43;
+            let bw = w * 0.57 - 94.0;
+            let value = if active { if self.binding_add { "ADD KEY / MOUSE..." } else { "PRESS KEY / MOUSE..." }.to_string() } else { self.prefs.bindings.display(action) };
+            let mut size = 17.0;
+            while size > 12.0 && ui::width(&value, size) > bw - 12.0 { size -= 1.0; }
+            if button(bx, by + 2.0, bw, row_h - 7.0, &value, active.then_some(th::EMBER), size) {
+                self.binding_capture = Some(action);
+                self.binding_add = false;
+                self.binding_note = None;
+            }
+            if button(x + w - 87.0, by + 2.0, 36.0, row_h - 7.0, "+", (active && self.binding_add).then_some(th::EMBER), 18.0) {
+                self.binding_capture = Some(action);
+                self.binding_add = true;
+                self.binding_note = None;
+            }
+            let clear = button(x + w - 43.0, by + 2.0, 36.0, row_h - 7.0, "X", None, 16.0)
+                || !CAPTURING_INPUT.with(Cell::get) && hit(bx, by, bw, row_h) && controller::right_pressed();
+            if clear {
+                self.prefs.bindings.clear(action);
+                self.binding_capture = None;
+                self.binding_note = Some(format!("{} is now unbound.", action.label()));
+                self.save();
+            }
+        }
+        let note_y = y + actions.len() as f32 * row_h + 18.0;
+        let note = self.binding_note.as_deref().unwrap_or("Click to replace; + adds another input. X / right-click clears. Escape cancels.");
+        let mut note_size = 16.0;
+        while note_size > 12.0 && ui::width(note, note_size) > w { note_size -= 1.0; }
+        ui::text(note, x, note_y, note_size, if self.binding_capture.is_some() { th::WARNING } else { th::MUTED });
+        ui::text("Duplicates are rejected. Delete / Backspace clears during assignment.", x, note_y + 21.0, 15.0, th::QUIET);
+        let cancel = (x + w - 132.0, sh - 72.0, 132.0, 32.0);
+        self.binding_cancel_rect = Some(cancel);
+        if self.binding_capture.is_some() {
+            ui::plate(cancel.0, cancel.1, cancel.2, cancel.3, th::GLASS_STRONG, th::EMBER);
+            ui::text_c("CANCEL", cancel.0 + cancel.2 * 0.5, cancel.1 + 22.0, 17.0, th::EMBER_BRIGHT);
+        }
+        if button(x, sh - 72.0, 220.0, 32.0, "RESET KEYBINDS", None, 17.0) {
+            self.prefs.bindings.reset();
+            self.binding_capture = None;
+            self.binding_note = Some("Default keyboard and mouse bindings restored.".into());
+            self.save();
+        }
+    }
+
     pub async fn run(&mut self, music: &mut Music, art: &ui::Art) -> Choice {
         mq::set_cursor_grab(false);
         mq::show_mouse(true);
@@ -651,9 +814,18 @@ impl Menu {
         mq::next_frame().await;
         self.last = mq::get_time();
         loop {
+            if mq::is_quit_requested() {
+                self.drop_map();
+                self.save();
+                return Choice::Quit;
+            }
             let now = mq::get_time();
             let dt = (now - self.last).clamp(0.0, 0.1) as f32;
             self.last = now;
+            controller::poll(&self.prefs.controller, dt, true);
+            let capturing = self.binding_capture.is_some();
+            CAPTURING_INPUT.with(|active| active.set(capturing));
+            self.capture_binding();
             let (sw, sh) = (mq::screen_width(), mq::screen_height());
             music.on = self.music_on;
             music.vol = self.music_vol;
@@ -674,7 +846,9 @@ impl Menu {
                 // The new version is in place: start it.
                 self.drop_map();
                 self.save();
-                self.updater.restart();
+                if self.updater.restart() {
+                    return Choice::Quit;
+                }
             }
             let mut out: Option<Choice> = None;
 
@@ -688,7 +862,7 @@ impl Menu {
                 // Inner pages are denser: put them on glass.
                 mq::draw_rectangle(0.0, 0.0, (x + w + 40.0).min(sw), sh, ui::fade(th::INK, 0.62));
             }
-            let esc = mq::is_key_pressed(mq::KeyCode::Escape);
+            let esc = !capturing && (mq::is_key_pressed(mq::KeyCode::Escape) || controller::menu_back());
             let enter = mq::is_key_pressed(mq::KeyCode::Enter) || mq::is_key_pressed(mq::KeyCode::KpEnter);
 
             match self.page {
@@ -897,7 +1071,7 @@ impl Menu {
                     ui::text(">", mx + mw - 20.0, y + 26.0, 20.0, if over { th::WHITE } else { th::QUIET });
                     if over && clicked() {
                         let n = MAPS.len() as u8;
-                        let back = mq::mouse_position().0 < mx + mw * 0.3;
+                        let back = controller::mouse_position().0 < mx + mw * 0.3;
                         self.map = (self.map % n + if back { n - 1 } else { 1 }) % n;
                     }
                     y += 58.0;
@@ -971,6 +1145,8 @@ impl Menu {
                         ui::text_c(label, bx + tw / 2.0, y + 25.0, 20.0, if on { th::INK } else { th::MUTED });
                         if over && clicked() {
                             self.tab = i as u8;
+                            self.binding_capture = None;
+                            self.binding_note = None;
                         }
                     }
                     y += 50.0;
@@ -1057,31 +1233,7 @@ impl Menu {
                             ui::text("Field of view is vertical, in degrees. Aiming down a sight narrows it.", x, y, 18.0, th::QUIET);
                             ui::text("Lower the shadows on an older graphics card. F3 shows FPS in a match.", x, y + 24.0, 18.0, th::QUIET);
                         }
-                        _ => {
-                            let d = row("MOUSE SENSITIVITY", format!("{:.2}", self.sens * 1000.0), y);
-                            if d != 0 {
-                                self.sens = (self.sens * if d > 0 { 1.1 } else { 1.0 / 1.1 }).clamp(0.0004, 0.01);
-                            }
-                            y += 54.0;
-                            if row("INVERT MOUSE Y", on_off(self.prefs.invert_y), y) != 0 {
-                                self.prefs.invert_y = !self.prefs.invert_y;
-                            }
-                            y += 54.0;
-                            if row("AIM", if self.prefs.toggle_aim { "TOGGLE".to_string() } else { "HOLD".to_string() }, y) != 0 {
-                                self.prefs.toggle_aim = !self.prefs.toggle_aim;
-                            }
-                            y += 72.0;
-                            let keys = [
-                                "WASD move    SHIFT sprint    SPACE jump / climb    CTRL or C crouch",
-                                "LMB fire    RMB aim    R reload    Q / F / wheel sidearm    G grenade",
-                                "V melee    T sight    L loadout    M team    TAB scoreboard    ESC pause",
-                                "ENTER chat to all    U chat to your team    (TAB switches while typing)",
-                                "Crouch while sprinting to slide.    - / = change sensitivity in a match.",
-                            ];
-                            for (i, l) in keys.iter().enumerate() {
-                                ui::text(l, x, y + i as f32 * 24.0, 18.0, th::QUIET);
-                            }
-                        }
+                        _ => self.controls(x, y, w, sh),
                     }
                     ui::text("ESC back", x, sh - 20.0, 18.0, th::QUIET);
                 }
@@ -1129,6 +1281,7 @@ impl Menu {
                 }
             }
 
+            controller::draw_cursor();
             self.frames += 1;
             // (a picture waits for the music, so it shows what is playing)
             if self.frames >= 20 && self.shot.is_some() && (!music.available() || !self.music_on || music.now_playing().is_some() || self.frames > 900) {

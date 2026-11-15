@@ -8,8 +8,8 @@ use ferrite_shared::proto::{flag, SPECTATOR_ID};
 use ferrite_shared::sim;
 use ferrite_shared::{eligible, NEUTRAL, POINT_NAMES, POINT_RADIUS, TEAM_NAMES};
 use macroquad::prelude::{
-    draw_circle, draw_circle_lines, draw_line, draw_poly, draw_rectangle, draw_rectangle_lines, draw_triangle, is_key_down,
-    screen_height, screen_width, Color, KeyCode, Vec2,
+    draw_circle, draw_circle_lines, draw_line, draw_poly, draw_rectangle, draw_rectangle_lines, draw_triangle,
+    screen_height, screen_width, Color, Vec2,
 };
 
 /// Text goes through the UI kit's typeface.
@@ -256,12 +256,22 @@ pub struct GunIcon {
 /// Width of the model at the left of a weapon row.
 const ICON_W: f32 = 92.0;
 
+fn key_hint(app: &App, action: crate::bindings::Action) -> String {
+    app.bindings.inputs(action).first().map(|input| input.label()).unwrap_or_else(|| "UNBOUND".into())
+}
+
 fn draw_loadout(app: &App, w: f32, h: f32, icons: &mut Vec<GunIcon>) {
-    let (mx, my) = macroquad::prelude::mouse_position();
+    let (mx, my) = crate::controller::mouse_position();
     let top = loadout_top(h);
     let kd = sim::kit(app.kit_choice);
     let tc = team_col(app.my_team);
-    for (c, title) in ["CLASS   keys 1-3", "PRIMARY   4 for the next one", "SIDEARM   5 for the next one"].iter().enumerate() {
+    use crate::bindings::Action;
+    let titles = [
+        format!("CLASS   {} / {} / {}", key_hint(app, Action::ClassVanguard), key_hint(app, Action::ClassBreacher), key_hint(app, Action::ClassMarksman)),
+        format!("PRIMARY   {} next", key_hint(app, Action::NextPrimary)),
+        format!("SIDEARM   {} next", key_hint(app, Action::NextSidearm)),
+    ];
+    for (c, title) in titles.iter().enumerate() {
         text(title, loadout_col(w, c as u8).0 + 14.0, top + 98.0, 18.0, col(WHITE, 0.6));
     }
     // The chosen primary and sidearm, large, either side of the heading.
@@ -280,7 +290,7 @@ fn draw_loadout(app: &App, w: f32, h: f32, icons: &mut Vec<GunIcon>) {
             3 => {
                 let n = sim::SKINS.len();
                 let s = sim::SKINS[app.skin_choice as usize % n];
-                text("LOOK   6 for the next one", x + 10.0, y - 8.0, 18.0, col(WHITE, 0.6));
+                text(&format!("LOOK   {} next", key_hint(app, Action::NextLook)), x + 10.0, y - 8.0, 18.0, col(WHITE, 0.6));
                 (s.0, s.1, true, format!("{} / {}", app.skin_choice as usize % n + 1, n))
             }
             _ => {
@@ -318,7 +328,7 @@ fn draw_loadout(app: &App, w: f32, h: f32, icons: &mut Vec<GunIcon>) {
         let skin = sim::fix_weapon_skin(id, app.wskins[id as usize % 20]);
         if sim::weapon_skins_for(id).len() > 1 {
             let over = mx >= bx && mx < bx + bw && my >= top + 4.0 && my < top + 88.0;
-            text_r(&format!("{} FINISH   {} or click", sim::weapon_skin(skin).name, 7 + k), bx + bw - 4.0, top + 20.0, 14.0, col(WHITE, if over { 1.0 } else { 0.7 }));
+            text_r(&format!("{} FINISH   {} or click", sim::weapon_skin(skin).name, key_hint(app, if k == 0 { Action::PrimaryFinish } else { Action::SidearmFinish })), bx + bw - 4.0, top + 20.0, 14.0, col(WHITE, if over { 1.0 } else { 0.7 }));
         }
         icons.push(GunIcon { wid: id, skin, cx: bx + bw / 2.0, cy: top + 54.0, w: bw - 30.0, h: 64.0, turn: true });
     }
@@ -344,14 +354,14 @@ fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
     let pw = (w - 40.0).min(1080.0);
     let x0 = w / 2.0 - pw / 2.0;
     let tc = team_col(app.my_team);
-    let (mx, my) = macroquad::prelude::mouse_position();
+    let (mx, my) = crate::controller::mouse_position();
     let hx = (500.0 * crate::ui::art_scale(w, h)).max(x0);
     let soon = snap.phase_secs > 0.05 && snap.phase_secs <= 3.0;
     let status = if snap.phase_secs > 0.05 { format!("MATCH STARTS IN 00:{:02.0}", snap.phase_secs.ceil()) } else { "WAITING FOR PLAYERS".to_string() };
     text("PRE-MATCH BRIEFING", hx, 36.0, 15.0, Color::new(0.718, 0.863, 1.0, 1.0));
     text(&status, hx, 66.0, 30.0, col(if soon { WARNING } else { WHITE }, 1.0));
     text("Vote for the next map and choose a loadout. It starts early once everyone is ready.", hx, 90.0, 17.0, col(WHITE, 0.75));
-    text("M change team      R ready      ENTER chat      Q leave", x0, 113.0, 17.0, col(WHITE, 0.7));
+    text(&format!("{} team      R ready      {} chat      Q leave", key_hint(app, crate::bindings::Action::ChangeTeam), key_hint(app, crate::bindings::Action::ChatAll)), x0, 113.0, 17.0, col(WHITE, 0.7));
     if let Some(t) = &app.now_playing {
         text_r(&format!("now playing: {t}"), x0 + pw, 113.0, 17.0, col(WHITE, 0.7));
     }
@@ -430,7 +440,7 @@ fn draw_team_pick(app: &App, w: f32, h: f32) {
     draw_rectangle(0.0, 0.0, w, h, col(DARK, 0.8));
     let rects = team_pick_rects(w, h);
     text_c("CHOOSE YOUR TEAM", w / 2.0, rects[0].1 - 44.0, 44.0, col(WHITE, 1.0));
-    let (mx, my) = macroquad::prelude::mouse_position();
+    let (mx, my) = crate::controller::mouse_position();
     for (t, &(x, y, pw, ph)) in rects.iter().enumerate() {
         let c = team_col(t as u8);
         let over = mx >= x && mx < x + pw && my >= y && my < y + ph;
@@ -452,7 +462,7 @@ fn draw_team_pick(app: &App, w: f32, h: f32) {
         let (label, a) = if mine { ("YOUR TEAM", 0.7) } else if total > humans { ("CLICK TO JOIN", 1.0) } else { ("FULL", 0.5) };
         text_c(label, cx, y + ph - 28.0, 24.0, col(WHITE, a));
     }
-    text_c("Switching sides redeploys you.     M or ESC to cancel", w / 2.0, rects[0].1 + rects[0].3 + 40.0, 20.0, col(WHITE, 0.75));
+    text_c(&format!("Switching sides redeploys you.     {} or ESC to cancel", key_hint(app, crate::bindings::Action::ChangeTeam)), w / 2.0, rects[0].1 + rects[0].3 + 40.0, 20.0, col(WHITE, 0.75));
 }
 
 /// Size of the pause overlay relative to its 1672 x 941 design.
@@ -491,7 +501,7 @@ fn draw_pause(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
     use macroquad::prelude::{draw_texture_ex, vec2, DrawTextureParams};
     let k = pause_scale(w, h);
     let sz = |n: f32| (n * k).max(13.0);
-    let (mx, my) = macroquad::prelude::mouse_position();
+    let (mx, my) = crate::controller::mouse_position();
     let over = |x: f32, y: f32, rw: f32, rh: f32| mx >= x && mx < x + rw && my >= y && my < y + rh;
     draw_rectangle(0.0, 0.0, w, h, col(DARK, 0.74));
     let pic = |t: &macroquad::prelude::Texture2D, x: f32, y: f32, pw: f32, ph: f32| {
@@ -636,9 +646,10 @@ fn draw_pause(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
     }
     crate::ui::plate(px, qy, pw, qh, th::GLASS_STRONG, th::STROKE);
     draw_text("CONTROLS", ix, qy + 32.0 * k, sz(17.0), th::MUTED);
+    use crate::bindings::Action;
     let keys = [
-        [("ESC", "resume"), ("L", "loadout"), ("ENTER", "chat (U: team)"), ("TAB", "scoreboard"), ("Q", "leave (here)")],
-        [("T", "change sight"), ("G", "frag grenade"), ("F", "sidearm"), ("C", "crouch / slide"), ("V", "melee")],
+        [("ESC".into(), "resume"), (key_hint(app, Action::Loadout), "loadout"), (key_hint(app, Action::ChatAll), "chat"), (key_hint(app, Action::Scoreboard), "scoreboard"), ("Q".into(), "leave (here)")],
+        [(key_hint(app, Action::CycleSight), "change sight"), (key_hint(app, Action::Grenade), "frag grenade"), (key_hint(app, Action::SwapWeapon), "sidearm"), (key_hint(app, Action::Crouch), "crouch / slide"), (key_hint(app, Action::Melee), "melee")],
     ];
     for (c, column) in keys.iter().enumerate() {
         for (r, (key, what)) in column.iter().enumerate() {
@@ -1161,7 +1172,10 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
             } else {
                 "LOSING"
             };
-            text_c(&format!("POINT {}  -  {}", POINT_NAMES[k], status), cx, y - 8.0, 20.0, col(WHITE, 0.95));
+            let sector = if app.world.map == ferrite_shared::map::slag_cathedral::MAP_ID {
+                format!("{} / {}", POINT_NAMES[k], ferrite_shared::map::slag_cathedral::SECTOR_NAMES[k])
+            } else { format!("POINT {}", POINT_NAMES[k]) };
+            text_c(&format!("{}  -  {}", sector, status), cx, y - 8.0, 20.0, col(WHITE, 0.95));
             draw_rectangle(cx - bw * 0.5 - 2.0, y - 2.0, bw + 4.0, bh + 4.0, col(DARK, 0.8));
             draw_rectangle(cx - bw * 0.5, y, bw, bh, col(NEUTRAL_COL, 0.25));
             if prog < 0.0 {
@@ -1195,9 +1209,9 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
         text_r(&ammo, w - 96.0, h - 26.0, 52.0, if low { Color::new(1.0, 0.35, 0.2, 1.0) } else { col(WHITE, 1.0) });
         text(&format!("/ {}", wd.mag), w - 90.0, h - 28.0, 24.0, col(WHITE, 0.6));
         text_r(&format!("{}  -  {}", wd.name, crate::scene::SIGHT_NAMES[app.sight() as usize % 6]), w - 24.0, h - 74.0, 20.0, col(WHITE, 0.75));
-        text_r("[T] change sight", w - 24.0, h - 150.0, 18.0, col(WHITE, 0.55));
+        text_r(&format!("[{}] change sight", app.bindings.display(crate::bindings::Action::CycleSight)), w - 24.0, h - 150.0, 18.0, col(WHITE, 0.55));
         let other = sim::weapon_def(if app.st.slot == 1 { app.st.prim } else { app.st.side }).name;
-        text_r(&format!("[Q] {}  {}", other, app.st.ammo_alt), w - 24.0, h - 128.0, 18.0, col(WHITE, 0.6));
+        text_r(&format!("[{}] {}  {}", key_hint(app, crate::bindings::Action::SwapWeapon), other, app.st.ammo_alt), w - 24.0, h - 128.0, 18.0, col(WHITE, 0.6));
         for g in 0..app.st.grenades {
             draw_poly(w - 34.0 - g as f32 * 22.0, h - 104.0, 6, 8.0, 0.0, col([0.75, 0.8, 0.5], 0.95));
         }
@@ -1288,7 +1302,7 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
     }
 
     // ---- scoreboard ----
-    if (is_key_down(KeyCode::Tab) && !app.chat_open) || snap.phase == 1 || app.demo_scores {
+    if (app.action_down(crate::bindings::Action::Scoreboard) && !app.chat_open) || snap.phase == 1 || app.demo_scores {
         icons.clear(); // the scoreboard covers the panel
         let top = if over { (h * 0.1).max(66.0) + 124.0 } else { (h * 0.1).max(66.0) };
         draw_scoreboard(app, snap, w, h, top);

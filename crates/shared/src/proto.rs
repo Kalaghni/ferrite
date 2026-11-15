@@ -9,7 +9,7 @@ use crate::sim::PState;
 use bincode::Options;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-pub const PROTO: u32 = 13;
+pub const PROTO: u32 = 14;
 pub const DEFAULT_PORT: u16 = 27500;
 pub const SPECTATOR_ID: u8 = 255;
 
@@ -72,6 +72,8 @@ pub mod flag {
 /// Second button byte (`Cmd::more`).
 pub mod btn2 {
     pub const MELEE: u8 = 1;
+    /// Movement axes are signed analog values in -127..127.
+    pub const ANALOG_MOVE: u8 = 2;
 }
 
 /// Second flag byte: animation state for other players.
@@ -133,6 +135,31 @@ pub struct Cmd {
     /// Server tick-time the client was displaying remote players at when
     /// this command was made. Used (clamped) for lag-compensated hitscan.
     pub interp: f64,
+}
+
+impl Cmd {
+    /// Preserve keyboard intent while retaining analog stick magnitude.
+    pub fn movement(&self) -> (f32, f32) {
+        if self.more & btn2::ANALOG_MOVE != 0 {
+            (self.mx.max(-127) as f32 / 127.0, self.mz.max(-127) as f32 / 127.0)
+        } else {
+            (self.mx.clamp(-1, 1) as f32, self.mz.clamp(-1, 1) as f32)
+        }
+    }
+
+    /// Sanitize either command form before authoritative simulation.
+    pub fn clamp_movement(&mut self) {
+        let limit = if self.more & btn2::ANALOG_MOVE != 0 { 127 } else { 1 };
+        self.mx = self.mx.clamp(-limit, limit);
+        self.mz = self.mz.clamp(-limit, limit);
+    }
+
+    pub fn set_analog_movement(&mut self, right: f32, forward: f32) {
+        let quantize = |v: f32| if v.is_finite() { (v.clamp(-1.0, 1.0) * 127.0).round() as i8 } else { 0 };
+        self.mx = quantize(right);
+        self.mz = quantize(forward);
+        self.more |= btn2::ANALOG_MOVE;
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

@@ -124,6 +124,23 @@ pub struct Player {
     hist: [Vec3; HIST],
 }
 
+impl Player {
+    /// Queue gameplay choices for deployment, while cosmetics on the issued
+    /// weapons change as soon as the client selects them. A finish sent for
+    /// a different pending weapon must never repaint the weapon still held.
+    pub fn select_loadout(&mut self, kit: u8, prim: u8, side: u8, skin: u8, wskin: [u8; 2]) {
+        let (kit, prim, side) = sim::fix_loadout(kit, prim, side);
+        (self.next_kit, self.next_prim, self.next_side) = (kit, prim, side);
+        self.skin = skin % sim::SKINS.len() as u8;
+        self.next_wskin = [sim::fix_weapon_skin(prim, wskin[0]), sim::fix_weapon_skin(side, wskin[1])];
+        for (slot, issued, wanted) in [(0, self.st.prim, prim), (1, self.st.side, side)] {
+            if issued == wanted {
+                self.wskin[slot] = self.next_wskin[slot];
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Point {
     pub owner: u8,
@@ -667,8 +684,7 @@ impl Game {
                 return;
             }
             cmd.pitch = cmd.pitch.clamp(-1.55, 1.55);
-            cmd.mx = cmd.mx.clamp(-1, 1);
-            cmd.mz = cmd.mz.clamp(-1, 1);
+            cmd.clamp_movement();
             p.yaw = cmd.yaw;
             p.pitch = cmd.pitch;
             p.ads = cmd.buttons & btn::ADS != 0;
@@ -1242,6 +1258,13 @@ impl Game {
                 }
             } else if t >= p.respawn_at {
                 self.spawn_player(i);
+            }
+        }
+        // Lava burns whoever stands in it, friend or foe, shielded or not.
+        for i in 0..self.players.len() {
+            if self.players[i].alive && self.world.burning(self.players[i].st.pos) {
+                let dps = ferrite_shared::map::slag_cathedral::LAVA_DPS;
+                self.damage(i, None, dps * DT, false, sim::LAVA_WEAPON);
             }
         }
         self.update_grenades();

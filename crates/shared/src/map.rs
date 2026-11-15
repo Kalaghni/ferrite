@@ -4,6 +4,9 @@
 //! symmetric under a 180-degree rotation so neither team has a terrain
 //! advantage.
 
+pub mod relay;
+pub mod slag_cathedral;
+
 use crate::rng::Rng;
 use glam::{vec2, vec3, Vec2, Vec3};
 use std::collections::BinaryHeap;
@@ -33,7 +36,7 @@ pub struct MapDef {
     pub ground: [[f32; 3]; 3],
 }
 
-pub static MAPS: [MapDef; 6] = [
+pub static MAPS: [MapDef; 7] = [
     MapDef {
         name: "FOUNDRY VALLEY",
         blurb: "Rolling valley, ruined foundry in the middle",
@@ -71,10 +74,17 @@ pub static MAPS: [MapDef; 6] = [
     },
     MapDef {
         name: "RELAY",
-        blurb: "Highland signal station - antenna arrays and rocky flanking paths",
+        blurb: "Highland signal station - climb the towers, hold the exchange",
         points: [(-78.0, 16.0), (-38.0, -26.0), (0.0, 0.0), (38.0, 26.0), (78.0, -16.0)],
         bases: BASES_XZ,
         ground: [[0.37, 0.43, 0.39], [0.54, 0.53, 0.47], [0.46, 0.46, 0.44]],
+    },
+    MapDef {
+        name: "SLAG CATHEDRAL",
+        blurb: "Monumental casting nave, furnace courts and steel galleries",
+        points: slag_cathedral::POINTS,
+        bases: BASES_XZ,
+        ground: [[0.28, 0.29, 0.29], [0.42, 0.37, 0.31], [0.37, 0.36, 0.34]],
     },
 ];
 
@@ -223,6 +233,11 @@ fn shape(x: f32, z: f32, s: u32, map: u8) -> f32 {
             let plateau = 1.0 - smooth(16.0, 48.0, (x * x * 0.3 + z * z).sqrt());
             raw_height(x, z, s) * 0.42 + 3.4 * plateau
         }
+        6 => {
+            // Level industrial apron; only the outer flanks regain terrain.
+            let edge = smooth(48.0, 64.0, z.abs()).max(smooth(112.0, 145.0, x.abs()));
+            raw_height(x, z, s) * 0.2 * edge
+        }
         _ => raw_height(x, z, s),
     }
 }
@@ -249,6 +264,16 @@ fn full_height(x: f32, z: f32, s: u32, map: u8) -> f32 {
     }
     for (cx, cz) in def.bases {
         flat(cx, cz, 20.0);
+    }
+    // Relay's towers stand on levelled sites so their stairs meet the ground.
+    if map % MAPS.len() as u8 == relay::MAP_ID {
+        for (tx, tz, _, _) in relay::TOWERS {
+            flat(tx, tz, relay::SITE_RADIUS);
+            flat(-tx, -tz, relay::SITE_RADIUS);
+        }
+        let (dx, dz) = relay::DISH;
+        flat(dx, dz, 6.0);
+        flat(-dx, -dz, 6.0);
     }
     // Ridge walls enclosing the playable valley.
     let ex = (x.abs() - (HALF_X + 2.0)).max(0.0);
@@ -302,6 +327,7 @@ impl World {
             3 => w.build_depot(&mut rng),
             4 => w.build_spillway(&mut rng),
             5 => w.build_relay(&mut rng),
+            slag_cathedral::MAP_ID => slag_cathedral::build(&mut w, &mut rng),
             _ => w.build_structures(&mut rng),
         }
         w
@@ -330,6 +356,17 @@ impl World {
         let dx = self.height(x + e, z) - self.height(x - e, z);
         let dz = self.height(x, z + e) - self.height(x, z - e);
         vec3(-dx, 2.0 * e, -dz).normalize()
+    }
+
+    /// Whether (x, z) is over a lava hazard, grown by `margin`. Only Slag
+    /// Cathedral has any.
+    pub fn lava(&self, x: f32, z: f32, margin: f32) -> bool {
+        self.map == slag_cathedral::MAP_ID && slag_cathedral::in_lava(x, z, margin)
+    }
+
+    /// Whether someone whose feet are at `pos` is standing in lava.
+    pub fn burning(&self, pos: Vec3) -> bool {
+        self.lava(pos.x, pos.z, 0.0) && pos.y - self.height(pos.x, pos.z) < slag_cathedral::LAVA_REACH
     }
 
     #[inline]
@@ -883,15 +920,22 @@ impl World {
         self.sym(-38.0, -19.5, 2.7, 0.4, 0.0, 1.1, Sandbag, 0);
         self.sym(-45.0, -23.0, 0.4, 2.4, 0.0, 1.1, Concrete, 1);
         self.crates(rng, -39.0, -28.5, 4);
-        self.signal_mast(-39.0, -38.0, 9.5);
+        let (x, z, flights, rot) = relay::TOWERS[0];
+        relay::tower(self, x, z, flights, rot);
 
-        // C: the relay exchange. Two skeletal towers frame an open
+        // C: the relay exchange. Two climbable towers frame an open
         // switchyard, so the centre reads at a distance from every lane.
-        self.signal_mast(-9.5, 9.0, 14.0);
+        let (x, z, flights, rot) = relay::TOWERS[1];
+        relay::tower(self, x, z, flights, rot);
         self.sym(-8.5, -7.0, 2.0, 1.0, 0.0, 1.4, Metal, 0);
         self.sym(-4.5, 5.0, 2.1, 0.4, 0.0, 1.0, Concrete, 2);
         self.sym(-4.0, -4.0, 0.4, 2.0, 0.0, 1.0, Sandbag, 1);
         self.crates(rng, -10.0, -4.0, 3);
+
+        // A great listening dish stands on a pedestal in each half; the dish
+        // itself is overhead, so only the pedestal is cover.
+        let (dx, dz) = relay::DISH;
+        self.sym(dx, dz, relay::DISH_PEDESTAL_HALF, relay::DISH_PEDESTAL_HALF, 0.0, relay::DISH_PEDESTAL_H, Concrete, 3);
 
         // Cable gantries run from the exchange to the ridge-side cabins.
         // The two five-metre service arches can be walked underneath.
@@ -911,27 +955,6 @@ impl World {
         self.lane_cover(rng, 5, 11.0);
         self.boulders(rng, 28, 0.8, 1.6);
         self.forest(rng, 65, 185, 0.95);
-    }
-
-    /// Paired lattice radio towers: four slender legs, braced landings,
-    /// panel antennae and a transverse aerial. Kept outside capture pads.
-    fn signal_mast(&mut self, x: f32, z: f32, height: f32) {
-        use BlockKind::*;
-        let ground = self.height(x, z);
-        for dx in [-0.9f32, 0.9] {
-            for dz in [-0.9f32, 0.9] {
-                self.sym_abs(x + dx, z + dz, 0.15, 0.15, self.height(x + dx, z + dz) - 0.6, ground + height, Metal, 0);
-            }
-        }
-        for level in 1..=4 {
-            let y = ground + height * level as f32 / 4.0;
-            self.sym_abs(x, z, 1.15, 1.15, y - 0.18, y + 0.18, Metal, 1);
-        }
-        for dx in [-1.15f32, 1.15] {
-            self.sym_abs(x + dx, z, 0.2, 0.5, ground + height - 3.3, ground + height - 0.8, Concrete, 2);
-        }
-        self.sym_abs(x, z, 0.12, 0.12, ground + height, ground + height + 2.2, Metal, 1);
-        self.sym_abs(x, z, 2.1, 0.1, ground + height + 1.2, ground + height + 1.4, Metal, 0);
     }
 
     // ---------------------------------------------------- Foundry Valley
@@ -1108,7 +1131,7 @@ impl Nav {
                         && z - r < b.max.z
                         && b.max.y - g > 0.45
                         && b.min.y - g < 1.9
-                });
+                }) || world.lava(x, z, 0.9); // bots take the bridges
             }
         }
         let mut near = vec![false; w * h];
@@ -1236,6 +1259,8 @@ mod tests {
     // Captured before adding maps. Millimetre quantisation tolerates tiny
     // floating-point differences between targets, but covers the complete
     // terrain, collision geometry, trees, objectives and crate assignment.
+    // Relay's two hashes were re-captured when its masts were rebuilt as
+    // climbable towers; the other five maps are as first captured.
     fn fingerprint(w: &World) -> u64 {
         let mut h = 0xcbf29ce484222325u64;
         let mut add = |v: u32| {
@@ -1275,8 +1300,8 @@ mod tests {
     #[test]
     fn legacy_map_geometry_is_unchanged() {
         for (seed, expected) in [
-            (0xFE221, [0xac8c5c1887554b55, 0x165afbe59f8ca92c, 0xe0089be025c78ac3, 0x5a11699cf00d19c4]),
-            (0xD091, [0xfc1da7b889909c78, 0xfd11c69e66b18bce, 0x1719bf43833f37ab, 0xae14f068c1f8f74e]),
+            (0xFE221, [0xac8c5c1887554b55, 0x165afbe59f8ca92c, 0xe0089be025c78ac3, 0x5a11699cf00d19c4, 0x391bf9518c17bce9, 0xb124f068b46b7d28]),
+            (0xD091, [0xfc1da7b889909c78, 0xfd11c69e66b18bce, 0x1719bf43833f37ab, 0xae14f068c1f8f74e, 0x52a3f3f692233e72, 0xb045da91512d0e57]),
         ] {
             for (id, hash) in expected.into_iter().enumerate() {
                 assert_eq!(fingerprint(&World::with_map(seed, id as u8)), hash, "{} changed for seed {seed:x}", MAPS[id].name);
