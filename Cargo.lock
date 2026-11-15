@@ -145,7 +145,7 @@ dependencies = [
 
 [[package]]
 name = "ferrite"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "ferrite-server",
  "ferrite-shared",
@@ -157,7 +157,7 @@ dependencies = [
 
 [[package]]
 name = "ferrite-server"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "ferrite-shared",
  "socket2",
@@ -165,7 +165,7 @@ dependencies = [
 
 [[package]]
 name = "ferrite-shared"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "bincode",
  "glam",

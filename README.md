@@ -1,4 +1,4 @@
-# FERRITE 0.9.0
+# FERRITE 0.9.1
 
 ![The FERRITE launcher: host, join or change settings](docs/launcher.png)
 
@@ -20,6 +20,10 @@ v0.5 adds a lobby before every round (map vote, loadouts, ready-up countdown), t
 v0.6 adds a new launcher and lobby look (key art, palette and typeface from the FERRITE UI kit), launcher and lobby music, a pause overlay, 3D models of every gun in the loadout picker, a bot difficulty selector, and a camera that follows whoever eliminated you while you wait to redeploy.
 
 v0.7 adds text chat, a melee strike, a killcam, player icons, callsigns backed by a player id (your record follows you when you rename), a kill feed that puts people ahead of bots, the plumbing for weapon finishes, a Windows installer, and updates from inside the launcher.
+
+## v0.9.1
+
+Adds "Barbed Wire" by breadKernel to the music rotation (launcher, and matches when music during matches is on). Nothing else changed: v0.9.0 and v0.9.1 players can share a match. See the [v0.9.1 release notes](docs/release-notes/v0.9.1.md).
 
 ## v0.9
 
@@ -58,8 +62,8 @@ Either way the game keeps itself current: the launcher checks this repository's 
 **macOS:** the build is not signed with an Apple Developer ID, so a copy downloaded in a browser is blocked by Gatekeeper. The simplest way round it is to download from Terminal, which does not get flagged:
 
 ```sh
-curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.9.0/ferrite-v0.9.0-macos-universal.tar.gz | tar xz
-./ferrite-v0.9.0-macos-universal/ferrite
+curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.9.1/ferrite-v0.9.1-macos-universal.tar.gz | tar xz
+./ferrite-v0.9.1-macos-universal/ferrite
 ```
 
 If you already downloaded it in a browser, run `xattr -dr com.apple.quarantine .` in the unpacked folder once.

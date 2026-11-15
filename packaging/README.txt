@@ -1,6 +1,11 @@
 FERRITE - 12v12 front-line conquest
 https://github.com/Kalaghni/ferrite
 
+NEW IN v0.9.1
+  New song in the music rotation: "Barbed Wire" by breadKernel. It plays
+  on the launcher, and in matches when music during matches is on.
+  v0.9.0 and v0.9.1 players can share a match.
+
 NEW IN v0.9
   Slag Cathedral: a bell foundry on the scale of a cathedral, with a vaulted
   casting nave, raised galleries, covered service lanes and a dedicated map
