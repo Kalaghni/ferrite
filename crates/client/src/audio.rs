@@ -14,6 +14,7 @@ use macroquad::audio::{load_sound_from_bytes, play_sound, set_sound_volume, Play
 static SONGS: &[(&str, &[u8])] = &[
     ("Liquid Plasma - breadKernel", include_bytes!("../assets/liquid-plasma.ogg")),
     ("Submariner - breadKernel", include_bytes!("../assets/submariner.ogg")),
+    ("Barbed Wire - breadKernel", include_bytes!("../assets/barbed-wire.ogg")),
 ];
 
 /// The lobby has its own track.

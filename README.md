@@ -207,7 +207,7 @@ License: MIT.
 
 ## Credits
 
-- Music by breadKernel: "Liquid Plasma" and "Submariner" (launcher) and "Foundrite Lobby" (lobby).
+- Music by breadKernel: "Liquid Plasma", "Submariner" and "Barbed Wire" (launcher) and "Foundrite Lobby" (lobby).
 - Typeface: Quantico by Matthew Desmond, under the SIL Open Font License (`packaging/Quantico-OFL.txt`).
 - Launcher and lobby key art, palette and layout: the FERRITE UI kit, "The Frontline".
 

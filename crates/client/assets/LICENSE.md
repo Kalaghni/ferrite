@@ -8,6 +8,7 @@ and they ship inside the game executable.
 
 - `liquid-plasma.ogg` - "Liquid Plasma"
 - `submariner.ogg` - "Submariner"
+- `barbed-wire.ogg` - "Barbed Wire"
 - `foundrite-lobby.ogg` - "Foundrite Lobby"
 
 Copyright (c) breadKernel. All rights reserved.
