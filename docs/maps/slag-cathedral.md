@@ -6,15 +6,17 @@ A vast casting works built on the scale of a cathedral. Steel ribs rise over the
 
 ## Battlefield
 
-The map uses FERRITE's 236 by 136 metre combat footprint and five-point conquest rules. Its ground, hard cover, stairs and objectives are mirrored under a half-turn. Bases have clear eight-metre spawn discs; each objective has an unobstructed standing core.
+The map uses FERRITE's 354 by 204 metre combat footprint and five-point conquest rules. Its ground, hard cover, stairs and objectives are mirrored under a half-turn. Players spawn across open ground up to 20 metres from the centre of their base; each objective has an unobstructed standing core.
+
+The cathedral itself, its galleries, furnaces and lava stand where they were first built. When the maps were spread out by half again, the stockyards, boiler courts, bell yards, pipe yards and bases moved outward with them, and the ground between was filled with ingot stores, pattern shops, open casting sheds, gas holders and slag-heap lookouts.
 
 | Point | Sector | Position (x, z) | Character |
 | --- | --- | --- | --- |
-| A | West Stockyard | -78, -18 | Open industrial gateway, mould beds and staging cover |
-| B | Boiler Court | -40, 22 | Sheltered courtyard and access to the nave's side routes |
+| A | West Stockyard | -117, -27 | Open industrial gateway, mould beds and staging cover |
+| B | Boiler Court | -60, 33 | Sheltered courtyard and access to the nave's side routes |
 | C | Crucible Nave | 0, 0 | Main casting floor beneath a suspended crucible and crane |
-| D | Boiler Court | 40, -22 | Opposing courtyard, mirrored for equal approaches |
-| E | East Stockyard | 78, 18 | Opposing stock gateway and approach to the base |
+| D | Boiler Court | 60, -33 | Opposing courtyard, mirrored for equal approaches |
+| E | East Stockyard | 117, 27 | Opposing stock gateway and approach to the base |
 
 The central hall spans 68 by 44 metres. Six pairs of piers support 24 metre eaves and a 30 metre ridgeline; the twin furnace towers rise to 38 metres. Wide end portals, lateral doorways and offset machinery stop the architecture becoming a single choke point.
 
@@ -69,7 +71,7 @@ Works No. 6 cast bells. Its sixth great bell cracked as it cooled, and the seven
 
 ### How it is built
 
-Anything a player can touch is flush with the floor, well overhead, or skinned onto collision read from the shared layout, so the dressing never changes how the map plays. The bell yards are the only new collision; they are mirrored like everything else. The art pass lives in `crates/client/src/scene/slag_cathedral_art.rs`.
+Anything a player can touch is flush with the floor, well overhead, or skinned onto collision read from the shared layout, so the dressing never changes how the map plays. The bell yards and the buildings between the yards are the only collision added since the map was first built; they are mirrored like everything else. The art pass lives in `crates/client/src/scene/slag_cathedral_art.rs`.
 
 The five sector names appear in the capture prompt. The map is available through the host selector, map vote, rotation, and `--map "slag cathedral"` (`--map slag` also works).
 
@@ -79,7 +81,7 @@ The supplied **Slag Cathedral** score is embedded for this battlefield. Its 2:34
 
 ## Verification
 
-Regression checks preserve the six older map layouts. Slag-specific tests exercise deterministic collision, half-turn symmetry, spawn and capture clearance, ground flow paths across five seeds, physical base-to-nave movement, all four stairways and gallery crossings, and the lava channels: mirrored spans, safe bridges, clear pads and cover, and a burn that kills and is reported as lava. The bell yards are checked for mirroring, pad clearance and walkable gaps under both gantries. Renderer tests bound the static, animated and sky meshes. The existing all-map bot battle soak includes Slag Cathedral.
+A fingerprint test pins the layout of all seven maps. Slag-specific tests exercise deterministic collision, half-turn symmetry, spawn and capture clearance, ground flow paths across five seeds, physical base-to-nave movement, all four stairways and gallery crossings, and the lava channels: mirrored spans, safe bridges, clear pads and cover, and a burn that kills and is reported as lava. The bell yards are checked for mirroring, pad clearance and walkable gaps under both gantries. Renderer tests bound the static, animated and sky meshes. The existing all-map bot battle soak includes Slag Cathedral.
 
 Preview images are exported from FERRITE's renderer, without a desktop capture session.
 

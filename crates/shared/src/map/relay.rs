@@ -13,10 +13,14 @@ pub const MAP_ID: u8 = 5;
 /// West-authored towers: (x, z, flights climbed, quarter turns).
 /// The array tower south of B has one full turn of stair; the exchange tower
 /// beside C climbs a turn and a half and is the tallest thing on the map.
-pub const TOWERS: [(f32, f32, usize, u8); 2] = [(-39.0, -38.0, 4, 1), (-9.5, 9.0, 6, 0)];
+/// The array tower keeps its place 12 m south of B, which has moved out with
+/// the map's spread; the exchange tower beside C has not moved.
+pub const TOWERS: [(f32, f32, usize, u8); 2] = [(-58.0, -51.0, 4, 1), (-9.5, 9.0, 6, 0)];
 
 /// West-authored listening dish: a concrete pedestal, mirrored like the rest.
-pub const DISH: (f32, f32) = (-33.0, 15.0);
+pub const DISH: (f32, f32) = (-33.0 * super::SPREAD, 15.0 * super::SPREAD);
+/// West-authored cable gantries, from the exchange out toward A.
+pub const GANTRIES: [(f32, f32); 2] = [(-23.0 * super::SPREAD, -8.0 * super::SPREAD), (-58.0 * super::SPREAD, 2.0 * super::SPREAD)];
 pub const DISH_PEDESTAL_HALF: f32 = 1.5;
 pub const DISH_PEDESTAL_H: f32 = 5.0;
 

@@ -107,6 +107,53 @@ fn pyramid(m: &mut Mesh, base: Vec3, r: f32, h: f32, rot: f32, col: Col) {
     }
 }
 
+/// Blocks whose visible faces lie in one plane and overlap z-fight: which
+/// face wins flips as the view moves. Each block is shaded with a per-block
+/// jitter, so the fight shows as patches jumping between two shades. Group
+/// such blocks and return, per block, the index whose shade it takes (the
+/// lowest in its group), so the faces that fight look the same.
+pub fn shade_groups(w: &World) -> Vec<usize> {
+    let b = &w.blocks;
+    let mut root: Vec<usize> = (0..b.len()).collect();
+    fn find(r: &mut [usize], mut i: usize) -> usize {
+        while r[i] != i {
+            r[i] = r[r[i]];
+            i = r[i];
+        }
+        i
+    }
+    for i in 0..b.len() {
+        for j in i + 1..b.len() {
+            let (p, q) = (&b[i], &b[j]);
+            if p.min.cmpgt(q.max).any() || q.min.cmpgt(p.max).any() {
+                continue; // apart: no shared face
+            }
+            let shares = (0..3).any(|ax| {
+                let (o1, o2) = ([1, 2, 0][ax], [2, 0, 1][ax]);
+                let lo1 = p.min[o1].max(q.min[o1]);
+                let lo2 = p.min[o2].max(q.min[o2]);
+                if p.max[o1].min(q.max[o1]) - lo1 <= 0.01 || p.max[o2].min(q.max[o2]) - lo2 <= 0.01 {
+                    return false;
+                }
+                let low = (p.min[ax] - q.min[ax]).abs() < 0.002;
+                let high = (p.max[ax] - q.max[ax]).abs() < 0.002;
+                // Bottoms sunk into the ground are never seen; counting them
+                // would put every block standing on flat ground in one group.
+                let buried = ax == 1 && {
+                    let c = (p.min.max(q.min) + p.max.min(q.max)) * 0.5;
+                    p.min.y <= w.height(c.x, c.z) + 0.05
+                };
+                high || (low && !buried)
+            });
+            if shares {
+                let (a, c) = (find(&mut root, i), find(&mut root, j));
+                root[a.max(c)] = a.min(c);
+            }
+        }
+    }
+    (0..b.len()).map(|i| find(&mut root, i)).collect()
+}
+
 pub fn build_world(w: &World) -> Mesh {
     let mut m = Mesh::default();
     let seed = w.seed as u32;
@@ -125,10 +172,12 @@ pub fn build_world(w: &World) -> Mesh {
         }
     }
     const CONTAINER: [[f32; 3]; 4] = [[0.66, 0.27, 0.16], [0.18, 0.46, 0.48], [0.80, 0.60, 0.18], [0.34, 0.38, 0.47]];
+    let groups = shade_groups(w);
     for (i, b) in w.blocks.iter().enumerate() {
-        if w.map == slag_cathedral::ID { slag_cathedral::block(&mut m, b, i); continue; }
+        let g = groups[i]; // shade of the group, so coplanar faces match
+        if w.map == slag_cathedral::ID { slag_cathedral::block(&mut m, b, g); continue; }
         if w.map == relay::ID && relay::owns(b) { continue; }
-        let j = 0.9 + 0.2 * hash01(i as u32, 91);
+        let j = 0.9 + 0.2 * hash01(g as u32, 91);
         match b.kind {
             BlockKind::Crate => {}
             BlockKind::Concrete => {
@@ -221,7 +270,9 @@ pub fn build_world(w: &World) -> Mesh {
     }
     // Grass tufts and pebbles: cheap detail that breaks up the ground.
     let free = |x: f32, z: f32| !w.blocks.iter().any(|b| x > b.min.x - 0.2 && x < b.max.x + 0.2 && z > b.min.z - 0.2 && z < b.max.z + 0.2);
-    for k in 0..26000u32 {
+    // Same density as on the original 236 x 136 m footprint.
+    let tufts = (26000.0 * (HALF_X + 6.0) * (HALF_Z + 6.0) / (124.0 * 74.0)) as u32;
+    for k in 0..tufts {
         let x = (hash01(k, seed ^ 0x11) * 2.0 - 1.0) * (HALF_X + 6.0);
         let z = (hash01(k, seed ^ 0x22) * 2.0 - 1.0) * (HALF_Z + 6.0);
         let n = w.terrain_normal(x, z);

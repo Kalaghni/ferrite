@@ -1,6 +1,15 @@
 FERRITE - 12v12 front-line conquest
 https://github.com/Kalaghni/ferrite
 
+NEW IN v0.9.2
+  Every map is spread out by half again, with buildings, sheds, tanks,
+  lookouts and ruins in the new ground between the objectives. Players
+  spawn spread across open ground, away from other players.
+  Pick your team in the lobby (M). Your sight for each weapon is
+  remembered. Number keys change your loadout only while the loadout
+  panel is open. F11 toggles fullscreen. Lava shows the damage overlay.
+  Everyone in a match needs v0.9.2, including the dedicated server.
+
 NEW IN v0.9.1
   New song in the music rotation: "Barbed Wire" by breadKernel. It plays
   on the launcher, and in matches when music during matches is on.

@@ -4,7 +4,7 @@
 use super::{hash01, mix3, smooth};
 use crate::gfx::{rgb, shade, Col, Light, Mesh};
 use ferrite_shared::glam::{vec3, Mat4, Vec3};
-use ferrite_shared::map::{slag_cathedral as layout, vnoise, Block, BlockKind, World};
+use ferrite_shared::map::{slag_cathedral as layout, vnoise, Block, BlockKind, World, SPREAD};
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 #[path = "slag_cathedral_art.rs"]
@@ -131,7 +131,7 @@ pub fn ground(w: &World, c: Vec3, n: Vec3, jitter: f32) -> Col {
     );
     let col = mix3(col, [0.28, 0.275, 0.30], smooth(0.02, 0.2, 1.0 - n.y));
     let col = art::ground_tint(col, c);
-    let wear = if c.z.abs() < 26.0 && c.x.abs() < 91.0 {
+    let wear = if c.z.abs() < 26.0 * SPREAD && c.x.abs() < 91.0 * SPREAD {
         1.04
     } else {
         0.91
@@ -173,11 +173,14 @@ pub fn block(m: &mut Mesh, b: &Block, index: usize) {
         return;
     }
     let e = 0.055f32.min(size.x * 0.1).min(size.z * 0.1);
-    for x in [b.min.x + e, b.max.x - e] {
-        for z in [b.min.z + e, b.max.z - e] {
+    // Corner posts stand proud of the faces, like the seams below: flush
+    // with them they z-fight the block and flicker as the view moves.
+    let o = 0.012;
+    for (x0, x1) in [(b.min.x - o, b.min.x + 2.0 * e), (b.max.x - 2.0 * e, b.max.x + o)] {
+        for (z0, z1) in [(b.min.z - o, b.min.z + 2.0 * e), (b.max.z - 2.0 * e, b.max.z + o)] {
             m.cuboid(
-                vec3(x - e, b.min.y + 0.03, z - e),
-                vec3(x + e, b.max.y - 0.03, z + e),
+                vec3(x0, b.min.y + 0.03, z0),
+                vec3(x1, b.max.y - 0.03, z1),
                 shade(base, 0.73),
             );
         }
@@ -1058,8 +1061,8 @@ fn floor_and_services(m: &mut Mesh, w: &World) {
     }
     // Small scattered flakes stay below step height and outside the nave.
     for k in 0..220u32 {
-        let x = (hash01(k, 0xA5) * 2.0 - 1.0) * 111.0;
-        let z = (hash01(k, 0x5A) * 2.0 - 1.0) * 61.0;
+        let x = (hash01(k, 0xA5) * 2.0 - 1.0) * 111.0 * SPREAD;
+        let z = (hash01(k, 0x5A) * 2.0 - 1.0) * 61.0 * SPREAD;
         if x.abs() < 36.0 && z.abs() < 24.0 {
             continue;
         }
@@ -1270,8 +1273,8 @@ pub fn atmosphere(alpha: &mut Mesh, add: &mut Mesh, w: &World, time: f32) {
     art::atmosphere(alpha, add, w, time);
     for k in 0..110u32 {
         let age = (time * 0.04 + hash01(k, 70)).fract();
-        let x = (hash01(k, 71) * 2.0 - 1.0) * 108.0 + age * 5.0;
-        let z = (hash01(k, 72) * 2.0 - 1.0) * 58.0;
+        let x = (hash01(k, 71) * 2.0 - 1.0) * 108.0 * SPREAD + age * 5.0;
+        let z = (hash01(k, 72) * 2.0 - 1.0) * 58.0 * SPREAD;
         let p = vec3(
             x,
             w.height(x, z) + 0.8 + (1.0 - age) * (5.0 + hash01(k, 73) * 9.0),
@@ -1291,6 +1294,7 @@ pub fn atmosphere(alpha: &mut Mesh, add: &mut Mesh, w: &World, time: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ferrite_shared::map::{HALF_X, HALF_Z};
     #[test]
     fn cathedral_detail_is_finite_and_stays_within_its_landmark_budget() {
         let w = World::with_map(0xFE221, ID);
@@ -1310,7 +1314,7 @@ mod tests {
                 let p = Vec3::from_array(v.pos);
                 assert!(p.is_finite() && Vec3::from_array(v.nrm).is_finite());
                 assert!(
-                    p.x.abs() < 118.0 && p.z.abs() < 68.0 && p.y >= -8.0 && p.y < 48.0,
+                    p.x.abs() < HALF_X && p.z.abs() < HALF_Z && p.y >= -8.0 && p.y < 48.0,
                     "cathedral detail outside its bounds: {p:?}"
                 );
                 maximum_y = maximum_y.max(p.y);
@@ -1340,7 +1344,7 @@ mod tests {
                 for vertex in vertices {
                     let p = Vec3::from_array(vertex.pos);
                     assert!(p.is_finite() && Vec3::from_array(vertex.nrm).is_finite());
-                    assert!(p.x.abs() < 125.0 && p.z.abs() < 70.0 && p.y > -8.0 && p.y < 65.0);
+                    assert!(p.x.abs() < HALF_X && p.z.abs() < HALF_Z && p.y > -8.0 && p.y < 65.0);
                     assert!(vertex.col.into_iter().all(f32::is_finite));
                 }
             }
@@ -1371,6 +1375,45 @@ mod tests {
         // Every character used on a sign has a glyph.
         for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-".chars() {
             assert!(glyph(c).iter().any(|&row| row != 0), "no glyph for {c}");
+        }
+    }
+    #[test]
+    fn yard_dressing_follows_the_spread_out_collision() {
+        let near = |b: &Block, x: f32, z: f32| {
+            let c = (b.min + b.max) * 0.5;
+            (c.x - x).abs() < 0.05 && (c.z - z).abs() < 0.05
+        };
+        for seed in [0xFE221u64, 1, 6, 8, 12, 77, 0xBEEF] {
+            let w = World::with_map(seed, ID);
+            let (sx, sz) = art::STOCKYARD;
+            assert!(
+                w.blocks.iter().any(|b| near(b, sx, sz) && b.min.y > 5.0),
+                "stockyard lamps and sign hang from the gantry beam"
+            );
+            assert!(w.blocks.iter().any(|b| near(b, art::GATE_WALL_X, 0.0)
+                && b.kind == BlockKind::Concrete));
+            assert!((art::COURT.0 - layout::POINTS[1].0).abs() < 0.01);
+            for x in layout::PIPE_YARD_X {
+                assert!(w.blocks.iter().any(|b| near(b, x, layout::PIPE_YARD_Z)));
+            }
+            // The railway runs out through both portals, stops short of the
+            // spawn ground, and nothing standing on the ground crosses it.
+            let runs = art::rail_runs(&w);
+            assert!(runs[0].0 == 0.0 && runs[0].1 > layout::NAVE_HALF_X + 1.0, "{runs:?}");
+            assert!(runs.iter().all(|&(a, b)| a < b && b <= art::RAIL_LIMIT));
+            for &(a, b) in &runs {
+                for s in [-1.0f32, 1.0] {
+                    let (x0, x1) = ((s * a).min(s * b) - 0.45, (s * a).max(s * b) + 0.45);
+                    assert!(!w.blocks.iter().any(|blk| {
+                        let c = (blk.min + blk.max) * 0.5;
+                        blk.min.y < w.height(c.x, c.z) + 0.5
+                            && blk.min.z < 1.2
+                            && blk.max.z > -1.2
+                            && blk.max.x > x0
+                            && blk.min.x < x1
+                    }), "a building stands on the ladle railway: {runs:?}");
+                }
+            }
         }
     }
     #[test]

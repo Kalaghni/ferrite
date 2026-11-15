@@ -16,7 +16,7 @@ use super::slag_cathedral::{beam, girder, pipe};
 use super::{hash01, mix3, smooth};
 use crate::gfx::{shade, Col, Light, Mesh};
 use ferrite_shared::glam::{vec3, Mat4, Vec3};
-use ferrite_shared::map::{relay as layout, vnoise, Block, World};
+use ferrite_shared::map::{relay as layout, shift, vnoise, Block, World, HALF_X, HALF_Z, SPREAD};
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 pub const ID: u8 = layout::MAP_ID;
@@ -102,6 +102,39 @@ fn dishes(w: &World) -> [(f32, f32, f32, f32); 2] {
     ]
 }
 
+/// Where something first authored at `(x, z)`, in the cluster round
+/// objective `k`, stands now: the cluster moved out with its objective when
+/// the map was spread, keeping its shape (as `build_relay` places it).
+fn beside(w: &World, k: usize, x: f32, z: f32) -> (f32, f32) {
+    let p = w.points[k];
+    let (ox, oz) = shift(p.x / SPREAD, p.z / SPREAD);
+    (x + ox, z + oz)
+}
+
+/// The west generator shed at A.
+fn generator(w: &World) -> (f32, f32) {
+    beside(w, 0, -82.5, 18.5)
+}
+
+/// The west communications cabin (a container) at B.
+fn comms(w: &World) -> (f32, f32) {
+    beside(w, 1, -43.5, -31.5)
+}
+
+/// The west switchgear cabinet beside the exchange at C, which did not move.
+const SWITCHGEAR: (f32, f32) = (-8.5, -7.0);
+/// Roof heights of the shed and the cabinet, as `build_relay` builds them,
+/// and the height of the power line on the pole each carries.
+const SHED_ROOF: f32 = 1.45;
+const SHED_LINE: f32 = 4.4;
+const CABINET_ROOF: f32 = 1.4;
+const CABINET_LINE: f32 = 2.35;
+
+/// A cable gantry's two posts stand this far either side of its centre, as
+/// `build_relay` raises them; `layout::GANTRIES` runs from the exchange out
+/// toward A.
+const GANTRY_HALF: f32 = 3.8;
+
 /// Surface of revolution about the +Y axis of `g`.
 fn lathe_m(
     m: &mut Mesh,
@@ -173,11 +206,12 @@ fn wire(m: &mut Mesh, a: Vec3, b: Vec3, sag: f32, markers: usize, thick: f32) {
 /// the nearest cable gantry: (top, bottom, sag).
 fn flag_line(w: &World, s: &Site) -> (Vec3, Vec3, f32) {
     let top = s.at(layout::RING_HALF, s.deck() + 1.0, -layout::RING_HALF);
-    let (gx, gz) = (-23.0 * s.side, -4.2 * s.side);
+    let (x, z) = layout::GANTRIES[0];
+    let (gx, gz) = (x * s.side, (z + GANTRY_HALF) * s.side);
     (
         top,
-        vec3(gx, w.height(-23.0 * s.side, -8.0 * s.side) + 6.05, gz),
-        1.1,
+        vec3(gx, w.height(x * s.side, z * s.side) + 6.05, gz),
+        1.1 * SPREAD,
     )
 }
 
@@ -192,17 +226,30 @@ fn segment_distance(px: f32, pz: f32, a: (f32, f32), b: (f32, f32)) -> f32 {
 /// Gravel service tracks between the buildings, swept pads under the towers
 /// and dishes, and heather across the open ground.
 pub fn ground_tint(w: &World, mut col: [f32; 3], c: Vec3, n: Vec3) -> [f32; 3] {
-    const TRACKS: [((f32, f32), (f32, f32)); 7] = [
-        ((-106.0, 0.0), (-78.0, 16.0)),
-        ((-78.0, 16.0), (-33.0, 15.0)),
-        ((-33.0, 15.0), (-9.5, 9.0)),
-        ((-78.0, 16.0), (-38.0, -26.0)),
-        ((-38.0, -26.0), (-39.0, -38.0)),
-        ((-38.0, -26.0), (0.0, 0.0)),
-        ((-9.5, 9.0), (0.0, 0.0)),
+    // Base to A, A past the dish to the exchange, A to B, B to its array
+    // tower and on to C, and the exchange tower to C.
+    let xz = |p: Vec3| (p.x, p.z);
+    let (base, a, b, c0) = (
+        xz(w.bases[0]),
+        xz(w.points[0]),
+        xz(w.points[1]),
+        xz(w.points[2]),
+    );
+    let (array, exchange) = (
+        (layout::TOWERS[0].0, layout::TOWERS[0].1),
+        (layout::TOWERS[1].0, layout::TOWERS[1].1),
+    );
+    let tracks = [
+        (base, a),
+        (a, layout::DISH),
+        (layout::DISH, exchange),
+        (a, b),
+        (b, array),
+        (b, c0),
+        (exchange, c0),
     ];
     let mut track = f32::MAX;
-    for (a, b) in TRACKS {
+    for (a, b) in tracks {
         track = track
             .min(segment_distance(c.x, c.z, a, b))
             .min(segment_distance(-c.x, -c.z, a, b));
@@ -273,9 +320,11 @@ fn flowers(m: &mut Mesh, w: &World) {
         [0.97, 0.8, 0.2, 0.3],
         [0.8, 0.42, 0.66, 0.3],
     ];
-    for k in 0..1500u32 {
-        let x = (hash01(k, 901) * 2.0 - 1.0) * 112.0;
-        let z = (hash01(k, 902) * 2.0 - 1.0) * 64.0;
+    // As thick on the ground as before the map was spread out.
+    let count = (1500.0 * SPREAD * SPREAD) as u32;
+    for k in 0..count {
+        let x = (hash01(k, 901) * 2.0 - 1.0) * (HALF_X - 6.0);
+        let z = (hash01(k, 902) * 2.0 - 1.0) * (HALF_Z - 4.0);
         let n = w.terrain_normal(x, z);
         if n.y < 0.95
             || w.blocks.iter().any(|b| {
@@ -1185,70 +1234,128 @@ fn dish(m: &mut Mesh, foot: Vec3, side: f32) {
     }
 }
 
-/// Overhead cable: tower to tower, tower to dish, and the flag lines.
-fn cables(m: &mut Mesh, w: &World, all: &[Site]) {
+/// One overhead cable: ends, sag at mid-span, marker balls, thickness.
+struct Span {
+    a: Vec3,
+    b: Vec3,
+    sag: f32,
+    markers: usize,
+    thick: f32,
+}
+
+impl Span {
+    fn new(a: Vec3, b: Vec3, sag: f32, markers: usize, thick: f32) -> Span {
+        Span {
+            a,
+            b,
+            sag,
+            markers,
+            thick,
+        }
+    }
+}
+
+/// The top of a gantry beam over post `dz`, in the `side` half.
+fn gantry_top(w: &World, (x, z): (f32, f32), dz: f32, side: f32) -> Vec3 {
+    vec3(
+        x * side,
+        w.height(x * side, z * side) + 6.1,
+        (z + dz) * side,
+    )
+}
+
+/// Overhead cable: tower to tower, tower to dish, the flag lines, and power
+/// from the generator sheds along the gantries to the exchange.
+fn spans(w: &World, all: &[Site]) -> Vec<Span> {
     let crown = |s: &Site| s.at(0.0, s.deck() + layout::MAST_ABOVE - 1.4, 0.0);
     let (wa, ea, wx, ex) = (&all[0], &all[1], &all[2], &all[3]);
     // The signal line between the two exchange towers passes over C.
-    wire(m, crown(wx), crown(ex), 2.4, 5, 0.05);
-    wire(m, crown(wx), crown(wa), 3.2, 3, 0.04);
-    wire(m, crown(ex), crown(ea), 3.2, 3, 0.04);
+    let mut out = vec![
+        Span::new(crown(wx), crown(ex), 2.4, 5, 0.05),
+        Span::new(crown(wx), crown(wa), 3.2, 3, 0.04),
+        Span::new(crown(ex), crown(ea), 3.2, 3, 0.04),
+    ];
     for (x, z, g, side) in dishes(w) {
         let near = if side > 0.0 { wx } else { ex };
-        wire(
-            m,
-            crown(near),
-            vec3(x, g + layout::DISH_PEDESTAL_H + 0.3, z),
-            1.6,
-            0,
-            0.035,
-        );
+        let pedestal = vec3(x, g + layout::DISH_PEDESTAL_H + 0.3, z);
+        out.push(Span::new(crown(near), pedestal, 1.6, 0, 0.035));
     }
     for s in [wx, ex] {
         let (a, b, sag) = flag_line(w, s);
-        wire(m, a, b, sag, 0, 0.02);
+        out.push(Span::new(a, b, sag, 0, 0.02));
     }
-    // Power from the generator sheds along the gantries to the exchange.
+    let [inner, outer] = layout::GANTRIES;
+    let (gx, gz) = generator(w);
+    let (sx, sz) = SWITCHGEAR;
     for side in [1.0f32, -1.0] {
-        let top = |x: f32, z: f32, dz: f32| {
-            vec3(
-                x * side,
-                w.height(x * side, z * side) + 6.1,
-                (z + dz) * side,
-            )
-        };
-        for dz in [-3.8f32, 3.8] {
-            wire(m, top(-58.0, 2.0, dz), top(-23.0, -8.0, dz), 1.5, 0, 0.03);
+        for dz in [-GANTRY_HALF, GANTRY_HALF] {
+            let top = |gantry| gantry_top(w, gantry, dz, side);
             let shed = vec3(
-                -82.5 * side,
-                w.height(-82.5 * side, 18.5 * side) + 1.5,
-                (18.5 + dz * 0.2) * side,
+                gx * side,
+                w.height(gx * side, gz * side) + SHED_LINE,
+                (gz + dz * 0.2) * side,
             );
-            wire(m, shed + Vec3::Y * 1.2, top(-58.0, 2.0, dz), 2.2, 0, 0.03);
             let cabinet = vec3(
-                -8.5 * side,
-                w.height(-8.5 * side, -7.0 * side) + 1.45,
-                (-7.0 + dz * 0.2) * side,
+                sx * side,
+                w.height(sx * side, sz * side) + CABINET_LINE,
+                (sz + dz * 0.2) * side,
             );
-            wire(
+            // Drawn taut enough to clear the ruin wall round the shed.
+            out.push(Span::new(shed, top(outer), 1.0, 0, 0.03));
+            out.push(Span::new(top(outer), top(inner), 1.5, 0, 0.03));
+            out.push(Span::new(top(inner), cabinet, 0.8, 0, 0.03));
+        }
+    }
+    out
+}
+
+fn cables(m: &mut Mesh, w: &World, all: &[Site]) {
+    for s in spans(w, all) {
+        wire(m, s.a, s.b, s.sag, s.markers, s.thick);
+    }
+    let insulators = |m: &mut Mesh, p: Vec3| {
+        for k in 0..3 {
+            let y = k as f32 * 0.09;
+            m.cuboid(
+                p + vec3(-0.09, y - 0.14, -0.09),
+                p + vec3(0.09, y - 0.09, 0.09),
+                WHITE,
+            );
+        }
+    };
+    for side in [1.0f32, -1.0] {
+        // Insulator stacks on the gantry beams.
+        for dz in [-GANTRY_HALF, GANTRY_HALF] {
+            for gantry in layout::GANTRIES {
+                insulators(m, gantry_top(w, gantry, dz, side) - Vec3::Y * 0.1);
+            }
+        }
+        // A pole and cross-arm on the shed and on the cabinet take the line.
+        for ((x, z), roof, line) in [
+            (generator(w), SHED_ROOF, SHED_LINE),
+            (SWITCHGEAR, CABINET_ROOF, CABINET_LINE),
+        ] {
+            let (x, z) = (x * side, z * side);
+            let g = w.height(x, z);
+            let lead = GANTRY_HALF * 0.2;
+            beam(
                 m,
-                top(-23.0, -8.0, dz),
-                cabinet + Vec3::Y * 0.9,
-                1.2,
-                0,
-                0.03,
+                vec3(x, g + roof, z),
+                vec3(x, g + line - 0.1, z),
+                0.1,
+                0.1,
+                STEEL,
             );
-            // Insulator stacks on the gantry beams.
-            for (x, z) in [(-58.0f32, 2.0f32), (-23.0, -8.0)] {
-                let p = top(x, z, dz) - Vec3::Y * 0.1;
-                for k in 0..3 {
-                    let y = k as f32 * 0.09;
-                    m.cuboid(
-                        p + vec3(-0.09, y - 0.14, -0.09),
-                        p + vec3(0.09, y - 0.09, 0.09),
-                        WHITE,
-                    );
-                }
+            beam(
+                m,
+                vec3(x, g + line - 0.14, z - lead - 0.15),
+                vec3(x, g + line - 0.14, z + lead + 0.15),
+                0.05,
+                0.08,
+                STEEL,
+            );
+            for e in [-lead, lead] {
+                insulators(m, vec3(x, g + line + 0.04, z + e));
             }
         }
     }
@@ -1265,7 +1372,8 @@ fn station(m: &mut Mesh, w: &World) {
             }
         };
         // Communications cabin by B / D: door and lit window toward the point.
-        let (cx, cz) = (-43.5 * side, -31.5 * side);
+        let (cx, cz) = comms(w);
+        let (cx, cz) = (cx * side, cz * side);
         let g = w.height(cx, cz);
         let face = wall(vec3(cx, g, cz + side * 1.512), yaw(true));
         m.obox(
@@ -1343,7 +1451,7 @@ fn station(m: &mut Mesh, w: &World) {
         );
 
         // Exchange switchgear at C: louvred doors and a nameplate.
-        let (sx, sz) = (-8.5 * side, -7.0 * side);
+        let (sx, sz) = (SWITCHGEAR.0 * side, SWITCHGEAR.1 * side);
         let g = w.height(sx, sz);
         for plus in [true, false] {
             let n = if plus { 1.0 } else { -1.0 };
@@ -1381,7 +1489,8 @@ fn station(m: &mut Mesh, w: &World) {
         }
 
         // Generator shed at A / E: exhaust stack, vents and a status lamp.
-        let (gx, gz) = (-82.5 * side, 18.5 * side);
+        let (gx, gz) = generator(w);
+        let (gx, gz) = (gx * side, gz * side);
         let g = w.height(gx, gz);
         pipe(
             m,
@@ -1628,7 +1737,8 @@ pub fn lights(w: &World, eye: Vec3, existing: [Light; 4]) -> [Light; 4] {
         });
     }
     for side in [1.0f32, -1.0] {
-        let (cx, cz) = (-43.5 * side, -31.5 * side);
+        let (cx, cz) = comms(w);
+        let (cx, cz) = (cx * side, cz * side);
         all.push(Light {
             pos: vec3(cx + 0.6 * side, w.height(cx, cz) + 1.6, cz + side * 2.6),
             radius: 9.0,
@@ -1825,7 +1935,7 @@ pub fn atmosphere(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, tim
 
     // Switchgear lamps chatter; generator exhaust drifts off downwind.
     for side in [1.0f32, -1.0] {
-        let (sx, sz) = (-8.5 * side, -7.0 * side);
+        let (sx, sz) = (SWITCHGEAR.0 * side, SWITCHGEAR.1 * side);
         let g = w.height(sx, sz);
         for k in 0..12u32 {
             let face = if k % 2 == 0 { 1.0 } else { -1.0 };
@@ -1845,7 +1955,8 @@ pub fn atmosphere(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, tim
                 [col[0], col[1], col[2], 0.1 + 0.8 * on],
             );
         }
-        let (gx, gz) = (-82.5 * side, 18.5 * side);
+        let (gx, gz) = generator(w);
+        let (gx, gz) = (gx * side, gz * side);
         let stack = vec3(gx - 0.8 * side, w.height(gx, gz) + 2.8, gz);
         for k in 0..5u32 {
             let age = (time * 0.35 + k as f32 / 5.0).fract();
@@ -1858,7 +1969,10 @@ pub fn atmosphere(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, tim
     // A hawk rides the ridge lift in wide, lazy circles.
     for k in 0..2u32 {
         let a = time * 0.11 * if k == 0 { 1.0 } else { -0.8 } + k as f32 * 2.4;
-        let (rx, rz) = (58.0 - k as f32 * 20.0, 34.0 - k as f32 * 8.0);
+        let (rx, rz) = (
+            (58.0 - k as f32 * 20.0) * SPREAD,
+            (34.0 - k as f32 * 8.0) * SPREAD,
+        );
         let p = vec3(
             a.cos() * rx,
             30.0 + k as f32 * 9.0 + (time * 0.23).sin() * 2.0,
@@ -1883,17 +1997,19 @@ pub fn atmosphere(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, tim
     }
 
     // Seed fluff and midges carried across the plateau, gold in the low sun.
-    for k in 0..70u32 {
+    // As many to the square metre as before the map was spread out.
+    let fluff = (70.0 * SPREAD * SPREAD) as u32;
+    for k in 0..fluff {
         let life = 14.0 + hash01(k, 811) * 10.0;
         let age = (time / life + hash01(k, 812)).fract();
         let start = vec3(
-            (hash01(k, 813) * 2.0 - 1.0) * 100.0,
+            (hash01(k, 813) * 2.0 - 1.0) * (HALF_X - 18.0 * SPREAD),
             0.0,
-            (hash01(k, 814) * 2.0 - 1.0) * 56.0,
+            (hash01(k, 814) * 2.0 - 1.0) * (HALF_Z - 12.0 * SPREAD),
         );
         let mut p = start + WIND * (age * 34.0 - 17.0);
-        p.x = p.x.clamp(-114.0, 114.0);
-        p.z = p.z.clamp(-64.0, 64.0);
+        p.x = p.x.clamp(-HALF_X + 4.0, HALF_X - 4.0);
+        p.z = p.z.clamp(-HALF_Z + 4.0, HALF_Z - 4.0);
         p.y = w.height(p.x, p.z) + 1.0 + hash01(k, 815) * 4.5 + (time * 0.6 + k as f32).sin() * 0.5;
         let fade = (age * (1.0 - age) * 6.0).min(1.0);
         cross(add, p, 0.025, 0.025, [1.0, 0.9, 0.62, 0.5 * fade]);
@@ -1921,7 +2037,7 @@ mod tests {
             );
         }
         assert!(
-            mesh.triangles() > 4_000 && mesh.triangles() < 60_000,
+            mesh.triangles() > 4_000 && mesh.triangles() < 66_000,
             "static dressing budget"
         );
         let mut top = 0.0f32;
@@ -1931,7 +2047,7 @@ mod tests {
                 let p = Vec3::from_array(v.pos);
                 assert!(p.is_finite() && Vec3::from_array(v.nrm).is_finite());
                 assert!(
-                    p.x.abs() < 118.0 && p.z.abs() < 68.0 && p.y > -8.0 && p.y < 34.0,
+                    p.x.abs() < HALF_X && p.z.abs() < HALF_Z && p.y > -8.0 && p.y < 34.0,
                     "detail outside bounds: {p:?}"
                 );
                 top = top.max(p.y);
@@ -2001,8 +2117,8 @@ mod tests {
                     let p = Vec3::from_array(v.pos);
                     assert!(
                         p.is_finite()
-                            && p.x.abs() < 125.0
-                            && p.z.abs() < 72.0
+                            && p.x.abs() < HALF_X + 7.0
+                            && p.z.abs() < HALF_Z + 4.0
                             && p.y > -8.0
                             && p.y < 60.0,
                         "animated detail astray: {p:?}"
@@ -2010,6 +2126,82 @@ mod tests {
                     assert!(v.col.into_iter().all(f32::is_finite));
                 }
             }
+        }
+    }
+
+    #[test]
+    fn relay_cables_clear_the_ground_and_the_buildings() {
+        // On the reference map the cables clear everything. The huts, tanks
+        // and lookouts scattered over the plateau know nothing of the cable
+        // runs, so on other seeds only the station's own buildings count.
+        cables_clear(&World::with_map(0xFE221, ID), true);
+        for seed in 0..32 {
+            cables_clear(&World::with_map(seed, ID), false);
+        }
+    }
+
+    fn cables_clear(w: &World, everything: bool) {
+        let station = |b: &Block| {
+            let c = (b.min + b.max) * 0.5;
+            let near = |x: f32, z: f32, r: f32| {
+                (c.x - x).hypot(c.z - z) < r || (c.x + x).hypot(c.z + z) < r
+            };
+            everything
+                || owns(b)
+                || w.points.iter().any(|p| near(p.x, p.z, 16.0))
+                || layout::GANTRIES
+                    .iter()
+                    .any(|&(x, z)| near(x, z, GANTRY_HALF + 1.0))
+        };
+        let all = sites(w);
+        let mut runs = spans(w, &all);
+        // The flag line's flags hang below it.
+        for r in runs.iter_mut().filter(|r| r.thick < 0.025) {
+            r.a.y -= 0.45;
+            r.b.y -= 0.45;
+        }
+        for r in &runs {
+            for k in 1..40 {
+                let t = k as f32 / 40.0;
+                let p = r.a.lerp(r.b, t) - Vec3::Y * (r.sag * 4.0 * t * (1.0 - t));
+                let flat = |q: Vec3| vec3(q.x - p.x, 0.0, q.z - p.z).length();
+                // Head room for a player walking underneath, except where
+                // the cable comes down to a shed or a cabinet.
+                let low = |q: Vec3| q.y - w.height(q.x, q.z) < 3.0 && flat(q) < 8.0;
+                let need = if low(r.a) || low(r.b) { 0.8 } else { 2.0 };
+                assert!(
+                    p.y > w.height(p.x, p.z) + need,
+                    "seed {}: cable {:?} -> {:?} sags to the ground at {p:?}",
+                    w.seed,
+                    r.a,
+                    r.b
+                );
+                // Clear of the collision, but for the mast crowns it hangs from.
+                let near_end = flat(r.a).min(flat(r.b)) < layout::CROWN_HALF + 0.3;
+                let hit = w.blocks.iter().filter(|b| station(b)).find(|b| {
+                    (p.cmpgt(b.min - Vec3::splat(0.1)) & p.cmplt(b.max + Vec3::splat(0.1))).all()
+                });
+                assert!(
+                    near_end || hit.is_none(),
+                    "seed {}: cable {:?} -> {:?} passes through {:?} at {p:?}",
+                    w.seed,
+                    r.a,
+                    r.b,
+                    hit.map(|b| (b.min, b.max))
+                );
+            }
+        }
+        // The cabins, sheds and switchgear the dressing is pinned to stand
+        // where the shared layout built them.
+        for (x, z) in [comms(w), generator(w), SWITCHGEAR] {
+            assert!(
+                w.blocks.iter().any(|b| {
+                    ((b.min.x + b.max.x) * 0.5 - x).abs() < 0.05
+                        && ((b.min.z + b.max.z) * 0.5 - z).abs() < 0.05
+                }),
+                "no building at {x},{z} (seed {})",
+                w.seed
+            );
         }
     }
 

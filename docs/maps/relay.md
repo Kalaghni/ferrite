@@ -6,15 +6,15 @@ Highland Relay 5 is a listening station on a windy plateau, seen on a clear even
 
 ## Battlefield
 
-Relay keeps FERRITE's 236 by 136 metre footprint, its five objectives and its half-turn symmetry. Bases, objectives and cover outside the tower sites are where they were. The random scatter of rocks, trees and lane cover has shifted slightly, because it is placed after the towers and avoids them.
+Relay uses FERRITE's 354 by 204 metre footprint, five objectives and half-turn symmetry. Like every map it was spread out by half again: the objectives, bases, array towers, dishes and cable gantries moved outward, each building keeping its place beside its objective, and the ground between now holds equipment huts, fuel tanks, survey lookouts and old walled pens. The exchange towers beside C did not move.
 
 | Point | Position (x, z) | Character |
 | --- | --- | --- |
-| A | -78, 16 | Generator sheds in a walled yard |
-| B | -38, -26 | Communications cabin, with the west array tower 12 m south |
+| A | -117, 24 | Generator sheds in a walled yard |
+| B | -57, -39 | Communications cabin, with the west array tower 12 m south |
 | C | 0, 0 | The exchange: open switchyard between the two tall towers |
-| D | 38, 26 | Mirror of B, with the east array tower |
-| E | 78, -16 | Mirror of A |
+| D | 57, 39 | Mirror of B, with the east array tower |
+| E | 117, -24 | Mirror of A |
 
 ## The towers
 
@@ -22,10 +22,10 @@ Each tower is a square service core wrapped by an open steel stair. The stair tu
 
 | Tower | Position (x, z) | Flights | Deck height | Overlooks |
 | --- | --- | --- | --- | --- |
-| WA-1, west array | -39, -38 | 4 | 6 m | B and the southern lane |
+| WA-1, west array | -58, -51 | 4 | 6 m | B and the southern lane |
 | WX-2, west exchange | -9.5, 9 | 6 | 9 m | C and most of the plateau |
 | EX-3, east exchange | 9.5, -9 | 6 | 9 m | C and most of the plateau |
-| EA-4, east array | 39, 38 | 4 | 6 m | D and the northern lane |
+| EA-4, east array | 58, 51 | 4 | 6 m | D and the northern lane |
 
 - **Climbing.** Steps rise 30 cm, so a player walks up without jumping. Each flight has four steps and a corner landing. The stair is open to fire on its outer side the whole way up.
 - **The deck.** It covers the core and two sides of the stair ring; the last flight and a half stay open below. Two rails run round every edge and round the stairwell.
@@ -34,13 +34,13 @@ Each tower is a square service core wrapped by an open steel stair. The stair tu
 - **Bots** stay on the ground and route round the towers. They will shoot at a player on a deck when they can see one.
 - **Ground.** Each site is levelled, with a low apron and pad, so the first step is walkable from every side.
 
-The towers replace the old lattice masts, which could not be climbed. Relay's two entries in the map-geometry regression test were re-captured for this; the other maps are unchanged.
+The towers replace the old lattice masts, which could not be climbed.
 
 ![The west exchange tower](relay/west-exchange-tower.jpg)
 
 ## The dishes
 
-A 5 m concrete pedestal carries an 8.4 m dish in each half, at (-33, 15) and its mirror. The pedestal is solid cover. The reflector is entirely overhead and does not collide.
+A 5 m concrete pedestal carries an 8.4 m dish in each half, at (-49.5, 22.5) and its mirror. The pedestal is solid cover. The reflector is entirely overhead and does not collide.
 
 ## What the station tells you
 

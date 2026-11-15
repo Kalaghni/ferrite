@@ -1,11 +1,13 @@
 //! Slag Cathedral: an open casting nave, furnace courts and overhead galleries.
 //! Shared anchors keep decorative steelwork aligned with authoritative collision.
 
-use super::{BlockKind, World};
+use super::{shift, BlockKind, World, SPREAD};
 
 pub const MAP_ID: u8 = 6;
 pub const SECTOR_NAMES: [&str; 5] = ["WEST STOCKYARD", "BOILER COURT", "CRUCIBLE NAVE", "BOILER COURT", "EAST STOCKYARD"];
-pub const POINTS: [(f32, f32); 5] = [(-78.0, -18.0), (-40.0, 22.0), (0.0, 0.0), (40.0, -22.0), (78.0, 18.0)];
+/// The nave, its galleries, furnaces and lava stand where they were first
+/// built; the courts, yards and bases beyond them moved out with the spread.
+pub const POINTS: [(f32, f32); 5] = [(-117.0, -27.0), (-60.0, 33.0), (0.0, 0.0), (60.0, -33.0), (117.0, 27.0)];
 pub const NAVE_HALF_X: f32 = 34.0;
 pub const NAVE_HALF_Z: f32 = 22.0;
 pub const NAVE_RIB_X: [f32; 6] = [-30.0, -18.0, -6.0, 6.0, 18.0, 30.0];
@@ -43,16 +45,18 @@ pub const SERVICE_HALF_Z: f32 = 3.0;
 pub const SERVICE_HALF_X: f32 = 48.0;
 pub const SERVICE_ROOF_Y: f32 = 4.8;
 pub const SERVICE_ROOF_BOTTOM: f32 = 4.5;
-pub const PIPE_YARD_Z: f32 = 50.0;
+pub const PIPE_YARD_Z: f32 = 50.0 * SPREAD;
+/// Uprights of the exterior pipe racks, west half.
+pub const PIPE_YARD_X: [f32; 6] = [-132.0, -108.0, -84.0, -60.0, -36.0, -12.0];
 pub const PIPE_RACK_Y: f32 = 6.2;
 /// West-authored casting machinery, mirrored by the builder.
-pub const MACHINE_ANCHORS: [(f32, f32); 5] = [(-22.0, -6.0), (-10.0, 6.5), (-47.0, -8.0), (-64.0, 12.0), (-88.0, 5.0)];
+pub const MACHINE_ANCHORS: [(f32, f32); 5] = [(-22.0, -6.0), (-10.0, 6.5), (-70.5, -12.0), (-96.0, 18.0), (-132.0, 7.5)];
 /// (centre x, half width): repeated side-wall piers leave wide lateral doors.
 pub const SIDE_WALL_SEGMENTS: [(f32, f32); 3] = [(-30.0, 4.0), (-18.0, 3.0), (-6.0, 2.0)];
 /// The bell yards: a great bell stands in its square casting flask beneath a
 /// lifting gantry in the south-west yard, mirrored to the north-east. The
 /// flask and the bell's body are stacked boxes; broken mould halves lie about.
-pub const BELL_YARD: (f32, f32) = (-84.0, -44.0);
+pub const BELL_YARD: (f32, f32) = (-126.0, -66.0);
 pub const BELL_FLASK_HALF: f32 = 2.2;
 pub const BELL_FLASK_H: f32 = 1.6;
 pub const BELL_BODY_HALF: f32 = 1.5;
@@ -62,7 +66,14 @@ pub const BELL_GANTRY_Y: f32 = 8.4;
 pub const BELL_GANTRY_BEAM: f32 = 0.6;
 /// (centre x, centre z, half x, half z, height) of the west yard's mould halves.
 pub const MOULD_FRAGMENTS: [(f32, f32, f32, f32, f32); 3] =
-    [(-76.5, -40.5, 1.6, 0.5, 0.9), (-91.0, -41.0, 0.5, 1.7, 1.1), (-78.4, -46.9, 1.4, 0.5, 0.7)];
+    [(-118.5, -62.5, 1.6, 0.5, 0.9), (-133.0, -63.0, 0.5, 1.7, 1.1), (-120.4, -68.9, 1.4, 0.5, 0.7)];
+/// Exterior service blocks (west half): low cover in the yards.
+pub const SERVICE_BLOCKS: [(f32, f32); 4] = [(-89.0 * SPREAD, 35.0 * SPREAD), (-67.0 * SPREAD, -44.0 * SPREAD), (-52.0 * SPREAD, 48.0 * SPREAD), (-6.0 * SPREAD, -52.0 * SPREAD)];
+/// How far the west base's buildings, the stockyard at A and the boiler
+/// court at B moved when the map was spread out.
+pub const BASE_SHIFT: (f32, f32) = shift(-106.0, 0.0);
+pub const STOCKYARD_SHIFT: (f32, f32) = shift(-78.0, -18.0);
+pub const COURT_SHIFT: (f32, f32) = shift(-40.0, 22.0);
 /// Molten metal is tapped from each furnace into an overhead launder that
 /// crosses the gallery and pours into a lava channel here (and at the mirror).
 pub const LAVAFALL: (f32, f32) = (-23.6, -LAVA_Z);
@@ -89,33 +100,36 @@ pub(super) fn build(w: &mut World, rng: &mut crate::rng::Rng) {
 
     // Rear walls sit beyond the entire eight-metre spawn disc. Two open
     // staging bays shelter each base without funnelling it into one exit.
-    w.sym(-115.5, 0.0, 0.6, 4.5, 0.0, 5.0, Concrete, 1);
-    w.sym(-115.5, 0.0, 0.22, 0.22, 5.0, 7.0, Metal, 1);
+    let (ox, oz) = BASE_SHIFT;
+    w.sym(-115.5 + ox, oz, 0.6, 4.5, 0.0, 5.0, Concrete, 1);
+    w.sym(-115.5 + ox, oz, 0.22, 0.22, 5.0, 7.0, Metal, 1);
     for z in [-15.0f32, 15.0] {
-        w.sym(-98.0, z, 4.0, 1.0, 0.0, 2.6, Concrete, 2);
-        w.sym(-94.5, z, 0.5, 1.25, 2.6, 2.8, Metal, 0);
-        w.sym(-101.0, z, 0.3, 0.3, 2.6, 2.8, Metal, 0);
-        w.sym(-98.0, z, 4.4, 1.5, 5.4, 0.25, Metal, 1);
+        w.sym(-98.0 + ox, z + oz, 4.0, 1.0, 0.0, 2.6, Concrete, 2);
+        w.sym(-94.5 + ox, z + oz, 0.5, 1.25, 2.6, 2.8, Metal, 0);
+        w.sym(-101.0 + ox, z + oz, 0.3, 0.3, 2.6, 2.8, Metal, 0);
+        w.sym(-98.0 + ox, z + oz, 4.4, 1.5, 5.4, 0.25, Metal, 1);
     }
 
     // A / E: open stockyard portals. The capture disc stays on bare ground.
-    w.sym(-78.0, -24.5, 5.5, 0.5, 0.0, 2.4, Concrete, 2);
-    w.sym(-80.5, -11.5, 3.0, 0.5, 0.0, 1.15, Concrete, 1);
-    w.sym(-70.5, -20.0, 0.45, 3.0, 0.0, 1.1, Sandbag, 0);
+    let (ox, oz) = STOCKYARD_SHIFT;
+    w.sym(-78.0 + ox, -24.5 + oz, 5.5, 0.5, 0.0, 2.4, Concrete, 2);
+    w.sym(-80.5 + ox, -11.5 + oz, 3.0, 0.5, 0.0, 1.15, Concrete, 1);
+    w.sym(-70.5 + ox, -20.0 + oz, 0.45, 3.0, 0.0, 1.1, Sandbag, 0);
     for x in [-85.0f32, -71.0] {
-        w.sym(x, -18.0, 0.55, 0.55, 0.0, 6.0, Metal, 0);
+        w.sym(x + ox, -18.0 + oz, 0.55, 0.55, 0.0, 6.0, Metal, 0);
     }
-    w.sym(-78.0, -18.0, 7.6, 0.6, 6.0, 0.65, Metal, 1);
-    w.crates(rng, -85.0, -25.0, 3);
+    w.sym(-78.0 + ox, -18.0 + oz, 7.6, 0.6, 6.0, 0.65, Metal, 1);
+    w.crates(rng, -85.0 + ox, -25.0 + oz, 3);
 
     // B / D: boiler courts beside the nave. Offset shelter walls leave
     // several entrances, including the approach to the gallery stairs.
-    w.sym(-47.0, 22.0, 0.5, 5.0, 0.0, 3.6, Concrete, 1);
-    w.sym(-40.0, 29.0, 6.0, 0.5, 0.0, 3.6, Concrete, 2);
-    w.sym(-34.0, 24.0, 0.45, 2.0, 0.0, 1.1, Sandbag, 0);
-    w.sym(-40.0, 16.0, 3.5, 0.45, 0.0, 1.1, Concrete, 2);
-    w.sym(-45.0, 26.0, 1.2, 1.0, 0.0, 1.8, Metal, 1);
-    w.sym(-40.0, 27.5, 6.0, 2.0, 5.7, 0.35, Metal, 0);
+    let (ox, oz) = COURT_SHIFT;
+    w.sym(-47.0 + ox, 22.0 + oz, 0.5, 5.0, 0.0, 3.6, Concrete, 1);
+    w.sym(-40.0 + ox, 29.0 + oz, 6.0, 0.5, 0.0, 3.6, Concrete, 2);
+    w.sym(-34.0 + ox, 24.0 + oz, 0.45, 2.0, 0.0, 1.1, Sandbag, 0);
+    w.sym(-40.0 + ox, 16.0 + oz, 3.5, 0.45, 0.0, 1.1, Concrete, 2);
+    w.sym(-45.0 + ox, 26.0 + oz, 1.2, 1.0, 0.0, 1.8, Metal, 1);
+    w.sym(-40.0 + ox, 27.5 + oz, 6.0, 2.0, 5.7, 0.35, Metal, 0);
 
     // Monumental rib bases and columns. Above shoulder height the nave
     // remains completely open; the roof's angled steelwork is visual mesh.
@@ -176,7 +190,7 @@ pub(super) fn build(w: &mut World, rng: &mut crate::rng::Rng) {
     }
     w.sym(-5.5, -7.0, 1.8, 0.45, 0.0, 1.0, Sandbag, 0);
     w.crates(rng, -11.5, -9.0, 3);
-    w.crates(rng, -58.0, -6.0, 4);
+    w.crates(rng, -87.0, -9.0, 4);
 
     // Roofed service passages stay open along their full inner side.
     // Furnace shoulders intrude slightly into one edge, leaving >4m clear.
@@ -189,16 +203,17 @@ pub(super) fn build(w: &mut World, rng: &mut crate::rng::Rng) {
 
     // Exterior pipe yards offer a real third lane rather than a dead end.
     // Most pipework is overhead; service blocks provide spaced ground cover.
-    for x in [-88.0f32, -72.0, -56.0, -40.0, -24.0, -8.0] {
+    for x in PIPE_YARD_X {
         w.sym(x, PIPE_YARD_Z, 0.3, 0.3, 0.0, PIPE_RACK_Y, Metal, 0);
         w.sym(x, PIPE_YARD_Z, 0.3, 2.4, PIPE_RACK_Y, 0.4, Metal, 1);
     }
-    w.sym(-48.0, PIPE_YARD_Z, 40.6, 0.4, PIPE_RACK_Y + 0.4, 0.4, Metal, 0);
-    for (x, z) in [(-89.0f32, 35.0f32), (-67.0, -44.0), (-52.0, 48.0), (-6.0, -52.0)] {
+    let (x0, x1) = (PIPE_YARD_X[0], PIPE_YARD_X[PIPE_YARD_X.len() - 1]);
+    w.sym((x0 + x1) * 0.5, PIPE_YARD_Z, (x1 - x0) * 0.5 + 0.6, 0.4, PIPE_RACK_Y + 0.4, 0.4, Metal, 0);
+    for (x, z) in SERVICE_BLOCKS {
         w.sym(x, z, 2.4, 1.1, 0.0, 1.2, Concrete, 1);
         w.sym(x, z, 1.25, 0.85, 1.2, 1.0, Metal, 0);
     }
-    w.crates(rng, -68.0, 37.0, 3);
+    w.crates(rng, -102.0, 55.5, 3);
 
     // Bell yards fill the two quiet corners with a landmark and hard cover.
     // Added after every crate cluster so earlier placements are unchanged.
@@ -212,5 +227,12 @@ pub(super) fn build(w: &mut World, rng: &mut crate::rng::Rng) {
     for (x, z, hx, hz, h) in MOULD_FRAGMENTS {
         w.sym(x, z, hx, hz, 0.0, h, Concrete, 0);
     }
-    w.forest(rng, 0, 90, 1.0);
+
+    // The works beyond the cathedral: ingot stores and pattern shops,
+    // open casting sheds, gas holders and slag-heap lookouts.
+    w.scatter_buildings(rng, 5, &[(7.5, 5.0, 5.2), (5.0, 3.5, 4.2)], Metal);
+    w.scatter_sheds(rng, 4);
+    w.scatter_tanks(rng, 5);
+    w.scatter_lookouts(rng, 2, 4.2);
+    w.forest(rng, 0, 130, 1.0);
 }

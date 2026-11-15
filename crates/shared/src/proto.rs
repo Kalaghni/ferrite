@@ -9,7 +9,8 @@ use crate::sim::PState;
 use bincode::Options;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-pub const PROTO: u32 = 14;
+/// 15: every map spread out by half again, so collision differs from 14.
+pub const PROTO: u32 = 15;
 pub const DEFAULT_PORT: u16 = 27500;
 pub const SPECTATOR_ID: u8 = 255;
 

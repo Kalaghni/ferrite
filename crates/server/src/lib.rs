@@ -6,7 +6,7 @@ pub mod bots;
 pub mod net;
 
 use bots::Bot;
-use ferrite_shared::map::{Nav, World};
+use ferrite_shared::map::{self, Nav, World};
 use ferrite_shared::proto::*;
 use ferrite_shared::rng::Rng;
 use ferrite_shared::sim::{self, PState, GRENADE_WEAPON};
@@ -934,13 +934,38 @@ impl Game {
                 break;
             }
         }
+        // Spread arrivals out: try a handful of open spots across the spawn
+        // ground and take the one farthest from anyone already standing
+        // there, weighing nearby enemies more heavily than friends.
         let mut pos = anchor;
-        for _ in 0..30 {
+        let mut best = f32::MIN;
+        let (r0, r1) = if at_base { (4.0, map::BASE_SPAWN_RADIUS) } else { (6.0, 16.0) };
+        let mut found = 0;
+        for _ in 0..40 {
             let a = self.rng.range(0.0, std::f32::consts::TAU);
-            let r = if at_base { self.rng.range(0.0, 8.0) } else { self.rng.range(3.0, 8.5) };
+            // Uniform over the ring's area, not bunched at its middle.
+            let r = (r0 * r0 + self.rng.f32() * (r1 * r1 - r0 * r0)).sqrt();
             let (x, z) = (anchor.x + a.cos() * r, anchor.z + a.sin() * r);
-            if !self.nav.is_blocked(x, z) {
-                pos = vec3(x, self.world.height(x, z) + 0.05, z);
+            if self.nav.is_blocked(x, z) || self.world.lava(x, z, 1.0) {
+                continue;
+            }
+            let p = vec3(x, self.world.height(x, z) + 0.05, z);
+            let mut score = 0.0f32;
+            let (mut friend, mut foe) = (14.0f32, 40.0f32);
+            for (j, q) in self.players.iter().enumerate() {
+                if j == i || !q.alive {
+                    continue;
+                }
+                let d = (q.st.pos - p).length();
+                if q.team == team { friend = friend.min(d) } else { foe = foe.min(d) }
+            }
+            score += friend + foe * 0.6;
+            if score > best {
+                best = score;
+                pos = p;
+            }
+            found += 1;
+            if found >= 8 {
                 break;
             }
         }

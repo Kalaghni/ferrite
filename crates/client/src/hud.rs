@@ -1105,7 +1105,8 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
 
     // ---- minimap ----
     {
-        let scale = 0.92;
+        // The same size on screen as before the maps were spread out.
+        let scale = 0.92 / ferrite_shared::map::SPREAD;
         let (mw, mh) = (2.0 * HALF_X * scale, 2.0 * HALF_Z * scale);
         let (mx, my) = (16.0, 16.0);
         // Team 1 sees the map rotated so "forward" is always up-right consistent.

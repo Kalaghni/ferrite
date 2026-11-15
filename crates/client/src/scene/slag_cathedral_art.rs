@@ -11,6 +11,19 @@
 //! with the floor, well overhead, or skinned onto authoritative collision
 //! read from the shared layout.
 use super::*;
+use ferrite_shared::map::{BASES_XZ, BASE_SPAWN_RADIUS, SPREAD};
+
+/// The yards beyond the nave were first laid out closer in; each moved out
+/// with the spread, keeping its shape. These are their first-authored centres
+/// carried to where the shared layout now builds them.
+/// The west stockyard gantry (over objective A).
+pub(super) const STOCKYARD: (f32, f32) = (-78.0 + layout::STOCKYARD_SHIFT.0, -18.0 + layout::STOCKYARD_SHIFT.1);
+/// The west boiler court (objective B).
+pub(super) const COURT: (f32, f32) = (-40.0 + layout::COURT_SHIFT.0, 22.0 + layout::COURT_SHIFT.1);
+/// The west gate wall behind the spawn.
+pub(super) const GATE_WALL_X: f32 = -115.5 + layout::BASE_SHIFT.0;
+/// The ladle railway never runs into the spawn ground.
+pub(super) const RAIL_LIMIT: f32 = -(BASES_XZ[0].0 + BASE_SPAWN_RADIUS + 2.0);
 
 const BRONZE: Col = [0.47, 0.33, 0.16, 0.0];
 const NEW_BRONZE: Col = [0.80, 0.56, 0.25, 0.12];
@@ -221,11 +234,13 @@ pub(super) fn ground_tint(mut col: [f32; 3], c: Vec3) -> [f32; 3] {
     };
     let (fx, fz) = layout::FURNACE_ANCHORS[0];
     col = mix3(col, [0.11, 0.10, 0.11], near(fx, fz, 5.0, 16.0) * 0.75);
-    col = mix3(col, [0.47, 0.25, 0.15], near(-78.0, -18.0, 6.0, 20.0) * 0.5);
-    col = mix3(col, [0.50, 0.47, 0.42], near(-40.0, 22.0, 5.0, 14.0) * 0.4);
+    col = mix3(col, [0.47, 0.25, 0.15], near(STOCKYARD.0, STOCKYARD.1, 6.0, 20.0) * 0.5);
+    col = mix3(col, [0.50, 0.47, 0.42], near(COURT.0, COURT.1, 5.0, 14.0) * 0.4);
     let (bx, bz) = layout::BELL_YARD;
     col = mix3(col, [0.09, 0.085, 0.09], near(bx, bz, 4.0, 14.0) * 0.82);
-    if c.z.abs() < 2.2 && c.x.abs() < 98.0 {
+    // The ballast bed runs to the railway's furthest reach; where a works
+    // building cut the line short, the old bed still shows beyond it.
+    if c.z.abs() < 2.2 && c.x.abs() < RAIL_LIMIT + 2.0 {
         col = mix3(col, [0.17, 0.16, 0.165], 0.6);
     }
     col
@@ -246,7 +261,7 @@ pub(super) fn owns(b: &Block) -> bool {
 // ------------------------------------------------------------------ static
 
 pub(super) fn build(m: &mut Mesh, w: &World) {
-    rails(m);
+    rails(m, w);
     floor_markings(m);
     for s in [1.0f32, -1.0] {
         launder(m, s);
@@ -266,34 +281,92 @@ pub(super) fn build(m: &mut Mesh, w: &World) {
     guy_wires(m);
 }
 
-/// The ladle railway: one straight line from gate to gate through both
-/// portals, with a turntable beneath the crucible.
-fn rails(m: &mut Mesh) {
-    for z in [-0.72f32, 0.72] {
-        m.cuboid(
-            vec3(-96.0, 0.012, z - 0.09),
-            vec3(96.0, 0.03, z + 0.09),
+/// The stretches of ladle railway in the west half, as distances out from
+/// the turntable: the first runs through the nave, the last stops short of
+/// the spawn ground, and any works building standing on the line breaks it.
+/// The layout is a half-turn mirror, so the same runs serve the east half.
+pub(super) fn rail_runs(w: &World) -> Vec<(f32, f32)> {
+    let mut cuts: Vec<(f32, f32)> = w
+        .blocks
+        .iter()
+        .filter(|b| {
+            let c = (b.min + b.max) * 0.5;
+            b.max.x < -layout::NAVE_HALF_X - 1.0
+                && b.min.z < 1.4
+                && b.max.z > -1.4
+                && b.min.y < w.height(c.x, c.z) + 0.5
+        })
+        .map(|b| (-b.max.x - 1.0, -b.min.x + 1.0))
+        .collect();
+    cuts.sort_by(|p, q| p.0.total_cmp(&q.0));
+    let mut runs = Vec::new();
+    let mut at = 0.0f32;
+    for (a, b) in cuts {
+        if a.min(RAIL_LIMIT) - at > 3.0 {
+            runs.push((at, a.min(RAIL_LIMIT)));
+        }
+        at = at.max(b);
+    }
+    if RAIL_LIMIT - at > 3.0 {
+        runs.push((at, RAIL_LIMIT));
+    }
+    runs
+}
+
+/// A buffer stop at `x`, its face toward the track on the `-dir` side.
+fn buffer_stop(m: &mut Mesh, x: f32, dir: f32) {
+    cube(m, vec3(x, 0.012, -1.05), vec3(x + dir * 0.4, 0.14, 1.05), WARNING);
+    for z in [-0.6f32, 0.0, 0.6] {
+        cube(
+            m,
+            vec3(x - dir * 0.02, 0.03, z - 0.12),
+            vec3(x + dir * 0.42, 0.145, z + 0.12),
             DARK,
         );
-        m.cuboid(
-            vec3(-96.0, 0.03, z - 0.045),
-            vec3(96.0, 0.085, z + 0.045),
-            shade(EDGE, 1.05),
-        );
     }
-    let mut x = -95.4f32;
-    let mut k = 0u32;
-    while x < 95.5 {
-        if x.abs() > layout::NAVE_HALF_X + 0.6 {
-            let j = hash01(k, 77);
-            m.cuboid(
-                vec3(x - 0.13, 0.008, -1.18 - j * 0.08),
-                vec3(x + 0.13, 0.05, 1.18 + j * 0.06),
-                shade(TIMBER, 0.65 + j * 0.3),
-            );
+}
+
+/// The ladle railway: one straight line from gate to gate through both
+/// portals, with a turntable beneath the crucible. Where a works building
+/// was put up across it the line is stopped either side and carries on.
+fn rails(m: &mut Mesh, w: &World) {
+    for (a, b) in rail_runs(w) {
+        // The run through the nave is one piece; the others come in mirrored pairs.
+        let pieces: &[(f32, f32)] = if a == 0.0 { &[(-b, b)] } else { &[(-b, -a), (a, b)] };
+        for &(x0, x1) in pieces {
+            for z in [-0.72f32, 0.72] {
+                m.cuboid(vec3(x0, 0.012, z - 0.09), vec3(x1, 0.03, z + 0.09), DARK);
+                m.cuboid(
+                    vec3(x0, 0.03, z - 0.045),
+                    vec3(x1, 0.085, z + 0.045),
+                    shade(EDGE, 1.05),
+                );
+            }
         }
-        x += 1.2;
-        k += 1;
+        for s in [-1.0f32, 1.0] {
+            buffer_stop(m, s * b, s);
+            if a > 0.0 {
+                buffer_stop(m, s * a, -s);
+            }
+        }
+        // Sleepers every 1.2m, on the same pitch the whole length of the line.
+        let first = (a / 1.2).ceil() as i32;
+        let last = ((b - 0.3) / 1.2).floor() as i32;
+        for i in first.max(0)..=last {
+            let d = i as f32 * 1.2;
+            if d < layout::NAVE_HALF_X + 0.6 || d < a + 0.3 {
+                continue;
+            }
+            for (s, k) in [(-1.0f32, 2 * i as u32), (1.0, 2 * i as u32 + 1)] {
+                let x = s * d;
+                let j = hash01(k, 77);
+                m.cuboid(
+                    vec3(x - 0.13, 0.008, -1.18 - j * 0.08),
+                    vec3(x + 0.13, 0.05, 1.18 + j * 0.06),
+                    shade(TIMBER, 0.65 + j * 0.3),
+                );
+            }
+        }
     }
     // Inside the nave the track is set flush in chequer plate.
     flat(
@@ -305,23 +378,6 @@ fn rails(m: &mut Mesh) {
         0.013,
         shade(DARK, 1.15),
     );
-    for end in [-1.0f32, 1.0] {
-        // Buffer stops short of each spawn disc.
-        cube(
-            m,
-            vec3(end * 96.0, 0.012, -1.05),
-            vec3(end * 96.4, 0.14, 1.05),
-            WARNING,
-        );
-        for z in [-0.6f32, 0.0, 0.6] {
-            cube(
-                m,
-                vec3(end * 95.98, 0.03, z - 0.12),
-                vec3(end * 96.42, 0.145, z + 0.12),
-                DARK,
-            );
-        }
-    }
     let c = vec3(0.0, 0.02, 0.0);
     annulus(m, c, 4.35, 4.47, 32, DARK);
     annulus(m, c + Vec3::Y * 0.002, 4.47, 4.78, 32, shade(EDGE, 0.9));
@@ -875,7 +931,7 @@ fn lamps(m: &mut Mesh, w: &World) {
         }
     }
     // Cold-white yard floods: pipe racks, stockyard gantries, bell gantries.
-    for x in [-88.0f32, -72.0, -56.0, -40.0, -24.0, -8.0] {
+    for x in layout::PIPE_YARD_X {
         for s in [1.0f32, -1.0] {
             let (px, pz) = (x * s, layout::PIPE_YARD_Z * s);
             let g = w.height(px, pz) + layout::PIPE_RACK_Y;
@@ -894,7 +950,7 @@ fn lamps(m: &mut Mesh, w: &World) {
         }
     }
     for s in [1.0f32, -1.0] {
-        let (gx, gz) = (-78.0 * s, -18.0 * s);
+        let (gx, gz) = (STOCKYARD.0 * s, STOCKYARD.1 * s);
         let g = w.height(gx, gz) + 6.0;
         for dx in [-4.4f32, 0.0, 4.4] {
             m.cuboid(
@@ -1450,7 +1506,7 @@ fn signage(m: &mut Mesh, w: &World) {
         (-1.0, "EAST STOCKYARD", "EAST GATE"),
     ] {
         // Stockyard gantry lintel, both faces.
-        let (gx, gz) = (-78.0 * s, -18.0 * s);
+        let (gx, gz) = (STOCKYARD.0 * s, STOCKYARD.1 * s);
         let y = w.height(gx, gz) + 6.09;
         stencil(
             m,
@@ -1467,7 +1523,7 @@ fn signage(m: &mut Mesh, w: &World) {
             WHITEWASH,
         );
         // The gate wall behind each spawn, facing the yard.
-        let wx = -115.5 * s;
+        let wx = GATE_WALL_X * s;
         let y = w.height(wx, 0.0);
         let g = |dy: f32| wall(vec3(wx + s * 0.612, y + dy, 0.0), s * FRAC_PI_2);
         stencil(m, &g(2.55), "WORKS 6", 0.19, WHITEWASH);
@@ -1800,8 +1856,8 @@ pub(super) fn glazing(m: &mut Mesh, g: &Mat4, width: f32, height: f32, warm: boo
 /// Standing water on the apron, holding the colour of the sky.
 fn puddles(m: &mut Mesh, w: &World) {
     for k in 0..90u32 {
-        let x = (hash01(k, 500) * 2.0 - 1.0) * 108.0;
-        let z = (hash01(k, 501) * 2.0 - 1.0) * 45.0;
+        let x = (hash01(k, 500) * 2.0 - 1.0) * 108.0 * SPREAD;
+        let z = (hash01(k, 501) * 2.0 - 1.0) * 45.0 * SPREAD;
         let r = 0.6 + hash01(k, 502) * 1.6;
         if (x.abs() < 37.0 && z.abs() < 25.0) || z.abs() < 1.8 {
             continue;

@@ -1,4 +1,4 @@
-# FERRITE 0.9.1
+# FERRITE 0.9.2
 
 ![The FERRITE launcher: host, join or change settings](docs/launcher.png)
 
@@ -20,6 +20,15 @@ v0.5 adds a lobby before every round (map vote, loadouts, ready-up countdown), t
 v0.6 adds a new launcher and lobby look (key art, palette and typeface from the FERRITE UI kit), launcher and lobby music, a pause overlay, 3D models of every gun in the loadout picker, a bot difficulty selector, and a camera that follows whoever eliminated you while you wait to redeploy.
 
 v0.7 adds text chat, a melee strike, a killcam, player icons, callsigns backed by a player id (your record follows you when you rename), a kill feed that puts people ahead of bots, the plumbing for weapon finishes, a Windows installer, and updates from inside the launcher.
+
+## v0.9.2
+
+- **Bigger battlefields.** Every map is spread out by half again, to 354 by 204 metres. Neighbouring objectives are 59 to 98 metres apart instead of 39 to 66, the bases 318 metres apart instead of 212, and each map's hills, pit, ridge, channel or plateau grew with it. Buildings keep their size and their place beside the objective they belong to.
+- **More to fight through.** The new ground on every map holds buildings with doors and windows, open sheds, tanks, stair-climbed lookouts and walled ruins, themed to the map: farms and workshops in Foundry Valley, site offices and machine sheds in Quarry, cabins and hunters' lookouts on Ridgeline, warehouses in Depot, pump houses and settling tanks on Spillway, equipment huts on Relay, and ingot stores and gas holders round Slag Cathedral.
+- **Spread-out spawns.** Players deploy anywhere on open ground up to 20 metres from the centre of their base, or 6 to 16 metres from a point their team holds, choosing the spot farthest from other players.
+- **Smaller things.** Standing in lava shows the damage overlay. Teams are picked in the lobby, not the launcher. Your sight for each weapon is remembered between matches. Number keys change your loadout only while the loadout panel is open. F11 toggles fullscreen. Surfaces on Slag Cathedral no longer flicker as you look around.
+
+Collision changed on every map, so v0.9.2 cannot share a match with v0.9.1 or earlier, including the dedicated server (protocol 15). See the [v0.9.2 release notes](docs/release-notes/v0.9.2.md).
 
 ## v0.9.1
 
@@ -62,8 +71,8 @@ Either way the game keeps itself current: the launcher checks this repository's 
 **macOS:** the build is not signed with an Apple Developer ID, so a copy downloaded in a browser is blocked by Gatekeeper. The simplest way round it is to download from Terminal, which does not get flagged:
 
 ```sh
-curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.9.1/ferrite-v0.9.1-macos-universal.tar.gz | tar xz
-./ferrite-v0.9.1-macos-universal/ferrite
+curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.9.2/ferrite-v0.9.2-macos-universal.tar.gz | tar xz
+./ferrite-v0.9.2-macos-universal/ferrite
 ```
 
 If you already downloaded it in a browser, run `xattr -dr com.apple.quarantine .` in the unpacked folder once.
@@ -203,7 +212,7 @@ cargo run -p ferrite --example asset_review -- spillway target/spillway.png
 cargo run -p ferrite --example asset_review -- relay target/relay.png
 ```
 
-Omit the output path for an animated review window (ESC closes it). Soldier poses also include `crouch`, `slide`, `air`, `reload`, `melee` and `fall`. The six looks use layered, faceted armor and team-marked field packs based on the launcher artwork. First person, loadout previews and soldiers share the existing weapon models; the weapon roster and gameplay stats are unchanged. Geometry checks cover legacy map preservation, new map navigation, soldier pose bounds, weapon actions, finish patterns and clear sight apertures.
+Omit the output path for an animated review window (ESC closes it). Soldier poses also include `crouch`, `slide`, `air`, `reload`, `melee` and `fall`. The six looks use layered, faceted armor and team-marked field packs based on the launcher artwork. First person, loadout previews and soldiers share the existing weapon models; the weapon roster and gameplay stats are unchanged. Geometry checks pin every map's layout and cover how far apart objectives are, the buildings between them, open spawn ground, map navigation, soldier pose bounds, weapon actions, finish patterns and clear sight apertures.
 
 Note on the ping readout: acknowledgements ride on 30 Hz snapshots, so loopback shows about 15 ms. It is an upper bound on round trip, not a precise measurement.
 

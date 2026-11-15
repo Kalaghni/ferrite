@@ -17,8 +17,6 @@ use crate::ui::{self, color as th};
 use macroquad::prelude as mq;
 use std::path::PathBuf;
 
-/// Team preference: 0 EMBER, 1 COBALT, 2 auto-balance.
-pub const TEAM_LABELS: [&str; 3] = ["EMBER", "COBALT", "AUTO"];
 
 /// Video and control settings a match needs.
 #[derive(Clone)]
@@ -61,7 +59,6 @@ pub struct Menu {
     f: [String; 6],
     servers: Vec<String>,
     focus: usize,
-    pub team: u8,
     /// Mouse sensitivity, remembered between matches and launches.
     pub sens: f32,
     /// Map to host: index into the shared map table.
@@ -75,6 +72,8 @@ pub struct Menu {
     pub updater: update::Updater,
     /// Finish chosen for each weapon id.
     pub wskins: [u8; 20],
+    /// Sight chosen for each weapon id.
+    pub sights: [u8; 20],
     /// Who we are on every server, whatever the callsign says.
     pub uuid: [u8; 16],
     /// Icon: 0 none, 1.. a built-in emblem (in `icon_colour`), or
@@ -266,7 +265,6 @@ impl Menu {
             ],
             servers: Vec::new(),
             focus: F_NAME,
-            team: 2,
             sens: 0.0022,
             map: 0,
             rotate: true,
@@ -274,6 +272,7 @@ impl Menu {
             updates: true,
             updater: update::Updater::new(false, None),
             wskins: [0; 20],
+            sights: std::array::from_fn(|w| scene::sights_for(w as u8)[0]),
             uuid: [0; 16],
             icon_kind: 0,
             icon_colour: 0,
@@ -314,7 +313,6 @@ impl Menu {
                     "server" if !v.is_empty() && m.servers.len() < MAX_SAVED => m.servers.push(v.to_string()),
                     "bots" if v.parse::<usize>().is_ok() => m.f[F_BOTS] = v.to_string(),
                     "max_bots" if v.parse::<usize>().is_ok() => m.f[F_MAXBOTS] = v.chars().take(2).collect(),
-                    "team" => m.team = v.parse::<u8>().unwrap_or(2).min(2),
                     "sens" => m.sens = v.parse::<f32>().unwrap_or(0.0022).clamp(0.0004, 0.01),
                     "map" => m.map = map_by_name(v).unwrap_or(0),
                     "rotate" => m.rotate = v != "0",
@@ -337,6 +335,16 @@ impl Menu {
                     "loadout" => {
                         for (k, n) in v.split(',').take(6).enumerate() {
                             m.loadout[k] = n.trim().parse().unwrap_or(m.loadout[k]);
+                        }
+                    }
+                    "sights" => {
+                        // Keep only sights that still fit the weapon.
+                        for (k, n) in v.split(',').take(20).enumerate() {
+                            if let Ok(n) = n.trim().parse::<u8>() {
+                                if scene::sights_for(k as u8).contains(&n) {
+                                    m.sights[k] = n;
+                                }
+                            }
                         }
                     }
                     "weapon_skins" => {
@@ -431,7 +439,7 @@ impl Menu {
 
     fn save(&self) {
         let map = MAPS[self.map as usize % MAPS.len()].name.to_lowercase();
-        let mut out = format!("name={}\nbots={}\nteam={}\nsens={}\nmap={}\nrotate={}\n", self.f[F_NAME], self.f[F_BOTS], self.team, self.sens, map, self.rotate as u8);
+        let mut out = format!("name={}\nbots={}\nsens={}\nmap={}\nrotate={}\n", self.f[F_NAME], self.f[F_BOTS], self.sens, map, self.rotate as u8);
         out += &format!("difficulty={}\nvolume={:.2}\nmusic_volume={:.2}\nmusic={}\nmusic_in_match={}\n", self.difficulty, self.volume, self.music_vol, self.music_on as u8, self.music_in_match as u8);
         let p = &self.prefs;
         out += &format!("fov={}\nfullscreen={}\nshadows={}\nshow_fps={}\ninvert_y={}\ntoggle_aim={}\n", p.fov, p.fullscreen as u8, p.shadows, p.show_fps as u8, p.invert_y as u8, p.toggle_aim as u8);
@@ -444,6 +452,7 @@ impl Menu {
         let l = self.loadout;
         out += &format!("loadout={},{},{},{},{},{}\n", l[0], l[1], l[2], l[3], l[4], l[5]);
         out += &format!("weapon_skins={}\n", self.wskins.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(","));
+        out += &format!("sights={}\n", self.sights.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(","));
         out += &format!("id={}\nicon={}\nicon_colour={}\nupdates={}\n", uuid_text(&self.uuid), self.icon_kind, self.icon_colour, self.updates as u8);
         if let Some(px) = &self.custom {
             out += &format!("icon_data={}\n", ident::to_hex(px));
@@ -862,6 +871,11 @@ impl Menu {
                 // Inner pages are denser: put them on glass.
                 mq::draw_rectangle(0.0, 0.0, (x + w + 40.0).min(sw), sh, ui::fade(th::INK, 0.62));
             }
+            // F11 flips fullscreen, unless it is being bound to an action.
+            if !capturing && crate::f11_fullscreen() {
+                self.prefs.fullscreen = crate::is_fullscreen();
+                self.save();
+            }
             let esc = !capturing && (mq::is_key_pressed(mq::KeyCode::Escape) || controller::menu_back());
             let enter = mq::is_key_pressed(mq::KeyCode::Enter) || mq::is_key_pressed(mq::KeyCode::KpEnter);
 
@@ -872,34 +886,20 @@ impl Menu {
                     mq::draw_line(x, y + 48.0, x + w, y + 48.0, 1.0, th::STROKE);
                     y += 84.0;
                     self.field(F_NAME, x, y, 190.0, "CALLSIGN", "Player", now);
-                    // Team: which side to ask the server for.
-                    let tx = x + 206.0;
-                    ui::text("TEAM", tx, y - 8.0, 18.0, th::MUTED);
-                    let bw = ((w - 206.0 - 16.0) / 3.0).floor();
-                    for (i, id) in [2u8, 0, 1].into_iter().enumerate() {
-                        let bx = tx + i as f32 * (bw + 8.0);
-                        let c = [th::EMBER, th::COBALT, th::LINE][id as usize];
-                        let on = self.team == id;
-                        let over = hit(bx, y, bw, 38.0);
-                        mq::draw_rectangle(bx, y, bw, 38.0, if on { c } else { th::GLASS_STRONG });
-                        mq::draw_rectangle_lines(bx, y, bw, 38.0, 2.0, if on || over { th::WHITE } else { ui::fade(c, 0.8) });
-                        ui::text_c(TEAM_LABELS[id as usize], bx + bw / 2.0, y + 26.0, 20.0, if on { th::INK } else { c });
-                        if over && clicked() {
-                            self.team = id;
-                        }
-                    }
-                    y += 62.0;
-                    // Player icon: shown beside the callsign in a match.
+                    // Player icon, to the right of the callsign it is shown beside in a match.
                     {
-                        ui::text("PLAYER ICON", x, y - 8.0, 18.0, th::MUTED);
-                        ui::plate(x, y, 38.0, 38.0, th::GLASS_STRONG, th::STROKE);
+                        let ix = x + 206.0;
+                        ui::text("PLAYER ICON", ix, y - 8.0, 18.0, th::MUTED);
+                        ui::plate(ix, y, 38.0, 38.0, th::GLASS_STRONG, th::STROKE);
                         match self.icon_texture() {
-                            Some(t) => mq::draw_texture_ex(&t, x + 3.0, y + 3.0, mq::WHITE, mq::DrawTextureParams { dest_size: Some(mq::vec2(32.0, 32.0)), ..Default::default() }),
-                            None => ui::text_c("-", x + 19.0, y + 26.0, 20.0, th::QUIET),
+                            Some(t) => mq::draw_texture_ex(&t, ix + 3.0, y + 3.0, mq::WHITE, mq::DrawTextureParams { dest_size: Some(mq::vec2(32.0, 32.0)), ..Default::default() }),
+                            None => ui::text_c("-", ix + 19.0, y + 26.0, 20.0, th::QUIET),
                         }
                         let kinds = self.icon_kinds();
                         let at = kinds.iter().position(|k| *k == self.icon_kind).unwrap_or(0) as i32;
-                        let step = button(x + 244.0, y, 34.0, 38.0, ">", None, 20.0) as i32 - button(x + 46.0, y, 34.0, 38.0, "<", None, 20.0) as i32;
+                        // [icon] [<] [label] [>] [colour]
+                        let (lx, lw) = (ix + 78.0, 128.0);
+                        let step = button(lx + lw + 4.0, y, 30.0, 38.0, ">", None, 20.0) as i32 - button(ix + 44.0, y, 30.0, 38.0, "<", None, 20.0) as i32;
                         if step != 0 {
                             self.icon_kind = kinds[(at + step).rem_euclid(kinds.len() as i32) as usize];
                         }
@@ -908,11 +908,12 @@ impl Menu {
                             ident::CUSTOM => "YOUR PICTURE",
                             k => ident::SHAPES[(k as usize - 1) % ident::SHAPES.len()],
                         };
-                        ui::plate(x + 84.0, y, 156.0, 38.0, th::GLASS_STRONG, th::STROKE);
-                        ui::text_c(label, x + 162.0, y + 26.0, 18.0, th::WHITE);
-                        let mut hx = x + 290.0;
+                        ui::plate(lx, y, lw, 38.0, th::GLASS_STRONG, th::STROKE);
+                        let size = (16.0 * (lw - 12.0) / ui::width(label, 16.0).max(1.0)).min(16.0);
+                        ui::text_c(label, lx + lw / 2.0, y + 25.0, size, th::WHITE);
                         if self.icon_kind != 0 && self.icon_kind != ident::CUSTOM {
                             // Colour of the emblem: click for the next one.
+                            let hx = lx + lw + 40.0;
                             let c = ident::COLOURS[self.icon_colour as usize % ident::COLOURS.len()].1;
                             let over = hit(hx, y, 38.0, 38.0);
                             mq::draw_rectangle(hx + 5.0, y + 5.0, 28.0, 28.0, mq::Color::from_rgba(c[0], c[1], c[2], 255));
@@ -920,14 +921,10 @@ impl Menu {
                             if over && clicked() {
                                 self.icon_colour = (self.icon_colour + 1) % ident::COLOURS.len() as u8;
                             }
-                            hx += 48.0;
                         }
-                        if hx + 150.0 < x + w {
-                            ui::text("or drop a PNG", hx, y + 17.0, 15.0, th::QUIET);
-                            ui::text("on this window", hx, y + 33.0, 15.0, th::QUIET);
-                        }
-                        y += 56.0;
+                        ui::text("or drop a PNG on this window", ix, y + 56.0, 15.0, th::QUIET);
                     }
+                    y += 80.0;
                     if let Some(e) = &self.error {
                         ui::plate(x, y, w, 34.0, th::GLASS_STRONG, th::DANGER);
                         ui::text(e, x + 12.0, y + 23.0, 18.0, th::DANGER);
@@ -1211,7 +1208,7 @@ impl Menu {
                         1 => {
                             if row("FULLSCREEN", on_off(self.prefs.fullscreen), y) != 0 {
                                 self.prefs.fullscreen = !self.prefs.fullscreen;
-                                mq::set_fullscreen(self.prefs.fullscreen);
+                                crate::set_fullscreen(self.prefs.fullscreen);
                             }
                             y += 54.0;
                             let d = row("FIELD OF VIEW", format!("{:.0}", self.prefs.fov), y);

@@ -11,17 +11,31 @@ use crate::rng::Rng;
 use glam::{vec2, vec3, Vec2, Vec3};
 use std::collections::BinaryHeap;
 
-pub const HALF_X: f32 = 118.0;
-pub const HALF_Z: f32 = 68.0;
+/// Every battlefield was first laid out on a 236 x 136 m footprint and then
+/// spread out by this factor: objectives, bases and the lie of the land move
+/// outward, while each building keeps its size and its place beside the
+/// objective it belongs to (see [`shift`]).
+pub const SPREAD: f32 = 1.5;
+pub const HALF_X: f32 = 177.0;
+pub const HALF_Z: f32 = 102.0;
 pub const CELL: f32 = 2.0;
-pub const TNX: usize = 180;
-pub const TNZ: usize = 132;
-pub const TER_X0: f32 = -180.0;
-pub const TER_Z0: f32 = -132.0;
+pub const TNX: usize = 240;
+pub const TNZ: usize = 168;
+pub const TER_X0: f32 = -240.0;
+pub const TER_Z0: f32 = -168.0;
 
 pub const POINTS_XZ: [(f32, f32); 5] =
-    [(-72.0, 14.0), (-36.0, -24.0), (0.0, 0.0), (36.0, 24.0), (72.0, -14.0)];
-pub const BASES_XZ: [(f32, f32); 2] = [(-106.0, 0.0), (106.0, 0.0)];
+    [(-108.0, 21.0), (-54.0, -36.0), (0.0, 0.0), (54.0, 36.0), (108.0, -21.0)];
+pub const BASES_XZ: [(f32, f32); 2] = [(-159.0, 0.0), (159.0, 0.0)];
+/// Players spawn this far from the centre of their base, at most.
+pub const BASE_SPAWN_RADIUS: f32 = 20.0;
+
+/// How far a cluster first authored around `(x, z)` on the original
+/// footprint moves when the map is spread out. Adding it to every
+/// coordinate in the cluster keeps the cluster's shape.
+pub const fn shift(x: f32, z: f32) -> (f32, f32) {
+    (x * (SPREAD - 1.0), z * (SPREAD - 1.0))
+}
 pub const MAX_CRATES: usize = 64;
 
 /// One selectable battlefield. All maps share the same footprint; they
@@ -47,35 +61,35 @@ pub static MAPS: [MapDef; 7] = [
     MapDef {
         name: "QUARRY",
         blurb: "Terraced pit - the centre point sits on the floor",
-        points: [(-78.0, -20.0), (-42.0, 18.0), (0.0, 0.0), (42.0, -18.0), (78.0, 20.0)],
+        points: [(-117.0, -30.0), (-63.0, 27.0), (0.0, 0.0), (63.0, -27.0), (117.0, 30.0)],
         bases: BASES_XZ,
         ground: [[0.53, 0.48, 0.37], [0.64, 0.57, 0.44], [0.50, 0.47, 0.44]],
     },
     MapDef {
         name: "RIDGELINE",
         blurb: "Pine forest split by a rocky ridge with three passes",
-        points: [(-74.0, 22.0), (-34.0, -30.0), (0.0, 0.0), (34.0, 30.0), (74.0, -22.0)],
+        points: [(-111.0, 33.0), (-51.0, -45.0), (0.0, 0.0), (51.0, 45.0), (111.0, -33.0)],
         bases: BASES_XZ,
         ground: [[0.29, 0.43, 0.22], [0.44, 0.49, 0.24], [0.48, 0.42, 0.32]],
     },
     MapDef {
         name: "DEPOT",
         blurb: "Flat container yard - close quarters, short sightlines",
-        points: [(-74.0, -8.0), (-38.0, 10.0), (0.0, 0.0), (38.0, -10.0), (74.0, 8.0)],
+        points: [(-111.0, -12.0), (-57.0, 15.0), (0.0, 0.0), (57.0, -15.0), (111.0, 12.0)],
         bases: BASES_XZ,
         ground: [[0.37, 0.38, 0.36], [0.46, 0.45, 0.41], [0.42, 0.41, 0.40]],
     },
     MapDef {
         name: "SPILLWAY",
         blurb: "Drained waterworks - floodgates, pump halls and a sunken channel",
-        points: [(-76.0, -18.0), (-36.0, 20.0), (0.0, 0.0), (36.0, -20.0), (76.0, 18.0)],
+        points: [(-114.0, -27.0), (-54.0, 30.0), (0.0, 0.0), (54.0, -30.0), (114.0, 27.0)],
         bases: BASES_XZ,
         ground: [[0.43, 0.47, 0.40], [0.57, 0.55, 0.46], [0.49, 0.50, 0.47]],
     },
     MapDef {
         name: "RELAY",
         blurb: "Highland signal station - climb the towers, hold the exchange",
-        points: [(-78.0, 16.0), (-38.0, -26.0), (0.0, 0.0), (38.0, 26.0), (78.0, -16.0)],
+        points: [(-117.0, 24.0), (-57.0, -39.0), (0.0, 0.0), (57.0, 39.0), (117.0, -24.0)],
         bases: BASES_XZ,
         ground: [[0.37, 0.43, 0.39], [0.54, 0.53, 0.47], [0.46, 0.46, 0.44]],
     },
@@ -201,6 +215,8 @@ fn raw_height(x: f32, z: f32, s: u32) -> f32 {
 /// The lie of the land before objectives are levelled. Each map's shape is
 /// built from terms that are unchanged by (x, z) -> (-x, -z).
 fn shape(x: f32, z: f32, s: u32, map: u8) -> f32 {
+    // Every feature was designed on the original footprint; sample it there.
+    let (x, z) = (x / SPREAD, z / SPREAD);
     match map % MAPS.len() as u8 {
         1 => {
             // Quarry: an oval pit cut in three terraces down to a flat floor.
@@ -263,7 +279,7 @@ fn full_height(x: f32, z: f32, s: u32, map: u8) -> f32 {
         flat(cx, cz, 13.0);
     }
     for (cx, cz) in def.bases {
-        flat(cx, cz, 20.0);
+        flat(cx, cz, BASE_SPAWN_RADIUS + 8.0);
     }
     // Relay's towers stand on levelled sites so their stairs meet the ground.
     if map % MAPS.len() as u8 == relay::MAP_ID {
@@ -473,6 +489,8 @@ impl World {
 
     fn near_objective(&self, cx: f32, cz: f32, r_point: f32, r_base: f32) -> bool {
         let near = |p: Vec3, r: f32| (cx - p.x).powi(2) + (cz - p.z).powi(2) < r * r;
+        // Bases are measured from the edge of the spawn ground.
+        let r_base = r_base + BASE_SPAWN_RADIUS - 8.0;
         self.points.iter().any(|&p| near(p, r_point)) || self.bases.iter().any(|&p| near(p, r_base))
     }
 
@@ -562,15 +580,25 @@ impl World {
     }
 
     /// The two bases are built the same on every map (west one authored,
-    /// east one mirrored).
+    /// east one mirrored). Everything stands outside the spawn ground except
+    /// the command post at its back.
     fn build_bases(&mut self) {
         use BlockKind::*;
-        self.sym(-92.0, -11.0, 0.3, 5.0, 0.0, 3.2, Concrete, 0);
-        self.sym(-92.0, 11.0, 0.3, 5.0, 0.0, 3.2, Concrete, 1);
-        self.sym(-100.0, -17.0, 3.0, 1.25, 0.0, 2.6, Container, 0);
-        self.sym(-100.0, 17.0, 3.0, 1.25, 0.0, 2.6, Container, 2);
-        self.sym(-114.0, 0.0, 1.5, 4.0, 0.0, 4.2, Metal, 0);
-        self.sym(-114.0, 0.0, 0.25, 0.25, 4.2, 5.0, Metal, 1);
+        let bx = BASES_XZ[0].0;
+        // Command post and its mast.
+        self.sym(bx - 12.0, 0.0, 1.5, 4.0, 0.0, 4.2, Metal, 0);
+        self.sym(bx - 12.0, 0.0, 0.25, 0.25, 4.2, 5.0, Metal, 1);
+        // Blast walls either side of the way out.
+        self.sym(bx + 23.0, -13.0, 0.3, 5.0, 0.0, 3.2, Concrete, 0);
+        self.sym(bx + 23.0, 13.0, 0.3, 5.0, 0.0, 3.2, Concrete, 1);
+        // Supply containers on the flanks of the spawn ground.
+        self.sym(bx + 8.0, -24.0, 3.0, 1.25, 0.0, 2.6, Container, 0);
+        self.sym(bx + 8.0, 24.0, 3.0, 1.25, 0.0, 2.6, Container, 2);
+        self.sym(bx - 5.0, -23.5, 1.25, 3.0, 0.0, 2.6, Container, 3);
+        self.sym(bx - 5.0, 23.5, 1.25, 3.0, 0.0, 2.6, Container, 1);
+        // Sandbagged firing steps covering the exits.
+        self.sym(bx + 25.0, -27.0, 2.4, 0.45, 0.0, 1.1, Sandbag, 0);
+        self.sym(bx + 25.0, 27.0, 2.4, 0.45, 0.0, 1.1, Sandbag, 1);
     }
 
     /// A tree and its mirror. Trunks collide, canopies are scenery.
@@ -655,6 +683,311 @@ impl World {
         self.sym(1.6, 1.6, 0.25, 0.25, 2.45, 1.0, Concrete, 1);
     }
 
+    // ------------------------------------------------------ structure kit
+
+    /// Lowest ground under a footprint.
+    fn ground_under(&self, cx: f32, cz: f32, hx: f32, hz: f32) -> f32 {
+        let mut low = self.height(cx, cz);
+        for (sx, sz) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0), (0.0, -1.0), (0.0, 1.0), (-1.0, 0.0), (1.0, 0.0)] {
+            low = low.min(self.height(cx + sx * hx, cz + sz * hz));
+        }
+        low
+    }
+
+    /// Rise of the ground across a footprint.
+    fn slope_under(&self, cx: f32, cz: f32, hx: f32, hz: f32) -> f32 {
+        let mut high = self.height(cx, cz);
+        for (sx, sz) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+            high = high.max(self.height(cx + sx * hx, cz + sz * hz));
+        }
+        high - self.ground_under(cx, cz, hx, hz)
+    }
+
+    /// Nothing solid within the rectangle, here or at the mirrored spot.
+    fn rect_free(&self, cx: f32, cz: f32, hx: f32, hz: f32) -> bool {
+        let free = |x: f32, z: f32| {
+            !self.blocks.iter().any(|b| x + hx > b.min.x && x - hx < b.max.x && z + hz > b.min.z && z - hz < b.max.z)
+        };
+        free(cx, cz) && free(-cx, -cz)
+    }
+
+    /// Distance from (x, z) to the walking line base -> A -> B -> C.
+    fn lane_distance(&self, x: f32, z: f32) -> f32 {
+        let chain = [self.bases[0], self.points[0], self.points[1], self.points[2]];
+        let p = vec2(x, z);
+        chain
+            .windows(2)
+            .map(|s| {
+                let (a, b) = (vec2(s[0].x, s[0].z), vec2(s[1].x, s[1].z));
+                let t = ((p - a).dot(b - a) / (b - a).length_squared()).clamp(0.0, 1.0);
+                p.distance(a + (b - a) * t)
+            })
+            .fold(f32::MAX, f32::min)
+    }
+
+    /// Lines whose dressing scattered structures must not stand in, as
+    /// west-authored segments: Relay's power and signal cables and the
+    /// exchange flag line, and Slag Cathedral's ladle railway.
+    fn corridors(&self) -> Vec<(Vec2, Vec2)> {
+        let v = |(x, z): (f32, f32)| vec2(x, z);
+        match self.map {
+            relay::MAP_ID => {
+                let shed = (-82.5 + shift(-78.0, 16.0).0, 18.5 + shift(-78.0, 16.0).1);
+                let switchgear = (-8.5, -7.0);
+                let [inner, outer] = relay::GANTRIES;
+                let [array, exchange] = relay::TOWERS.map(|(x, z, _, _)| (x, z));
+                vec![
+                    (v(shed), v(outer)),
+                    (v(outer), v(inner)),
+                    (v(inner), v(switchgear)),
+                    (v(exchange), v(inner)),
+                    (v(exchange), v(array)),
+                    (v(exchange), v(relay::DISH)),
+                    (v(array), v(relay::DISH)),
+                ]
+            }
+            slag_cathedral::MAP_ID => {
+                let end = BASES_XZ[0].0 + BASE_SPAWN_RADIUS;
+                vec![(vec2(end, 0.0), vec2(-slag_cathedral::NAVE_HALF_X, 0.0))]
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Whether (x, z) or its mirror lies within `d` of a corridor.
+    fn in_corridor(&self, x: f32, z: f32, d: f32) -> bool {
+        self.corridors().iter().any(|&(a, b)| {
+            [vec2(x, z), vec2(-x, -z)].iter().any(|&p| {
+                let t = ((p - a).dot(b - a) / (b - a).length_squared()).clamp(0.0, 1.0);
+                p.distance(a + (b - a) * t) < d
+            })
+        })
+    }
+
+    /// Whether a structure of half size (hx, hz) can stand at (x, z) in the
+    /// west half: inside the battlefield, on reasonably level ground, off the
+    /// main walking line, clear of objectives, spawns and other structures.
+    fn site_ok(&self, x: f32, z: f32, hx: f32, hz: f32, pad: f32) -> bool {
+        let r = hx.max(hz);
+        x + hx < -3.0
+            && x - hx > -HALF_X + 6.0
+            && (z.abs() + hz) < HALF_Z - 6.0
+            && !self.near_objective(x, z, 16.0 + r, 12.0 + r)
+            && self.lane_distance(x, z) > 6.0 + r
+            && self.slope_under(x, z, hx, hz) < 1.3
+            && !self.lava(x, z, r + 2.0)
+            && !self.in_corridor(x, z, r + 3.0)
+            && self.rect_free(x, z, hx + pad, hz + pad)
+    }
+
+    /// One wall with openings, along x (`along_x`) or z, at `fixed`, from
+    /// `a` to `b`. Doors run from the floor; windows have a sill.
+    #[allow(clippy::too_many_arguments)]
+    fn wall_with_openings(&mut self, along_x: bool, fixed: f32, a: f32, b: f32, low: f32, g: f32, top: f32, door: bool, tint: u8) {
+        use BlockKind::*;
+        let t = 0.22;
+        let len = b - a;
+        // (start, end, sill, head); a door's sill is below the floor.
+        let mut holes: Vec<(f32, f32, f32, f32)> = Vec::new();
+        if door {
+            let c = (a + b) * 0.5;
+            holes.push((c - 1.2, c + 1.2, low, g + 2.45));
+        }
+        if len > 7.5 {
+            for c in [a + len * 0.2, b - len * 0.2] {
+                holes.push((c - 0.65, c + 0.65, g + 1.05, g + 2.1));
+            }
+        }
+        holes.sort_by(|p, q| p.0.total_cmp(&q.0));
+        let piece = |me: &mut World, s: f32, e: f32, y0: f32, y1: f32| {
+            if e - s < 0.05 || y1 - y0 < 0.05 {
+                return;
+            }
+            let c = (s + e) * 0.5;
+            if along_x {
+                me.sym_abs(c, fixed, (e - s) * 0.5, t, y0, y1, Concrete, tint);
+            } else {
+                me.sym_abs(fixed, c, t, (e - s) * 0.5, y0, y1, Concrete, tint);
+            }
+        };
+        let mut at = a;
+        for (s, e, sill, head) in holes {
+            piece(self, at, s, low, top);
+            piece(self, s, e, low, sill);
+            piece(self, s, e, head, top);
+            at = e;
+        }
+        piece(self, at, b, low, top);
+    }
+
+    /// A flat-roofed building with a doorway in each side named in `doors`
+    /// (bit0 west, bit1 east, bit2 north (-z), bit3 south (+z)) and windows
+    /// in its longer walls. Placed with its mirror.
+    #[allow(clippy::too_many_arguments)]
+    fn building(&mut self, cx: f32, cz: f32, hx: f32, hz: f32, h: f32, doors: u8, tint: u8, roof_kind: BlockKind) {
+        let g = self.height(cx, cz);
+        let low = self.ground_under(cx, cz, hx, hz) - 0.6;
+        let top = g + h;
+        let t = 0.22;
+        self.wall_with_openings(true, cz - hz + t, cx - hx, cx + hx, low, g, top, doors & 4 != 0, tint);
+        self.wall_with_openings(true, cz + hz - t, cx - hx, cx + hx, low, g, top, doors & 8 != 0, tint);
+        self.wall_with_openings(false, cx - hx + t, cz - hz + 2.0 * t, cz + hz - 2.0 * t, low, g, top, doors & 1 != 0, tint);
+        self.wall_with_openings(false, cx + hx - t, cz - hz + 2.0 * t, cz + hz - 2.0 * t, low, g, top, doors & 2 != 0, tint);
+        self.sym_abs(cx, cz, hx + 0.25, hz + 0.25, top, top + 0.3, roof_kind, (tint + 1) % 4);
+    }
+
+    /// An open-sided shed: a roof on posts. Shelter from above, not cover.
+    fn shed(&mut self, cx: f32, cz: f32, hx: f32, hz: f32, h: f32, tint: u8) {
+        use BlockKind::*;
+        let g = self.height(cx, cz);
+        let top = g + h;
+        let nx = (hx / 3.5).ceil().max(1.0) as i32;
+        for i in 0..=nx {
+            let x = cx - hx + 2.0 * hx * i as f32 / nx as f32;
+            for z in [cz - hz, cz + hz] {
+                self.sym_abs(x, z, 0.18, 0.18, self.height(x, z) - 0.6, top, Metal, 0);
+            }
+        }
+        self.sym_abs(cx, cz, hx + 0.4, hz + 0.6, top, top + 0.28, Metal, tint);
+    }
+
+    /// A lookout: a slab `h` metres up, a stair down one side (`dir` is the
+    /// x direction the stair leaves in) and waist-high plates on the far edges.
+    fn lookout(&mut self, cx: f32, cz: f32, h: f32, dir: f32, tint: u8) {
+        use BlockKind::*;
+        let half = 2.2;
+        let g = self.height(cx, cz);
+        let low = self.ground_under(cx, cz, half + 4.0, half) - 0.6;
+        let top = g + h;
+        self.sym_abs(cx, cz, half, half, low, top, Concrete, tint);
+        let rise = 0.3;
+        let n = (h / rise).ceil() as usize;
+        let tread = 0.55;
+        for i in 0..n {
+            // The first step stands farthest out.
+            let x = cx + dir * (half + tread * (n - i) as f32 - tread * 0.5);
+            let y = (top - rise * (n - 1 - i) as f32).min(top);
+            self.sym_abs(x, cz, tread * 0.5, 1.0, low, y, Step, (i % 2) as u8);
+        }
+        // Plates on the three sides away from the stair.
+        let pt = 0.14;
+        self.sym_abs(cx - dir * (half - pt), cz, pt, half, top, top + 0.95, Metal, 1);
+        self.sym_abs(cx, cz - half + pt, half, pt, top, top + 0.95, Metal, 1);
+        self.sym_abs(cx, cz + half - pt, half, pt, top, top + 0.95, Metal, 1);
+    }
+
+    /// A round tank, approximated by two crossed slabs and a core.
+    fn tank(&mut self, cx: f32, cz: f32, r: f32, h: f32, tint: u8) {
+        use BlockKind::*;
+        self.sym(cx, cz, r, r * 0.42, 0.0, h, Metal, tint);
+        self.sym(cx, cz, r * 0.42, r, 0.0, h, Metal, tint);
+        self.sym(cx, cz, r * 0.72, r * 0.72, 0.0, h, Metal, tint);
+        self.sym(cx, cz, r * 0.3, r * 0.3, h, 0.6, Metal, (tint + 1) % 4);
+    }
+
+    /// Up to `n` structures dropped where `site_ok` allows, each picked by
+    /// `make` from a size returned by `size`.
+    /// `turn` lets the footprint be turned a quarter.
+    fn scatter(&mut self, rng: &mut Rng, n: usize, turn: bool, size: impl Fn(&mut Rng) -> (f32, f32), mut make: impl FnMut(&mut World, &mut Rng, f32, f32, f32, f32)) {
+        for _ in 0..n {
+            for _ in 0..60 {
+                let (mut hx, mut hz) = size(rng);
+                if turn && rng.chance(0.5) {
+                    std::mem::swap(&mut hx, &mut hz);
+                }
+                let x = rng.range(-HALF_X + 8.0, -6.0);
+                let z = rng.range(-HALF_Z + 8.0, HALF_Z - 8.0);
+                if self.site_ok(x, z, hx, hz, 4.5) {
+                    make(self, rng, x, z, hx, hz);
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Scattered roofed buildings, each with at least two doors.
+    fn scatter_buildings(&mut self, rng: &mut Rng, n: usize, sizes: &[(f32, f32, f32)], roof: BlockKind) {
+        let pick = sizes.to_vec();
+        let heights = std::cell::Cell::new(3.4f32);
+        self.scatter(
+            rng,
+            n,
+            true,
+            |rng| {
+                let (hx, hz, h) = pick[rng.below(pick.len() as u32) as usize];
+                heights.set(h);
+                (hx, hz)
+            },
+            |me, rng, x, z, hx, hz| {
+                let mut doors = rng.below(16) as u8;
+                while doors.count_ones() < 2 {
+                    doors |= 1 << rng.below(4);
+                }
+                let tint = rng.below(4) as u8;
+                me.building(x, z, hx, hz, heights.get(), doors, tint, roof);
+            },
+        );
+    }
+
+    fn scatter_lookouts(&mut self, rng: &mut Rng, n: usize, h: f32) {
+        // The footprint covers the slab and its stair; the stair runs along x.
+        let run = 0.55 * (h / 0.3).ceil();
+        self.scatter(
+            rng,
+            n,
+            false,
+            |_| (2.2 + run * 0.5 + 0.3, 2.2),
+            |me, rng, x, z, _, _| {
+                let dir = if rng.chance(0.5) { 1.0 } else { -1.0 };
+                me.lookout(x - dir * run * 0.5, z, h, dir, rng.below(3) as u8);
+            },
+        );
+    }
+
+    fn scatter_sheds(&mut self, rng: &mut Rng, n: usize) {
+        self.scatter(
+            rng,
+            n,
+            true,
+            |rng| (rng.range(4.5, 7.5), rng.range(2.8, 3.8)),
+            |me, rng, x, z, hx, hz| {
+                let h = rng.range(3.6, 4.6);
+                me.shed(x, z, hx, hz, h, rng.below(3) as u8);
+                me.crates(rng, x, z, 2);
+            },
+        );
+    }
+
+    fn scatter_tanks(&mut self, rng: &mut Rng, n: usize) {
+        self.scatter(
+            rng,
+            n,
+            true,
+            |rng| {
+                let r = rng.range(2.0, 3.4);
+                (r, r)
+            },
+            |me, rng, x, z, r, _| {
+                let h = rng.range(3.5, 6.5);
+                me.tank(x, z, r, h, rng.below(3) as u8);
+            },
+        );
+    }
+
+    /// Roofless walled compounds: broken walls round an empty yard.
+    fn scatter_ruins(&mut self, rng: &mut Rng, n: usize) {
+        self.scatter(
+            rng,
+            n,
+            true,
+            |rng| (rng.range(5.0, 8.0), rng.range(4.0, 6.5)),
+            |me, rng, x, z, hx, hz| {
+                let h = rng.range(2.4, 3.4);
+                me.ruin(rng, x, z, hx * 2.0, hz * 2.0, h, (-HALF_X, -1.0), 0b1111);
+            },
+        );
+    }
+
     // ------------------------------------------------------------ Quarry
 
     fn build_quarry(&mut self, rng: &mut Rng) {
@@ -662,23 +995,25 @@ impl World {
         self.build_bases();
 
         // --- A / E: site office, a walled yard up on the rim ---
-        self.ruin(rng, -78.0, -20.0, 12.0, 9.0, 3.2, (-200.0, 200.0), 0b1111);
-        self.crates(rng, -78.0, -20.0, 4);
-        self.sym(-69.5, -24.0, 0.45, 2.6, 0.0, 1.1, Sandbag, 0);
-        self.sym(-74.0, -12.5, 2.6, 0.45, 0.0, 1.1, Sandbag, 1);
+        let (ox, oz) = shift(-78.0, -20.0);
+        self.ruin(rng, -78.0 + ox, -20.0 + oz, 12.0, 9.0, 3.2, (-300.0, 300.0), 0b1111);
+        self.crates(rng, -78.0 + ox, -20.0 + oz, 4);
+        self.sym(-69.5 + ox, -24.0 + oz, 0.45, 2.6, 0.0, 1.1, Sandbag, 0);
+        self.sym(-74.0 + ox, -12.5 + oz, 2.6, 0.45, 0.0, 1.1, Sandbag, 1);
 
         // --- B / D: loading terrace with spoil containers and a conveyor ---
-        self.sym(-47.0, 23.0, 3.0, 1.25, 0.0, 2.6, Container, 2);
-        self.sym(-36.5, 25.5, 1.25, 3.0, 0.0, 2.6, Container, 0);
-        self.sym(-47.5, 12.0, 1.25, 3.0, 0.0, 2.6, Container, 3);
-        self.sym(-36.0, 11.5, 2.4, 0.45, 0.0, 1.1, Sandbag, 0);
-        self.crates(rng, -42.0, 18.0, 5);
-        let belt = self.height(-50.0, 32.0) + 5.5;
+        let (ox, oz) = shift(-42.0, 18.0);
+        self.sym(-47.0 + ox, 23.0 + oz, 3.0, 1.25, 0.0, 2.6, Container, 2);
+        self.sym(-36.5 + ox, 25.5 + oz, 1.25, 3.0, 0.0, 2.6, Container, 0);
+        self.sym(-47.5 + ox, 12.0 + oz, 1.25, 3.0, 0.0, 2.6, Container, 3);
+        self.sym(-36.0 + ox, 11.5 + oz, 2.4, 0.45, 0.0, 1.1, Sandbag, 0);
+        self.crates(rng, -42.0 + ox, 18.0 + oz, 5);
+        let belt = self.height(-50.0 + ox, 32.0 + oz) + 5.5;
         for k in 0..4 {
-            let x = -50.0 + 6.0 * k as f32;
-            self.sym_abs(x, 32.0, 0.3, 0.3, self.height(x, 32.0) - 0.6, belt, Metal, 0);
+            let x = -50.0 + ox + 6.0 * k as f32;
+            self.sym_abs(x, 32.0 + oz, 0.3, 0.3, self.height(x, 32.0 + oz) - 0.6, belt, Metal, 0);
         }
-        self.sym_abs(-41.0, 32.0, 9.8, 0.55, belt, belt + 0.5, Metal, 1);
+        self.sym_abs(-41.0 + ox, 32.0 + oz, 9.8, 0.55, belt, belt + 0.5, Metal, 1);
 
         // --- C: the crusher, down on the pit floor ---
         self.centre_platform();
@@ -688,8 +1023,15 @@ impl World {
         self.sym(-3.5, -10.0, 2.4, 0.45, 0.0, 1.1, Sandbag, 0);
         self.crates(rng, -6.0, -4.5, 4);
 
+        // --- The works: site offices and stores, machine sheds, lookouts
+        // over the pit and fuel tanks, between the terraces ---
+        self.scatter_buildings(rng, 6, &[(4.0, 3.0, 3.4), (5.5, 3.5, 3.6), (3.2, 2.6, 3.2)], Metal);
+        self.scatter_sheds(rng, 4);
+        self.scatter_lookouts(rng, 3, 3.6);
+        self.scatter_tanks(rng, 3);
+
         // --- Cut stone and spoil on the terraces ---
-        for _ in 0..34 {
+        for _ in 0..76 {
             let x = rng.range(-HALF_X + 10.0, -4.0);
             let z = rng.range(-HALF_Z + 6.0, HALF_Z - 6.0);
             if self.near_objective(x, z, 12.0, 17.0) || !self.clear_both(x, z, 2.8) {
@@ -704,9 +1046,9 @@ impl World {
                 _ => self.crates(rng, x, z, 3),
             }
         }
-        self.lane_cover(rng, 4, 11.0);
-        self.boulders(rng, 50, 0.8, 1.8);
-        self.forest(rng, 20, 150, 0.7);
+        self.lane_cover(rng, 6, 14.0);
+        self.boulders(rng, 110, 0.8, 1.8);
+        self.forest(rng, 45, 210, 0.7);
     }
 
     // --------------------------------------------------------- Ridgeline
@@ -716,17 +1058,19 @@ impl World {
         self.build_bases();
 
         // --- A / E: walled outpost at the forest edge ---
-        self.ruin(rng, -74.0, 22.0, 13.0, 10.0, 3.4, (-200.0, 200.0), 0b1111);
-        self.crates(rng, -74.0, 22.0, 4);
-        self.sym(-64.5, 18.0, 0.45, 2.6, 0.0, 1.1, Sandbag, 0);
-        self.sym(-70.0, 30.5, 2.6, 0.45, 0.0, 1.1, Sandbag, 1);
+        let (ox, oz) = shift(-74.0, 22.0);
+        self.ruin(rng, -74.0 + ox, 22.0 + oz, 13.0, 10.0, 3.4, (-300.0, 300.0), 0b1111);
+        self.crates(rng, -74.0 + ox, 22.0 + oz, 4);
+        self.sym(-64.5 + ox, 18.0 + oz, 0.45, 2.6, 0.0, 1.1, Sandbag, 0);
+        self.sym(-70.0 + ox, 30.5 + oz, 2.6, 0.45, 0.0, 1.1, Sandbag, 1);
 
         // --- B / D: logging camp below the outer pass ---
-        self.ruin(rng, -38.0, -34.0, 9.0, 7.0, 2.8, (-200.0, 200.0), 0b1101);
-        self.sym(-27.5, -26.0, 3.0, 1.25, 0.0, 2.6, Container, 1);
-        self.sym(-40.0, -23.0, 2.4, 0.45, 0.0, 1.1, Sandbag, 0);
-        self.sym(-26.5, -35.0, 0.45, 2.4, 0.0, 1.1, Sandbag, 1);
-        self.crates(rng, -32.5, -28.0, 5);
+        let (ox, oz) = shift(-34.0, -30.0);
+        self.ruin(rng, -38.0 + ox, -34.0 + oz, 9.0, 7.0, 2.8, (-300.0, 300.0), 0b1101);
+        self.sym(-27.5 + ox, -26.0 + oz, 3.0, 1.25, 0.0, 2.6, Container, 1);
+        self.sym(-40.0 + ox, -23.0 + oz, 2.4, 0.45, 0.0, 1.1, Sandbag, 0);
+        self.sym(-26.5 + ox, -35.0 + oz, 0.45, 2.4, 0.0, 1.1, Sandbag, 1);
+        self.crates(rng, -32.5 + ox, -28.0 + oz, 5);
 
         // --- C: watch post on the saddle (self-symmetric) ---
         self.ruin(rng, 0.0, 0.0, 18.0, 13.0, 3.6, (-200.0, 0.0), 0b1101);
@@ -737,19 +1081,25 @@ impl World {
 
         // --- The crest: a wall of rock everywhere but the passes ---
         let (ux, uz) = (0.35 / 1.0595, 1.0 / 1.0595);
-        let mut along = 15.0;
-        while along < 76.0 {
+        let pass = RIDGE_PASS * SPREAD;
+        let mut along = 15.0 * SPREAD;
+        while along < 76.0 * SPREAD {
             let (x, z) = (ux * along + rng.range(-1.2, 1.2), uz * along + rng.range(-1.0, 1.0));
             let size = rng.range(1.6, 2.4);
-            if (along - RIDGE_PASS).abs() > 8.5 && z.abs() < HALF_Z - 3.0 && !self.near_objective(x, z, 13.0, 16.0) {
+            if (along - pass).abs() > 8.5 * SPREAD && z.abs() < HALF_Z - 3.0 && !self.near_objective(x, z, 13.0, 16.0) {
                 self.rock(rng, x, z, size);
             }
             along += 4.2;
         }
 
-        self.lane_cover(rng, 5, 12.0);
-        self.boulders(rng, 26, 0.7, 1.5);
-        self.forest(rng, 200, 190, 0.75);
+        // --- Forest cabins, hunters' lookouts and old walled pens ---
+        self.scatter_buildings(rng, 7, &[(3.2, 2.6, 3.2), (4.0, 3.0, 3.4)], Concrete);
+        self.scatter_lookouts(rng, 4, 4.2);
+        self.scatter_ruins(rng, 3);
+
+        self.lane_cover(rng, 7, 15.0);
+        self.boulders(rng, 60, 0.7, 1.5);
+        self.forest(rng, 450, 260, 0.75);
     }
 
     // ------------------------------------------------------------- Depot
@@ -759,19 +1109,21 @@ impl World {
         self.build_bases();
 
         // --- A / E: warehouse shell ---
-        self.ruin(rng, -74.0, -8.0, 16.0, 12.0, 4.0, (-200.0, 200.0), 0b1111);
-        self.crates(rng, -74.0, -8.0, 5);
-        self.sym(-63.0, -3.0, 0.45, 2.6, 0.0, 1.1, Sandbag, 0);
+        let (ox, oz) = shift(-74.0, -8.0);
+        self.ruin(rng, -74.0 + ox, -8.0 + oz, 16.0, 12.0, 4.0, (-300.0, 300.0), 0b1111);
+        self.crates(rng, -74.0 + ox, -8.0 + oz, 5);
+        self.sym(-63.0 + ox, -3.0 + oz, 0.45, 2.6, 0.0, 1.1, Sandbag, 0);
 
         // --- B / D: loading dock, a raised slab with steps at one end ---
-        self.sym(-38.0, 16.5, 5.0, 2.0, 0.0, 1.1, Concrete, 1);
+        let (ox, oz) = shift(-38.0, 10.0);
+        self.sym(-38.0 + ox, 16.5 + oz, 5.0, 2.0, 0.0, 1.1, Concrete, 1);
         for i in 0..3 {
-            let x = -43.3 - 0.6 * (2 - i) as f32;
-            self.sym(x, 16.5, 0.3, 1.2, 0.0, 0.3 * (i + 1) as f32, Step, (i % 2) as u8);
+            let x = -43.3 + ox - 0.6 * (2 - i) as f32;
+            self.sym(x, 16.5 + oz, 0.3, 1.2, 0.0, 0.3 * (i + 1) as f32, Step, (i % 2) as u8);
         }
-        self.sym(-33.0, 3.5, 2.4, 0.45, 0.0, 1.1, Sandbag, 0);
-        self.sym(-45.5, 6.5, 0.45, 2.4, 0.0, 1.1, Sandbag, 1);
-        self.crates(rng, -38.0, 9.5, 5);
+        self.sym(-33.0 + ox, 3.5 + oz, 2.4, 0.45, 0.0, 1.1, Sandbag, 0);
+        self.sym(-45.5 + ox, 6.5 + oz, 0.45, 2.4, 0.0, 1.1, Sandbag, 1);
+        self.crates(rng, -38.0 + ox, 9.5 + oz, 5);
 
         // --- C: gantry crane over the central crossing (self-symmetric) ---
         let top = self.height(0.0, 0.0) + 9.0;
@@ -784,11 +1136,16 @@ impl World {
         self.sym(-11.5, 0.0, 0.45, 2.4, 0.0, 1.1, Sandbag, 1);
         self.crates(rng, -5.5, -4.5, 4);
 
+        // --- Warehouses and yard offices, before the containers fill in ---
+        self.scatter_buildings(rng, 4, &[(9.0, 5.5, 5.2), (7.5, 5.0, 4.8)], Metal);
+        self.scatter_buildings(rng, 4, &[(4.0, 3.0, 3.4), (3.4, 2.8, 3.2)], Concrete);
+        self.scatter_lookouts(rng, 2, 3.6);
+
         // --- Container rows: loose grid with gaps, some stacked two high ---
-        let mut gx = -98.0;
+        let mut gx = -HALF_X + 22.0;
         while gx < -6.0 {
-            let mut gz = -58.5;
-            while gz < 59.0 {
+            let mut gz = -HALF_Z + 10.0;
+            while gz < HALF_Z - 9.0 {
                 let (x, z) = (gx + rng.range(-1.0, 1.0), gz + rng.range(-0.8, 0.8));
                 let roll = rng.f32();
                 let long_x = rng.chance(0.5);
@@ -807,7 +1164,7 @@ impl World {
         }
 
         // --- Barriers and light masts in the lanes ---
-        for _ in 0..40 {
+        for _ in 0..90 {
             let x = rng.range(-HALF_X + 8.0, -3.5);
             let z = rng.range(-HALF_Z + 4.0, HALF_Z - 4.0);
             let kind = rng.below(4);
@@ -823,10 +1180,10 @@ impl World {
                 _ => self.sym(x, z, 2.0, 0.3, 0.0, 1.1, Concrete, 3),
             }
         }
-        self.crates(rng, -56.0, 4.0, 3);
-        self.crates(rng, -20.0, -6.0, 3);
-        self.boulders(rng, 6, 0.7, 1.2);
-        self.forest(rng, 10, 150, 0.3);
+        self.crates(rng, -84.0, 6.0, 3);
+        self.crates(rng, -30.0, -9.0, 3);
+        self.boulders(rng, 12, 0.7, 1.2);
+        self.forest(rng, 20, 210, 0.3);
     }
 
     // ---------------------------------------------------------- Spillway
@@ -837,44 +1194,46 @@ impl World {
 
         // A / E: the settling yard. Open-ended concrete cells break up the
         // first approach without turning the objective into a sealed room.
-        self.sym(-82.5, -18.0, 0.45, 5.0, 0.0, 2.8, Concrete, 1);
-        self.sym(-76.0, -23.0, 6.9, 0.4, 0.0, 1.15, Concrete, 2);
-        self.sym(-70.0, -19.8, 0.4, 3.2, 0.0, 1.15, Concrete, 2);
-        self.sym(-77.5, -13.0, 3.0, 0.4, 0.0, 1.15, Concrete, 1);
-        self.sym(-72.0, -15.8, 1.2, 0.8, 0.0, 1.5, Metal, 1);
-        self.crates(rng, -79.0, -18.5, 3);
+        let (ox, oz) = shift(-76.0, -18.0);
+        self.sym(-82.5 + ox, -18.0 + oz, 0.45, 5.0, 0.0, 2.8, Concrete, 1);
+        self.sym(-76.0 + ox, -23.0 + oz, 6.9, 0.4, 0.0, 1.15, Concrete, 2);
+        self.sym(-70.0 + ox, -19.8 + oz, 0.4, 3.2, 0.0, 1.15, Concrete, 2);
+        self.sym(-77.5 + ox, -13.0 + oz, 3.0, 0.4, 0.0, 1.15, Concrete, 1);
+        self.sym(-72.0 + ox, -15.8 + oz, 1.2, 0.8, 0.0, 1.5, Metal, 1);
+        self.crates(rng, -79.0 + ox, -18.5 + oz, 3);
 
         // B / D: a pump hall with a doorway on every side. The girders
         // stay above players' heads, so the hall works for all nav lanes.
+        let (ox, oz) = shift(-36.0, 20.0);
         for x in [-40.8, -31.2] {
-            self.sym(x, 14.0, 2.2, 0.4, 0.0, 3.7, Concrete, 0);
-            self.sym(x, 26.0, 2.2, 0.4, 0.0, 3.7, Concrete, 1);
+            self.sym(x + ox, 14.0 + oz, 2.2, 0.4, 0.0, 3.7, Concrete, 0);
+            self.sym(x + ox, 26.0 + oz, 2.2, 0.4, 0.0, 3.7, Concrete, 1);
         }
         for z in [15.8, 24.2] {
-            self.sym(-43.0, z, 0.4, 1.8, 0.0, 3.7, Concrete, 1);
-            self.sym(-29.0, z, 0.4, 1.8, 0.0, 3.7, Concrete, 0);
+            self.sym(-43.0 + ox, z + oz, 0.4, 1.8, 0.0, 3.7, Concrete, 1);
+            self.sym(-29.0 + ox, z + oz, 0.4, 1.8, 0.0, 3.7, Concrete, 0);
         }
-        let roof = self.height(-36.0, 20.0) + 4.4;
-        self.sym_abs(-36.0, 14.0, 7.6, 0.35, roof, roof + 0.45, Metal, 1);
-        self.sym_abs(-36.0, 26.0, 7.6, 0.35, roof, roof + 0.45, Metal, 1);
+        let roof = self.height(-36.0 + ox, 20.0 + oz) + 4.4;
+        self.sym_abs(-36.0 + ox, 14.0 + oz, 7.6, 0.35, roof, roof + 0.45, Metal, 1);
+        self.sym_abs(-36.0 + ox, 26.0 + oz, 7.6, 0.35, roof, roof + 0.45, Metal, 1);
         for x in [-40.0, -32.0] {
-            self.sym(x, 23.3, 1.1, 1.0, 0.0, 1.5, Metal, 0);
-            self.sym(x, 23.3, 0.35, 0.35, 1.5, 0.5, Metal, 1);
-            self.sym_abs(x, 20.0, 0.22, 6.1, roof + 0.45, roof + 0.8, Metal, 0);
+            self.sym(x + ox, 23.3 + oz, 1.1, 1.0, 0.0, 1.5, Metal, 0);
+            self.sym(x + ox, 23.3 + oz, 0.35, 0.35, 1.5, 0.5, Metal, 1);
+            self.sym_abs(x + ox, 20.0 + oz, 0.22, 6.1, roof + 0.45, roof + 0.8, Metal, 0);
         }
-        self.crates(rng, -33.5, 17.5, 3);
+        self.crates(rng, -33.5 + ox, 17.5 + oz, 3);
 
         // C: a lifted floodgate over the dry channel. Its two piers and
         // winding machinery form the silhouette; all three ground routes
         // remain open. Nothing occupies the capture point itself.
         let gate = self.height(0.0, 0.0) + 7.8;
-        for z in [-11.0f32, 11.0] {
+        for z in [-11.0f32 * SPREAD, 11.0 * SPREAD] {
             self.add_abs(0.0, z, 2.0, 1.3, self.height(0.0, z) - 0.6, gate, Concrete, 1);
             self.add_abs(0.0, z, 2.3, 1.55, gate, gate + 0.5, Concrete, 2);
             self.add_abs(0.0, z, 1.1, 1.0, gate + 0.5, gate + 1.4, Metal, 1);
         }
-        self.add_abs(0.0, 0.0, 1.7, 12.6, gate - 0.4, gate + 0.25, Metal, 0);
-        self.add_abs(0.0, 0.0, 0.35, 9.8, gate - 2.3, gate - 0.4, Metal, 1);
+        self.add_abs(0.0, 0.0, 1.7, 11.0 * SPREAD + 1.6, gate - 0.4, gate + 0.25, Metal, 0);
+        self.add_abs(0.0, 0.0, 0.35, 9.8 * SPREAD, gate - 2.3, gate - 0.4, Metal, 1);
         self.sym(-6.0, -3.6, 0.4, 2.4, 0.0, 1.05, Concrete, 2);
         self.sym(-11.0, 4.5, 2.1, 0.4, 0.0, 1.05, Sandbag, 0);
         self.crates(rng, -9.0, -6.5, 3);
@@ -882,23 +1241,34 @@ impl World {
         // Broken retaining walls expose ramps between the service roads
         // and channel. Gaps separate each short wall instead of forcing
         // everyone through the floodgate.
-        for x in [-58.0f32, -20.0] {
-            for z in [-13.8f32, 13.8] {
+        for x in [-87.0f32, -58.0, -30.0] {
+            for z in [-13.8f32 * SPREAD, 13.8 * SPREAD] {
                 self.sym(x, z, 5.5, 0.4, 0.0, 2.0, Concrete, 2);
                 self.sym(x, z, 0.6, 0.65, 2.0, 0.35, Concrete, 1);
             }
         }
         // Raised service pipe racks distinguish the outer flank routes.
-        for z in [-42.0f32, 42.0] {
-            let rack = self.height(-48.0, z) + 4.8;
-            for x in [-60.0f32, -48.0, -36.0] {
+        for z in [-42.0f32 * SPREAD, 42.0 * SPREAD] {
+            let rack = self.height(-72.0, z) + 4.8;
+            for x in [-90.0f32, -78.0, -66.0, -54.0] {
                 self.sym_abs(x, z, 0.22, 0.22, self.height(x, z) - 0.6, rack + 0.6, Metal, 0);
             }
-            self.sym_abs(-48.0, z, 12.5, 0.45, rack, rack + 0.55, Metal, 1);
+            self.sym_abs(-72.0, z, 18.5, 0.45, rack, rack + 0.55, Metal, 1);
         }
-        self.lane_cover(rng, 5, 9.0);
-        self.boulders(rng, 12, 0.7, 1.3);
-        self.forest(rng, 18, 145, 0.45);
+
+        // Pump houses, valve huts, settling tanks, filter-bed sheds, walled
+        // sludge pens and lookouts over the channel fill the ground between
+        // the yards.
+        self.scatter_buildings(rng, 5, &[(5.0, 3.5, 4.0), (6.0, 4.0, 4.4)], Concrete);
+        self.scatter_buildings(rng, 3, &[(2.6, 2.2, 2.9)], Metal);
+        self.scatter_tanks(rng, 6);
+        self.scatter_lookouts(rng, 2, 3.6);
+        self.scatter_sheds(rng, 3);
+        self.scatter_ruins(rng, 3);
+
+        self.lane_cover(rng, 7, 13.0);
+        self.boulders(rng, 26, 0.7, 1.3);
+        self.forest(rng, 40, 205, 0.45);
     }
 
     // ------------------------------------------------------------- Relay
@@ -908,18 +1278,20 @@ impl World {
         self.build_bases();
 
         // A / E: forward generator shelters, with a clear central yard.
-        self.ruin(rng, -78.0, 16.0, 14.0, 11.0, 3.1, (-200.0, 200.0), 0b1111);
-        self.sym(-82.5, 18.5, 1.3, 1.0, 0.0, 1.45, Metal, 0);
-        self.sym(-72.0, 10.5, 2.4, 0.4, 0.0, 1.1, Sandbag, 1);
-        self.crates(rng, -76.0, 18.5, 3);
+        let (ox, oz) = shift(-78.0, 16.0);
+        self.ruin(rng, -78.0 + ox, 16.0 + oz, 14.0, 11.0, 3.1, (-300.0, 300.0), 0b1111);
+        self.sym(-82.5 + ox, 18.5 + oz, 1.3, 1.0, 0.0, 1.45, Metal, 0);
+        self.sym(-72.0 + ox, 10.5 + oz, 2.4, 0.4, 0.0, 1.1, Sandbag, 1);
+        self.crates(rng, -76.0 + ox, 18.5 + oz, 3);
 
         // B / D: communications cabins and an antenna array. Low
         // equipment bays provide cover without filling the objective.
-        self.sym(-43.5, -31.5, 4.0, 1.5, 0.0, 2.7, Container, 3);
-        self.sym(-31.0, -29.0, 1.2, 2.5, 0.0, 1.55, Metal, 1);
-        self.sym(-38.0, -19.5, 2.7, 0.4, 0.0, 1.1, Sandbag, 0);
-        self.sym(-45.0, -23.0, 0.4, 2.4, 0.0, 1.1, Concrete, 1);
-        self.crates(rng, -39.0, -28.5, 4);
+        let (ox, oz) = shift(-38.0, -26.0);
+        self.sym(-43.5 + ox, -31.5 + oz, 4.0, 1.5, 0.0, 2.7, Container, 3);
+        self.sym(-31.0 + ox, -29.0 + oz, 1.2, 2.5, 0.0, 1.55, Metal, 1);
+        self.sym(-38.0 + ox, -19.5 + oz, 2.7, 0.4, 0.0, 1.1, Sandbag, 0);
+        self.sym(-45.0 + ox, -23.0 + oz, 0.4, 2.4, 0.0, 1.1, Concrete, 1);
+        self.crates(rng, -39.0 + ox, -28.5 + oz, 4);
         let (x, z, flights, rot) = relay::TOWERS[0];
         relay::tower(self, x, z, flights, rot);
 
@@ -939,7 +1311,7 @@ impl World {
 
         // Cable gantries run from the exchange to the ridge-side cabins.
         // The two five-metre service arches can be walked underneath.
-        for (x, z) in [(-23.0f32, -8.0f32), (-58.0, 2.0)] {
+        for (x, z) in relay::GANTRIES {
             let top = self.height(x, z) + 5.5;
             for dz in [-3.8f32, 3.8] {
                 self.sym_abs(x, z + dz, 0.3, 0.3, self.height(x, z + dz) - 0.6, top, Metal, 0);
@@ -950,11 +1322,19 @@ impl World {
         // Low rock shelves along the edges split long sightlines. The
         // centre and outer flanks are deliberately left as terrain ramps.
         for (x, z) in [(-61.0f32, -43.0f32), (-21.0, 37.0), (-56.0, 39.0), (-14.0, -44.0)] {
-            self.rock(rng, x, z, 2.3);
+            self.rock(rng, x * SPREAD, z * SPREAD, 2.3);
         }
-        self.lane_cover(rng, 5, 11.0);
-        self.boulders(rng, 28, 0.8, 1.6);
-        self.forest(rng, 65, 185, 0.95);
+
+        // Equipment huts, fuel tanks and a pair of survey lookouts dot the
+        // plateau between the station's buildings.
+        self.scatter_buildings(rng, 6, &[(3.0, 2.5, 3.0), (4.2, 3.0, 3.3)], Metal);
+        self.scatter_tanks(rng, 3);
+        self.scatter_lookouts(rng, 2, 3.6);
+        self.scatter_ruins(rng, 2);
+
+        self.lane_cover(rng, 7, 15.0);
+        self.boulders(rng, 62, 0.8, 1.6);
+        self.forest(rng, 140, 260, 0.95);
     }
 
     // ---------------------------------------------------- Foundry Valley
@@ -964,19 +1344,21 @@ impl World {
         self.build_bases();
 
         // --- A / E: walled outpost ---
-        self.ruin(rng, -72.0, 14.0, 13.0, 10.0, 3.4, (-200.0, 200.0), 0b1111);
-        self.crates(rng, -72.0, 14.0, 4);
-        self.sym(-62.5, 10.0, 0.45, 2.6, 0.0, 1.1, Sandbag, 0);
-        self.sym(-66.0, 22.5, 2.6, 0.45, 0.0, 1.1, Sandbag, 1);
+        let (ox, oz) = shift(-72.0, 14.0);
+        self.ruin(rng, -72.0 + ox, 14.0 + oz, 13.0, 10.0, 3.4, (-300.0, 300.0), 0b1111);
+        self.crates(rng, -72.0 + ox, 14.0 + oz, 4);
+        self.sym(-62.5 + ox, 10.0 + oz, 0.45, 2.6, 0.0, 1.1, Sandbag, 0);
+        self.sym(-66.0 + ox, 22.5 + oz, 2.6, 0.45, 0.0, 1.1, Sandbag, 1);
 
         // --- B / D: container yard ---
-        self.sym(-41.0, -20.5, 3.0, 1.25, 0.0, 2.6, Container, 0);
-        self.sym(-32.0, -30.0, 1.25, 3.0, 0.0, 2.6, Container, 1);
-        self.sym(-30.5, -19.5, 3.0, 1.25, 0.0, 2.6, Container, 2);
-        self.sym(-30.5, -19.5, 3.0, 1.25, 2.6, 2.6, Container, 3);
-        self.sym(-43.0, -30.5, 1.25, 3.0, 0.0, 2.6, Container, 3);
-        self.sym(-36.5, -14.5, 2.4, 0.45, 0.0, 1.1, Sandbag, 0);
-        self.crates(rng, -36.5, -25.0, 5);
+        let (ox, oz) = shift(-36.0, -24.0);
+        self.sym(-41.0 + ox, -20.5 + oz, 3.0, 1.25, 0.0, 2.6, Container, 0);
+        self.sym(-32.0 + ox, -30.0 + oz, 1.25, 3.0, 0.0, 2.6, Container, 1);
+        self.sym(-30.5 + ox, -19.5 + oz, 3.0, 1.25, 0.0, 2.6, Container, 2);
+        self.sym(-30.5 + ox, -19.5 + oz, 3.0, 1.25, 2.6, 2.6, Container, 3);
+        self.sym(-43.0 + ox, -30.5 + oz, 1.25, 3.0, 0.0, 2.6, Container, 3);
+        self.sym(-36.5 + ox, -14.5 + oz, 2.4, 0.45, 0.0, 1.1, Sandbag, 0);
+        self.crates(rng, -36.5 + ox, -25.0 + oz, 5);
 
         // --- C: the Foundry (self-symmetric) ---
         self.ruin(rng, 0.0, 0.0, 22.0, 17.0, 4.2, (-200.0, 0.0), 0b1101);
@@ -991,68 +1373,17 @@ impl World {
         self.crates(rng, -6.0, -4.5, 3);
         self.sym(-13.5, -3.0, 0.45, 2.4, 0.0, 1.1, Sandbag, 1);
 
-        // --- Cover along the lanes between objectives ---
-        let chain = [BASES_XZ[0], POINTS_XZ[0], POINTS_XZ[1], POINTS_XZ[2]];
-        for seg in chain.windows(2) {
-            let (a, b) = (vec2(seg[0].0, seg[0].1), vec2(seg[1].0, seg[1].1));
-            let dir = (b - a).normalize();
-            let perp = vec2(-dir.y, dir.x);
-            for k in 0..5 {
-                let t = 0.24 + 0.13 * k as f32;
-                let p = a + (b - a) * t + perp * rng.range(-13.0, 13.0);
-                if self.near_objective(p.x, p.y, 12.0, 15.0) || !self.footprint_free(p.x, p.y, 2.5) {
-                    continue;
-                }
-                match rng.below(4) {
-                    0 => self.rock(rng, p.x, p.y, 1.2),
-                    1 => self.sym(p.x, p.y, 0.45, 2.4, 0.0, 1.1, Sandbag, 0),
-                    2 => self.crates(rng, p.x, p.y, 3),
-                    _ => self.sym(p.x, p.y, 2.2, 0.3, 0.0, rng.range(1.2, 2.4), Concrete, 3),
-                }
-            }
-        }
+        // --- The valley's farms and workshops: houses and barns, ruined
+        // walled yards, water-tower lookouts and the foundry's old tanks ---
+        self.scatter_buildings(rng, 5, &[(4.0, 3.2, 3.4), (5.0, 3.5, 3.6)], Concrete);
+        self.scatter_buildings(rng, 3, &[(7.0, 4.5, 4.8)], Metal);
+        self.scatter_ruins(rng, 4);
+        self.scatter_lookouts(rng, 2, 4.2);
+        self.scatter_tanks(rng, 2);
 
-        // --- Scattered rocks ---
-        for _ in 0..46 {
-            let x = rng.range(-HALF_X + 6.0, -1.0);
-            let z = rng.range(-HALF_Z + 4.0, HALF_Z - 4.0);
-            if self.near_objective(x, z, 12.5, 17.0) || !self.footprint_free(x, z, 3.0) {
-                continue;
-            }
-            let size = rng.range(0.7, 1.6);
-            self.rock(rng, x, z, size);
-        }
-
-        // --- Trees: trunks collide, canopies are scenery ---
-        let tree = |me: &mut World, rng: &mut Rng, x: f32, z: f32, collide: bool| {
-            let height = rng.range(5.0, 9.5);
-            let radius = rng.range(1.5, 2.6);
-            let tint = rng.below(5) as u8;
-            let pine = rng.chance(0.4);
-            for (px, pz) in [(x, z), (-x, -z)] {
-                let base = vec3(px, me.height(px, pz), pz);
-                me.trees.push(Tree { base, height, radius, tint, pine });
-            }
-            if collide {
-                me.sym(x, z, 0.28, 0.28, 0.0, height * 0.45, Trunk, 0);
-            }
-        };
-        for _ in 0..90 {
-            let x = rng.range(-HALF_X + 2.0, -1.5);
-            let z = rng.range(-HALF_Z + 2.0, HALF_Z - 2.0);
-            if self.near_objective(x, z, 13.0, 16.0) || !self.footprint_free(x, z, 1.6) {
-                continue;
-            }
-            tree(self, rng, x, z, true);
-        }
-        for _ in 0..170 {
-            let x = rng.range(TER_X0 + 8.0, 0.0);
-            let z = rng.range(TER_Z0 + 8.0, -TER_Z0 - 8.0);
-            if x.abs() < HALF_X + 4.0 && z.abs() < HALF_Z + 4.0 {
-                continue;
-            }
-            tree(self, rng, x, z, false);
-        }
+        self.lane_cover(rng, 7, 18.0);
+        self.boulders(rng, 100, 0.7, 1.6);
+        self.forest(rng, 200, 240, 0.4);
     }
 }
 
@@ -1256,11 +1587,19 @@ impl Nav {
 mod tests {
     use super::*;
 
-    // Captured before adding maps. Millimetre quantisation tolerates tiny
-    // floating-point differences between targets, but covers the complete
-    // terrain, collision geometry, trees, objectives and crate assignment.
-    // Relay's two hashes were re-captured when its masts were rebuilt as
-    // climbable towers; the other five maps are as first captured.
+    // Captured when the maps were spread out by half again (SPREAD).
+    // Millimetre quantisation tolerates tiny floating-point differences
+    // between targets, but covers the complete terrain, collision geometry,
+    // trees, objectives and crate assignment of every map.
+    const FINGERPRINTS_FE221: [u64; 7] = [
+        0x7f9890ad8391e69f, 0x46cf4128fdd146d, 0x8ef4ebe32b9aae4c, 0x90b4f8025d90cb91,
+        0x9add6dc3e14285f4, 0xf1134b5f6ab0c68f, 0xa4522d55ba21aae2,
+    ];
+    const FINGERPRINTS_D091: [u64; 7] = [
+        0x2847fba65b5cbf3a, 0xfb132e44cafe997f, 0xb7c7ed21c8252e89, 0x7735b775b6c294ee,
+        0x4b79a71339bec22c, 0x378a3fde022bcd47, 0xa89dded116c53bbc,
+    ];
+
     fn fingerprint(w: &World) -> u64 {
         let mut h = 0xcbf29ce484222325u64;
         let mut add = |v: u32| {
@@ -1298,13 +1637,80 @@ mod tests {
     }
 
     #[test]
-    fn legacy_map_geometry_is_unchanged() {
-        for (seed, expected) in [
-            (0xFE221, [0xac8c5c1887554b55, 0x165afbe59f8ca92c, 0xe0089be025c78ac3, 0x5a11699cf00d19c4, 0x391bf9518c17bce9, 0xb124f068b46b7d28]),
-            (0xD091, [0xfc1da7b889909c78, 0xfd11c69e66b18bce, 0x1719bf43833f37ab, 0xae14f068c1f8f74e, 0x52a3f3f692233e72, 0xb045da91512d0e57]),
-        ] {
+    fn map_geometry_is_unchanged() {
+        for (seed, expected) in [(0xFE221u64, FINGERPRINTS_FE221), (0xD091, FINGERPRINTS_D091)] {
             for (id, hash) in expected.into_iter().enumerate() {
                 assert_eq!(fingerprint(&World::with_map(seed, id as u8)), hash, "{} changed for seed {seed:x}", MAPS[id].name);
+            }
+        }
+    }
+
+    #[test]
+    fn every_map_is_spread_out() {
+        for (id, def) in MAPS.iter().enumerate() {
+            let pts = def.points;
+            for w in pts.windows(2) {
+                let d = ((w[0].0 - w[1].0).powi(2) + (w[0].1 - w[1].1).powi(2)).sqrt();
+                assert!(d > 55.0, "{}: neighbouring objectives only {d:.1} m apart", def.name);
+            }
+            assert!(def.bases[0].0 < -150.0 && def.bases[1].0 > 150.0, "{}: bases too close", def.name);
+            for &(x, z) in pts.iter().chain(def.bases.iter()) {
+                assert!(x.abs() < HALF_X - 15.0 && z.abs() < HALF_Z - 15.0, "{}: ({x}, {z}) is near the edge", def.name);
+            }
+            // The terrain runs well past the battlefield on every side.
+            assert!(TER_X0 < -HALF_X - 50.0 && TER_Z0 < -HALF_Z - 50.0);
+            let _ = id;
+        }
+    }
+
+    #[test]
+    fn every_map_has_buildings_between_the_objectives() {
+        for seed in [0xFE221, 0xD091, 17] {
+            for id in 0..MAPS.len() as u8 {
+                let w = World::with_map(seed, id);
+                let name = map_def(id).name;
+                // A roof: a broad slab well clear of the ground beneath it.
+                let roofs: Vec<&Block> = w
+                    .blocks
+                    .iter()
+                    .filter(|b| {
+                        let (cx, cz) = ((b.min.x + b.max.x) * 0.5, (b.min.z + b.max.z) * 0.5);
+                        b.kind != BlockKind::Container
+                            && (b.max.x - b.min.x) * (b.max.z - b.min.z) > 12.0
+                            && b.max.y - b.min.y < 0.6
+                            && b.min.y - w.height(cx, cz) > 2.5
+                    })
+                    .collect();
+                assert!(roofs.len() >= 8, "{name}, seed {seed:x}: only {} roofs", roofs.len());
+                // Roofed buildings have headroom and a way in.
+                for r in &roofs {
+                    let (cx, cz) = ((r.min.x + r.max.x) * 0.5, (r.min.z + r.max.z) * 0.5);
+                    assert!(r.min.y - w.height(cx, cz) > 2.2, "{name}: low roof at ({cx}, {cz})");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn spawn_ground_stays_open() {
+        for seed in [0xFE221, 0xD091, 17] {
+            for id in 0..MAPS.len() as u8 {
+                let w = World::with_map(seed, id);
+                let nav = Nav::build(&w);
+                for base in w.bases {
+                    let (mut open, mut all) = (0, 0);
+                    for ring in 1..=10 {
+                        let r = BASE_SPAWN_RADIUS * ring as f32 / 10.0;
+                        for k in 0..24 {
+                            let a = k as f32 / 24.0 * std::f32::consts::TAU;
+                            all += 1;
+                            if !nav.is_blocked(base.x + a.cos() * r, base.z + a.sin() * r) {
+                                open += 1;
+                            }
+                        }
+                    }
+                    assert!(open * 10 >= all * 8, "{}, seed {seed:x}: only {open} of {all} spawn spots open", map_def(id).name);
+                }
             }
         }
     }

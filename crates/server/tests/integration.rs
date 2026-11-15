@@ -1211,3 +1211,42 @@ fn bot_limit_leaves_seats_empty_and_evens_the_sides() {
     let looks: std::collections::HashSet<u8> = g.roster().iter().map(|r| r.skin).collect();
     assert!(looks.len() > 1 && looks.iter().all(|&s| (s as usize) < sim::SKINS.len()));
 }
+
+#[test]
+fn spawns_spread_across_the_base_ground() {
+    use ferrite_shared::map::BASE_SPAWN_RADIUS;
+    for map in 0..ferrite_shared::map::MAPS.len() as u8 {
+        let mut g = Game::new(Config { map, ..cfg(12) });
+        // Look on the tick everyone deploys, before anyone has walked off.
+        for _ in 0..30 {
+            g.tick();
+            if g.players.iter().filter(|p| p.alive).count() == 24 {
+                break;
+            }
+        }
+        for team in 0..2u8 {
+            let base = g.world.bases[team as usize];
+            let pos: Vec<_> = g.players.iter().filter(|p| p.alive && p.team == team).map(|p| p.st.pos).collect();
+            assert_eq!(pos.len(), 12, "map {map}: everyone deploys at once");
+            let flat = |a: ferrite_shared::Vec3, b: ferrite_shared::Vec3| ((a.x - b.x).powi(2) + (a.z - b.z).powi(2)).sqrt();
+            // Each arrival is on the base's spawn ground or within the ring
+            // round a point the team holds.
+            for &p in &pos {
+                let at_point = g.world.points.iter().any(|&c| flat(p, c) <= 16.5 && flat(p, c) >= 5.5);
+                assert!(at_point || flat(p, base) <= BASE_SPAWN_RADIUS + 0.5, "map {map}: spawned {:.1} m from base, {:.2} from nearest point", flat(p, base), g.world.points.iter().map(|&c| flat(p, c)).fold(f32::MAX, f32::min));
+            }
+            // Nobody arrives on top of a teammate, and the group is spread
+            // over the spawn ground rather than bunched in its middle.
+            let nearest: Vec<f32> = pos
+                .iter()
+                .enumerate()
+                .map(|(i, &p)| pos.iter().enumerate().filter(|&(j, _)| j != i).map(|(_, &q)| flat(p, q)).fold(f32::MAX, f32::min))
+                .collect();
+            let min = nearest.iter().cloned().fold(f32::MAX, f32::min);
+            let mean = nearest.iter().sum::<f32>() / nearest.len() as f32;
+            assert!(min > 2.0 && mean > 5.0, "map {map}, team {team}: nearest teammate min {min:.1} m, mean {mean:.1} m");
+            let widest = pos.iter().flat_map(|&p| pos.iter().map(move |&q| flat(p, q))).fold(0.0, f32::max);
+            assert!(widest > 18.0, "map {map}, team {team}: spawns span only {widest:.1} m");
+        }
+    }
+}

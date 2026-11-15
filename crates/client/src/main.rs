@@ -32,6 +32,26 @@ use std::net::ToSocketAddrs;
 /// ignored until it closes.
 static TYPING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Whether the window is fullscreen right now. F11 flips it anywhere, in
+/// the launcher or in a match; the settings row does too.
+static FULLSCREEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn is_fullscreen() -> bool {
+    FULLSCREEN.load(std::sync::atomic::Ordering::Relaxed)
+}
+pub fn set_fullscreen(on: bool) {
+    FULLSCREEN.store(on, std::sync::atomic::Ordering::Relaxed);
+    mq::set_fullscreen(on);
+}
+/// F11 this frame: flip fullscreen. True when it was pressed.
+pub fn f11_fullscreen() -> bool {
+    let hit = mq::is_key_pressed(mq::KeyCode::F11);
+    if hit {
+        set_fullscreen(!is_fullscreen());
+    }
+    hit
+}
+
 fn typing() -> bool {
     TYPING.load(std::sync::atomic::Ordering::Relaxed)
 }
@@ -1063,9 +1083,12 @@ async fn main() {
             None => saved.icon_rgba(),
         };
         let mut wskins = saved.wskins;
-        let (_, msg) = play(&args, &args.name, args.team, choice, &mut sens, &mut loadout, &mut volume, &mut music, &art, &prefs, saved.uuid, &icon, &mut wskins).await;
+        let mut sights = saved.sights;
+        let (_, msg) = play(&args, &args.name, args.team, choice, &mut sens, &mut loadout, &mut volume, &mut music, &art, &prefs, saved.uuid, &icon, &mut wskins, &mut sights).await;
         if !scripted {
+            saved.prefs.fullscreen = is_fullscreen();
             saved.wskins = wskins;
+            saved.sights = sights;
             saved.persist();
         }
         if let Some(m) = msg {
@@ -1099,8 +1122,9 @@ async fn main() {
     }
     if std::env::args().any(|a| a == "--fullscreen") {
         menu.prefs.fullscreen = true;
+        FULLSCREEN.store(true, std::sync::atomic::Ordering::Relaxed); // the window opened that way
     } else if menu.prefs.fullscreen {
-        mq::set_fullscreen(true);
+        set_fullscreen(true);
     }
     menu.go_to(args.menu_page % 10);
     menu.tab = (args.menu_page / 10).min(2);
@@ -1115,11 +1139,12 @@ async fn main() {
         let name = menu.name();
         let prefs = menu.prefs.clone();
         let (uuid, icon) = (menu.uuid, menu.icon_rgba());
-        let (joined, msg) = play(&args, &name, menu.team, choice, &mut menu.sens, &mut menu.loadout, &mut menu.volume, &mut music, &art, &prefs, uuid, &icon, &mut menu.wskins).await;
+        let (joined, msg) = play(&args, &name, 2, choice, &mut menu.sens, &mut menu.loadout, &mut menu.volume, &mut music, &art, &prefs, uuid, &icon, &mut menu.wskins, &mut menu.sights).await;
         if music.available() {
             menu.music_vol = music.vol;
             menu.music_in_match = music.in_match;
         }
+        menu.prefs.fullscreen = is_fullscreen(); // F11 in the match
         menu.persist();
         if mq::is_quit_requested() { break; }
         if let (true, Some(a)) = (joined, joining) {
@@ -1132,7 +1157,7 @@ async fn main() {
 /// Run one match. Returns whether we got into the match, and a message for
 /// the home screen if it ended for a reason other than the player leaving.
 #[allow(clippy::too_many_arguments)]
-async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mut f32, loadout: &mut [u8; 6], volume: &mut f32, music: &mut Music, art: &ui::Art, prefs: &menu::Prefs, uuid: [u8; 16], icon: &[u8], wskins: &mut [u8; 20]) -> (bool, Option<String>) {
+async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mut f32, loadout: &mut [u8; 6], volume: &mut f32, music: &mut Music, art: &ui::Art, prefs: &menu::Prefs, uuid: [u8; 16], icon: &[u8], wskins: &mut [u8; 20], sights: &mut [u8; 20]) -> (bool, Option<String>) {
     let mut server = None;
     let addr = match choice {
         menu::Choice::Join(a) => {
@@ -1307,7 +1332,7 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         team_pick: false,
         sights: std::array::from_fn(|w| match args.sight {
             Some(s) => s.min(5),
-            None => scene::sights_for(w as u8)[0],
+            None => sights[w],
         }),
         stats: Stats::default(),
         hosting,
@@ -1594,8 +1619,10 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         }
         sway.0 *= 1.0 - (10.0 * dt).min(1.0);
         sway.1 *= 1.0 - (10.0 * dt).min(1.0);
-        // 1-3 class, 4 next primary, 5 next sidearm, 6 next look.
-        if !picked && app.action_pressed(Action::NextLook) && !app.spectator {
+        // 1-3 class, 4 next primary, 5 next sidearm, 6 next look. Only while
+        // the loadout panel is up (lobby, dead, or L): never mid-fight.
+        let panel = app.loadout_shown();
+        if panel && !picked && app.action_pressed(Action::NextLook) && !app.spectator {
             app.pick_loadout(3, 0);
             app.sub_banner = Some((format!("LOOK: {}", sim::SKINS[app.skin_choice as usize % sim::SKINS.len()].0), now));
         }
@@ -1603,14 +1630,14 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         for (col, action) in [(4u8, Action::PrimaryFinish), (5, Action::SidearmFinish)] {
             let (_, prim, side) = app.loadout();
             let wid = if col == 4 { prim } else { side };
-            if !picked && app.action_pressed(action) && !app.spectator && sim::weapon_skins_for(wid).len() > 1 {
+            if panel && !picked && app.action_pressed(action) && !app.spectator && sim::weapon_skins_for(wid).len() > 1 {
                 app.pick_loadout(col, 0);
                 let fin = sim::weapon_skin(app.wskins[wid as usize % 20]).name;
                 app.sub_banner = Some((format!("{} FINISH: {}", sim::weapon_def(wid).name.to_uppercase(), fin), now));
             }
         }
         for (k, action) in [Action::ClassVanguard, Action::ClassBreacher, Action::ClassMarksman, Action::NextPrimary, Action::NextSidearm].into_iter().enumerate() {
-            if !picked && app.action_pressed(action) && !app.spectator {
+            if panel && !picked && app.action_pressed(action) && !app.spectator {
                 let (kit, prim, side) = app.loadout();
                 match k {
                     3 => {
@@ -1638,6 +1665,7 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
             app.sub_banner = Some((format!("{}  -  {}", sim::weapon_def(w).name, scene::SIGHT_NAMES[next as usize]), now));
             app.audio.play(Sfx::Step, 0.5);
         }
+        f11_fullscreen();
         if app.action_pressed(Action::ToggleStats) {
             app.show_net = !app.show_net;
         }
@@ -1780,6 +1808,11 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         app.hitmarker = (app.hitmarker - dt).max(0.0);
         app.hit_kill = (app.hit_kill - dt).max(0.0);
         app.dmg_flash = (app.dmg_flash - dt * 1.6).max(0.0);
+        // Lava damage has no attacker, so no hit event arrives for it: hold the
+        // damage overlay up, pulsing, for as long as we stand in the burn.
+        if app.alive && !app.spectator && app.world.burning(app.st.pos) {
+            app.dmg_flash = app.dmg_flash.max(0.75 + 0.25 * (now as f32 * 7.0).sin());
+        }
         app.shake = (app.shake - dt * 2.5).max(0.0);
         app.smooth *= 1.0 - (12.0 * dt).min(1.0);
         app.step_y *= 1.0 - (14.0 * dt).min(1.0);
@@ -2249,6 +2282,9 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
     *volume = app.audio.volume;
     *loadout = [app.kit_choice, app.prims[0], app.prims[1], app.prims[2], app.side_choice, app.skin_choice];
     *wskins = app.wskins;
+    if args.sight.is_none() {
+        *sights = app.sights; // --sight forces one for this run only
+    }
 
     app.net.bye();
     let s = &app.stats;
