@@ -20,7 +20,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || (startsWith(github.ref, 'refs/tags/v') && github.ref_name || '') }}
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.ref_name || '') }}
 
 jobs:
   build:
@@ -41,6 +41,14 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+      - name: Check release version before building
+        shell: pwsh
+        run: |
+          ./packaging/test-release-version.ps1
+          . ./packaging/release-version.ps1
+          $version = Get-FerriteWorkspaceVersion
+          Assert-FerriteReleaseVersion -Version $version -ReleaseTag $env:RELEASE_TAG
+          "FERRITE_VERSION=$version" >> $env:GITHUB_ENV
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.name == 'macos-universal' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
@@ -100,7 +108,7 @@ jobs:
           if (-not (Get-Command ISCC.exe -ErrorAction SilentlyContinue) -and -not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
             choco install innosetup -y --no-progress
           }
-          $version = if ($env:RELEASE_TAG) { $env:RELEASE_TAG.TrimStart('v') } else { "0.0.0-dev" }
+          $version = $env:FERRITE_VERSION
           ./packaging/build-installer.ps1 -SkipBuild -Version $version
           "file=dist/ferrite-v$version-windows-x64-setup.exe" >> $env:GITHUB_OUTPUT
 

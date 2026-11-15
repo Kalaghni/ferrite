@@ -1,4 +1,4 @@
-# FERRITE 0.8 (upcoming)
+# FERRITE 0.8.1
 
 ![The FERRITE launcher: host, join or change settings](docs/launcher.png)
 
@@ -21,7 +21,11 @@ v0.6 adds a new launcher and lobby look (key art, palette and typeface from the 
 
 v0.7 adds text chat, a melee strike, a killcam, player icons, callsigns backed by a player id (your record follows you when you rename), a kill feed that puts people ahead of bots, the plumbing for weapon finishes, a Windows installer, and updates from inside the launcher.
 
-## v0.8 (upcoming)
+## v0.8.1
+
+Fixes the repeated update prompt after installing v0.8.0: those packages were labelled 0.8.0 while their executables still reported 0.7.0. The compiled version is now 0.8.1, restarts target the installed executable, and release checks reject mismatched tags or binaries. Both executables support `--version` / `-V` for verification. See the [v0.8.1 release notes](docs/release-notes/v0.8.1.md).
+
+## v0.8
 
 - **Two new maps.** Spillway brings drained waterworks, pump halls and a floodgate; Relay adds a highland communications station, antenna towers and rocky pine flanks. Six maps are now in the rotation. The original four retain their terrain, cover and objectives.
 - **New soldier shapes and animation.** All six looks have layered, faceted armor and team-marked field packs based on the launcher artwork, with articulated movement, planted feet and hands that follow the weapon's action.
@@ -44,8 +48,8 @@ Either way the game keeps itself current: the launcher checks this repository's 
 **macOS:** the build is not signed with an Apple Developer ID, so a copy downloaded in a browser is blocked by Gatekeeper. The simplest way round it is to download from Terminal, which does not get flagged:
 
 ```sh
-curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.7.0/ferrite-v0.7.0-macos-universal.tar.gz | tar xz
-./ferrite-v0.7.0-macos-universal/ferrite
+curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.8.1/ferrite-v0.8.1-macos-universal.tar.gz | tar xz
+./ferrite-v0.8.1-macos-universal/ferrite
 ```
 
 If you already downloaded it in a browser, run `xattr -dr com.apple.quarantine .` in the unpacked folder once.

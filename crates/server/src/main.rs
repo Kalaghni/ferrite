@@ -4,6 +4,10 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 fn main() {
+    if std::env::args().any(|a| a == "--version" || a == "-V") {
+        println!("ferrite-server {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     let mut cfg = Config { log: true, lobby_secs: 30, ..Default::default() };
     let mut bench: Option<u32> = None;
     // Player records: a file beside the executable unless told otherwise.
@@ -64,7 +68,7 @@ fn main() {
             }
             "--bench" => bench = Some(val.parse().expect("--bench <simulated seconds>")),
             "-h" | "--help" => {
-                println!("ferrite-server [--port 27500] [--map NAME|N] [--maps] [--rotation all|off|a,b,c] [--lobby 30] [--name NAME] [--no-discovery] [--bots 12] [--max-bots N] [--seed N] [--tickets 250] [--stats FILE|off] [--difficulty recruit|regular|veteran|elite] [--skill 1.0] [--bench SECS]");
+                println!("ferrite-server [--version] [--port 27500] [--map NAME|N] [--maps] [--rotation all|off|a,b,c] [--lobby 30] [--name NAME] [--no-discovery] [--bots 12] [--max-bots N] [--seed N] [--tickets 250] [--stats FILE|off] [--difficulty recruit|regular|veteran|elite] [--skill 1.0] [--bench SECS]");
                 return;
             }
             other => panic!("unknown argument {other}"),

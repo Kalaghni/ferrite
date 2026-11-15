@@ -13,6 +13,7 @@
 //! them there is simply no update notice. Downloads are HTTPS from
 //! github.com; nothing about the player is sent.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::{channel, Receiver};
@@ -53,6 +54,8 @@ pub struct Updater {
     pub state: State,
     rx: Option<Receiver<Msg>>,
     current: String,
+    /// Captured before replacement: current_exe() may later point to *.old.
+    restart_exe: Option<PathBuf>,
 }
 
 /// "v0.7.1" or "0.7.1" -> [0, 7, 1]. `None` if it is not a version.
@@ -199,12 +202,23 @@ pub fn install(tag: &str, dir: &Path) -> Result<(), String> {
     result
 }
 
-/// Start the game again from its (new) executable and leave this one.
-pub fn restart() -> ! {
-    if let Ok(exe) = std::env::current_exe() {
-        let _ = Command::new(exe).args(std::env::args().skip(1).filter(|a| a != "--update")).spawn();
+/// The release always installs this name, even if the running image was renamed.
+fn installed_executable(dir: &Path) -> PathBuf {
+    dir.join(if cfg!(windows) { "ferrite.exe" } else { "ferrite" })
+}
+
+/// Update-only arguments must not force another update after a successful restart.
+fn restart_args(args: impl IntoIterator<Item = OsString>) -> Vec<OsString> {
+    let mut out = Vec::new();
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        if arg == "--pretend-version" {
+            let _ = args.next();
+        } else if arg != "--update" && !arg.to_str().is_some_and(|s| s.starts_with("--pretend-version=")) {
+            out.push(arg);
+        }
     }
-    std::process::exit(0)
+    out
 }
 
 impl Updater {
@@ -213,13 +227,13 @@ impl Updater {
     pub fn new(enabled: bool, pretend: Option<&str>) -> Updater {
         let current = pretend.unwrap_or(env!("CARGO_PKG_VERSION")).to_string();
         if !enabled || (dev_build() && pretend.is_none()) {
-            return Updater { state: State::Off, rx: None, current };
+            return Updater { state: State::Off, rx: None, current, restart_exe: None };
         }
         let (tx, rx) = channel();
         std::thread::spawn(move || {
             let _ = tx.send(Msg::Latest(latest_tag()));
         });
-        Updater { state: State::Checking, rx: Some(rx), current }
+        Updater { state: State::Checking, rx: Some(rx), current, restart_exe: None }
     }
 
     /// Take in whatever the background work has reported.
@@ -240,7 +254,12 @@ impl Updater {
     pub fn install(&mut self) {
         let State::Available(tag) = &self.state else { return };
         let tag = tag.clone();
-        let Some(dir) = exe_dir() else { return };
+        let Some(dir) = exe_dir() else {
+            self.state = State::Failed("cannot locate the installation directory".into());
+            return;
+        };
+        // Resolve the new executable before the worker renames the running image.
+        self.restart_exe = Some(installed_executable(&dir));
         let (tx, rx) = channel();
         let t = tag.clone();
         std::thread::spawn(move || {
@@ -248,6 +267,36 @@ impl Updater {
         });
         self.rx = Some(rx);
         self.state = State::Installing(tag);
+    }
+
+    /// Start the installed executable; keep the launcher visible if spawning fails.
+    pub fn restart(&mut self) {
+        if self.launch_installed(std::env::args_os().skip(1), |command| command.spawn().map(|_| ())) {
+            std::process::exit(0);
+        }
+    }
+
+    fn launch_installed(
+        &mut self,
+        args: impl IntoIterator<Item = OsString>,
+        spawn: impl FnOnce(&mut Command) -> std::io::Result<()>,
+    ) -> bool {
+        if !matches!(self.state, State::Installed(_)) {
+            return false;
+        }
+        let Some(exe) = &self.restart_exe else {
+            self.state = State::Failed("installed update, but its restart path is unavailable; reopen FERRITE".into());
+            return false;
+        };
+        let mut command = Command::new(exe);
+        command.args(restart_args(args));
+        match spawn(&mut command) {
+            Ok(()) => true,
+            Err(e) => {
+                self.state = State::Failed(format!("installed update, but could not start {}: {e}; reopen FERRITE", exe.display()));
+                false
+            }
+        }
     }
 }
 
@@ -304,6 +353,47 @@ mod tests {
         assert_eq!(tag_from_headers("location: https://github.com/a/b/releases/tag/v1.0/../../evil\r\n"), None);
         assert_eq!(tag_from_headers("location: https://github.com/a/b/releases/tag/v1.0 && calc\r\n"), None);
         assert!(asset_url("v0.7.1").starts_with("https://github.com/Kalaghni/ferrite/releases/download/v0.7.1/ferrite-v0.7.1-"));
+    }
+
+    #[test]
+    fn restart_discards_update_and_version_override_arguments() {
+        let args = ["--fullscreen", "--pretend-version", "0.5.0", "--update", "--name", "Pilot", "--pretend-version=0.6.0"];
+        let actual = restart_args(args.map(OsString::from));
+        assert_eq!(actual, ["--fullscreen", "--name", "Pilot"].map(OsString::from));
+        assert!(restart_args([OsString::from("--pretend-version")]).is_empty());
+    }
+
+    #[test]
+    fn restart_uses_the_installed_path_after_the_running_image_is_renamed() {
+        let dir = std::env::temp_dir().join("ferrite-restart-path-test");
+        let installed = installed_executable(&dir);
+        let mut running_image = installed.clone().into_os_string();
+        running_image.push(".old");
+        let running_image = PathBuf::from(running_image);
+        let mut updater = Updater {
+            state: State::Installed("v0.8.1".into()), rx: None,
+            current: "0.7.0".into(), restart_exe: Some(installed.clone()),
+        };
+        assert!(updater.launch_installed([OsString::from("--fullscreen")], |command| {
+            assert_eq!(command.get_program(), installed.as_os_str());
+            assert_ne!(command.get_program(), running_image.as_os_str());
+            assert_eq!(command.get_args().collect::<Vec<_>>(), [std::ffi::OsStr::new("--fullscreen")]);
+            Ok(())
+        }));
+    }
+
+    #[test]
+    fn restart_failure_keeps_the_launcher_open_with_an_error() {
+        let mut updater = Updater {
+            state: State::Installed("v0.8.1".into()), rx: None,
+            current: "0.7.0".into(), restart_exe: Some(installed_executable(Path::new("installed"))),
+        };
+        assert!(!updater.launch_installed([], |_| Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "blocked executable"))));
+        let State::Failed(message) = &updater.state else { panic!("restart failure was not shown") };
+        assert!(message.contains("blocked executable"));
+        assert!(message.contains("reopen FERRITE"));
+        // The next frame must not attempt another automatic restart.
+        assert!(!updater.launch_installed([], |_| panic!("retried a failed restart")));
     }
 
     #[test]

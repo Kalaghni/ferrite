@@ -4,7 +4,7 @@
 #   .\packaging\build-installer.ps1 -SkipBuild # package what is in target\release
 #
 # Needs Inno Setup 6 (winget install JRSoftware.InnoSetup). The version
-# comes from Cargo.toml unless -Version is given.
+# comes from Cargo.toml; -Version, when given, must match it.
 param(
     [string]$Version = '',
     [switch]$SkipBuild
@@ -13,13 +13,9 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 
-if (-not $Version) {
-    $line = Select-String -Path (Join-Path $root 'Cargo.toml') -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1
-    if (-not $line) { throw 'no version in Cargo.toml' }
-    $Version = $line.Matches[0].Groups[1].Value
-}
-$Version = $Version.TrimStart('v')
-
+. (Join-Path $PSScriptRoot 'release-version.ps1')
+$manifestVersion = Get-FerriteWorkspaceVersion
+$Version = Resolve-FerriteInstallerVersion -ManifestVersion $manifestVersion -RequestedVersion $Version
 $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
 if (-not $iscc) {
     $iscc = @(
@@ -35,9 +31,23 @@ if (-not $SkipBuild) {
     if ($LASTEXITCODE -ne 0) { throw 'cargo build failed' }
 }
 
+# Check the actual executables as well as the manifest, especially with
+# -SkipBuild: a stale target\release must never get a newer installer label.
+Assert-FerriteBinaryVersion -Path (Join-Path $root 'target\release\ferrite.exe') -Version $Version -BinaryName 'FERRITE'
+Assert-FerriteBinaryVersion -Path (Join-Path $root 'target\release\ferrite-server.exe') -Version $Version -BinaryName 'ferrite-server'
+
 # Stage exactly what gets installed.
-$stage = Join-Path $root 'target\installer-stage'
-if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+$targetRoot = [System.IO.Path]::GetFullPath((Join-Path $root 'target'))
+$stage = [System.IO.Path]::GetFullPath((Join-Path $targetRoot 'installer-stage'))
+if (-not $stage.StartsWith($targetRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Installer staging path escaped the target directory.'
+}
+if (Test-Path -LiteralPath $stage) {
+    if ((Get-Item -LiteralPath $stage).Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        throw 'Installer staging directory must not be a link or junction.'
+    }
+    Remove-Item -LiteralPath $stage -Recurse -Force
+}
 New-Item -ItemType Directory -Force $stage | Out-Null
 Copy-Item (Join-Path $root 'target\release\ferrite.exe'), (Join-Path $root 'target\release\ferrite-server.exe') $stage
 Copy-Item (Join-Path $PSScriptRoot 'README.txt'), (Join-Path $PSScriptRoot 'Quantico-OFL.txt'), (Join-Path $PSScriptRoot 'start-server.bat') $stage

@@ -674,7 +674,7 @@ impl Menu {
                 // The new version is in place: start it.
                 self.drop_map();
                 self.save();
-                update::restart();
+                self.updater.restart();
             }
             let mut out: Option<Choice> = None;
 

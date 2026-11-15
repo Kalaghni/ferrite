@@ -260,7 +260,7 @@ fn parse_args() -> Args {
             }
             "--fullscreen" => used = 1,
             "-h" | "--help" => {
-                println!("ferrite [--connect host[:port]] [--host] [--team ember|cobalt|auto] [--name N] [--map NAME] [--no-rotate] [--lobby 30] [--bots 12] [--max-bots N] [--port 27500] [--seed N] [--tickets 250] [--difficulty recruit|regular|veteran|elite]\n        [--volume 0.7] [--no-music] [--shadows high|low|off] [--fullscreen] [--update] [--no-update] [--spectate] [--auto] [--shot file.png --shot-at SECS] [--quit-at SECS]");
+                println!("ferrite [--connect host[:port]] [--host] [--team ember|cobalt|auto] [--name N] [--map NAME] [--no-rotate] [--lobby 30] [--bots 12] [--max-bots N] [--port 27500] [--seed N] [--tickets 250] [--difficulty recruit|regular|veteran|elite]\n        [--volume 0.7] [--no-music] [--shadows high|low|off] [--fullscreen] [--version] [--update] [--no-update] [--spectate] [--auto] [--shot file.png --shot-at SECS] [--quit-at SECS]");
                 std::process::exit(0);
             }
             other => {
@@ -276,6 +276,10 @@ fn parse_args() -> Args {
 fn window_conf() -> mq::Conf {
     // `ferrite --update`: update from the command line, no window at all.
     let argv: Vec<String> = std::env::args().collect();
+    if argv.iter().any(|a| a == "--version" || a == "-V") {
+        println!("FERRITE {}", env!("CARGO_PKG_VERSION"));
+        std::process::exit(0);
+    }
     if argv.iter().any(|a| a == "--update") {
         let pretend = argv.iter().position(|a| a == "--pretend-version").and_then(|i| argv.get(i + 1));
         std::process::exit(update::run_cli(pretend.map(|s| s.as_str())));
