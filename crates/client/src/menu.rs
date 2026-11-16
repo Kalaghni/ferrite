@@ -775,7 +775,7 @@ impl Menu {
         let time = now as f32;
         scene::crates(&mut opaque, world, 0);
         let owners = [(ferrite_shared::NEUTRAL, 0.0, false); 5];
-        scene::beacons(&mut opaque, &mut alpha, &mut add, world, &owners, time);
+        scene::beacons(&mut opaque, &mut alpha, &mut add, world, &owners, time, 0);
         // Circle the middle of the map. The page covers the left of the
         // screen, so look a little to the left of centre: that puts the map
         // on the right.

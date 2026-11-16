@@ -21,6 +21,12 @@ v0.6 adds a new launcher and lobby look (key art, palette and typeface from the 
 
 v0.7 adds text chat, a melee strike, a killcam, player icons, callsigns backed by a player id (your record follows you when you rename), a kill feed that puts people ahead of bots, the plumbing for weapon finishes, a Windows installer, and updates from inside the launcher.
 
+## Map expansion (development)
+
+The original four battlefields now have authored destinations alongside their scattered cover: complete workshops and warehouses, walk-through service tunnels, timbered mine adits, rock shelters and container passages. Foundry Valley's boiler works smoke and turn a flywheel; Quarry's winding gear operates above the mine; Ridgeline has a wind-powered ranger station and the Fallen Giant, a massive cargo-plane wreck with a walkable hold across the central saddle; a 52-metre gantry and working spreader dominate Depot. Relay gains a giant cellular mast, and a distant volcano beyond Slag Cathedral can erupt.
+
+Marked wall panels, service walkways and machine controls respond to explosives. The server confirms each breach, collapse or shutdown, updates collision and bot navigation, and includes the lasting state in snapshots. A fresh round restores them. See the [expanded map guide](docs/maps/landmarks.md) and [Fallen Giant guide](docs/maps/fallen-giant.md) for details and review views. These development builds use protocol **18**; clients and servers must be built together.
+
 ## v0.10
 
 - **Game modes.** Conquest (long), Team Deathmatch (fast: forward spawns, three-second redeploys, first to the kill target), Capture the Flag (slow: flags on B and D, three captures) and Stronghold (medium: hold C, a point a second). The host picks one or MIXED on HOST & PLAY; the lobby can vote for another before each round. Bots play all four.
@@ -112,14 +118,15 @@ Seven maps ship with the game, including Slag Cathedral. The host picks one on t
 
 | Map | Character |
 |---|---|
-| Foundry Valley | The original: rolling valley, ruined foundry in the middle |
-| Quarry | A terraced pit; the centre point sits on the pit floor, overlooked from every side |
-| Ridgeline | Pine forest split by a rock-crowned ridge with three passes through it |
-| Depot | Flat container yard: close quarters and short sightlines |
+| Foundry Valley | Autumn steelworks, twin-stack boiler workshops and covered service culverts |
+| Quarry | A terraced pit with mine passages, winding headframes and site workshops |
+| Ridgeline | Pine passes, ranger lodges and the huge Fallen Giant aircraft wreck across the saddle |
+| Depot | Container passages and dispatch warehouses under a giant working gantry |
 | Spillway | Drained waterworks: a sunken channel, pump halls, floodgate and outer service lanes |
-| Relay | Highland listening station: four climbable towers with railed decks, two great dishes and rocky pine flanks |
+| Relay | Highland listening station: four climbable towers, two great dishes and a giant cellular backbone |
+| Slag Cathedral | Casting nave, furnace courts and galleries beneath an active volcanic skyline |
 
-Spillway and Relay extend the rotation; the original four maps retain their terrain, cover and objective layouts. All six share the five-point front line and mirrored routes for both teams.
+All seven share the five-point front line and mirrored routes for both teams. The expansion retains the objective layouts and adds level approaches to the new destinations.
 
 Each human replaces a bot. Pick EMBER, COBALT or AUTO on the home screen (AUTO joins the side with fewer humans), and press M in a match to change sides: you trade places with a bot, so the teams stay the same size. Allow UDP 27500 through the host's firewall, and UDP 27499 if you want the game to show up in other players' lists.
 

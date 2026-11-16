@@ -9,8 +9,9 @@ use crate::sim::PState;
 use bincode::Options;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-/// 16: game modes, flags, pickups, armour, streaks and credit awards.
-pub const PROTO: u32 = 16;
+/// 18: Ridgeline's Fallen Giant replaces the central post and terrain pads.
+/// Clients and servers must generate the same map for movement prediction.
+pub const PROTO: u32 = 18;
 pub const DEFAULT_PORT: u16 = 27500;
 pub const SPECTATOR_ID: u8 = 255;
 
@@ -296,6 +297,9 @@ pub enum Fx {
     Swing { who: u8, hit: bool },
     /// Someone picked something up (`pickup::*`).
     Pickup { who: u8, kind: u8, pos: [f32; 3] },
+    /// A designated wall panel, walkway or machine changed state. The
+    /// persistent state is in Snapshot::dmask; this only adds debris/sound.
+    MapBreak { kind: u8, pos: [f32; 3] },
 }
 
 /// One line of chat. `seq` counts up across the whole server.

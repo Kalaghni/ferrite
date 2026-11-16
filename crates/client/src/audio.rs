@@ -289,6 +289,8 @@ pub enum Sfx {
     /// A round passing close by.
     Whizz,
     Slide,
+    /// Wind knocking a loose aircraft skin panel against its frame.
+    MetalRattle,
     Count,
 }
 
@@ -403,6 +405,28 @@ fn noise(dur: f32, decay: f32, lp: f32, seed: u64) -> Vec<f32> {
         .collect()
 }
 
+/// Light, irregular impacts with inharmonic sheet-metal resonances.
+fn metal_rattle() -> Vec<f32> {
+    let mut rng = Rng::new(0xFA11_EA);
+    let mut filtered = 0.0;
+    (0..(1.4 * SR) as usize).map(|i| {
+        let t = i as f32 / SR;
+        filtered += (rng.range(-1.0, 1.0) - filtered) * 0.65;
+        let mut sample = 0.0;
+        for (at, gain) in [(0.0, 0.8), (0.11, 0.55), (0.29, 0.7), (0.52, 0.35), (0.81, 0.2)] {
+            let age = t - at;
+            if age < 0.0 { continue; }
+            let attack = (age * 1800.0).min(1.0);
+            let ring = (age * 431.0 * std::f32::consts::TAU).sin()
+                + (age * 937.0 * std::f32::consts::TAU).sin() * 0.45
+                + (age * 1693.0 * std::f32::consts::TAU).sin() * 0.23;
+            sample += gain * attack * (ring * (-age / 0.085).exp() * 0.2
+                + filtered * (-age / 0.018).exp() * 0.35);
+        }
+        sample.tanh() * 0.6
+    }).collect()
+}
+
 /// A boot on dirt: a dull thud with a little grit, nothing sharp.
 fn footstep() -> Vec<f32> {
     let mut rng = Rng::new(6);
@@ -465,6 +489,7 @@ impl Audio {
             (Sfx::Spawn, tones(&[(330.0, 0.0, 0.1), (495.0, 0.08, 0.2)], 0.14, 0.2)),
             (Sfx::Whizz, whizz()),
             (Sfx::Slide, scrape()),
+            (Sfx::MetalRattle, metal_rattle()),
         ];
         // Reload: two metallic clicks.
         let mut reload = vec![0.0; (0.5 * SR) as usize];
@@ -479,7 +504,7 @@ impl Audio {
         let mut sounds: Vec<[Option<Sound>; 3]> = (0..Sfx::Count as usize).map(|_| [None, None, None]).collect();
         let mut ok = true;
         // Only sounds that come from a place in the world need the panned copies.
-        let placed = [Sfx::Carbine, Sfx::Scatter, Sfx::Long, Sfx::Pistol, Sfx::Boom, Sfx::Step, Sfx::Crate, Sfx::Throw, Sfx::Whizz];
+        let placed = [Sfx::Carbine, Sfx::Scatter, Sfx::Long, Sfx::Pistol, Sfx::Boom, Sfx::Step, Sfx::Crate, Sfx::Throw, Sfx::Whizz, Sfx::MetalRattle];
         for (id, samples) in defs {
             for (k, gain) in PANS.iter().enumerate() {
                 if k > 0 && !placed.contains(&id) {
@@ -534,6 +559,15 @@ impl Audio {
 #[cfg(test)]
 mod music_tests {
     use super::*;
+
+    #[test]
+    fn aircraft_rattle_has_finite_audible_taps_and_a_quiet_tail() {
+        let pcm = metal_rattle();
+        assert_eq!(pcm.len(), (SR * 1.4) as usize);
+        assert!(pcm.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
+        assert!(pcm.iter().take(4410).any(|s| s.abs() > 0.05));
+        assert!(pcm.iter().rev().take(4410).all(|s| s.abs() < 0.002));
+    }
 
     #[test]
     fn cathedral_score_is_map_specific_and_honours_music_switches() {

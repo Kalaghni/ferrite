@@ -6,6 +6,8 @@
 
 pub mod relay;
 pub mod slag_cathedral;
+pub mod landmarks;
+pub mod fallen_giant;
 
 use crate::rng::Rng;
 use glam::{vec2, vec3, Vec2, Vec3};
@@ -53,28 +55,28 @@ pub struct MapDef {
 pub static MAPS: [MapDef; 7] = [
     MapDef {
         name: "FOUNDRY VALLEY",
-        blurb: "Rolling valley, ruined foundry in the middle",
+        blurb: "Autumn steelworks, boiler hall and a covered service culvert",
         points: POINTS_XZ,
         bases: BASES_XZ,
         ground: [[0.40, 0.47, 0.22], [0.62, 0.52, 0.25], [0.55, 0.46, 0.35]],
     },
     MapDef {
         name: "QUARRY",
-        blurb: "Terraced pit - the centre point sits on the floor",
+        blurb: "Terraced pit, timbered mine adits and towering winding gear",
         points: [(-117.0, -30.0), (-63.0, 27.0), (0.0, 0.0), (63.0, -27.0), (117.0, 30.0)],
         bases: BASES_XZ,
         ground: [[0.53, 0.48, 0.37], [0.64, 0.57, 0.44], [0.50, 0.47, 0.44]],
     },
     MapDef {
         name: "RIDGELINE",
-        blurb: "Pine forest split by a rocky ridge with three passes",
+        blurb: "A fallen cargo giant spans the pine saddle; caves and ranger lodges on the flanks",
         points: [(-111.0, 33.0), (-51.0, -45.0), (0.0, 0.0), (51.0, 45.0), (111.0, -33.0)],
         bases: BASES_XZ,
         ground: [[0.29, 0.43, 0.22], [0.44, 0.49, 0.24], [0.48, 0.42, 0.32]],
     },
     MapDef {
         name: "DEPOT",
-        blurb: "Flat container yard - close quarters, short sightlines",
+        blurb: "Container passages and warehouses beneath a giant yard crane",
         points: [(-111.0, -12.0), (-57.0, 15.0), (0.0, 0.0), (57.0, -15.0), (111.0, 12.0)],
         bases: BASES_XZ,
         ground: [[0.37, 0.38, 0.36], [0.46, 0.45, 0.41], [0.42, 0.41, 0.40]],
@@ -140,7 +142,7 @@ pub struct Block {
     pub max: Vec3,
     pub kind: BlockKind,
     pub tint: u8,
-    /// Destructible crate index (bit in the destruction mask).
+    /// Destruction group: one crate or a blast-sensitive landmark feature.
     pub dest: Option<u8>,
 }
 
@@ -160,6 +162,19 @@ pub struct RayHit {
     pub block: Option<usize>,
 }
 
+/// Blast-sensitive map features share the same replicated destruction bits
+/// as crates. A bit may remove a whole group of structural collision blocks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FeatureKind { BreachPanel, Walkway, Machinery }
+
+#[derive(Clone, Debug)]
+pub struct Feature {
+    pub kind: FeatureKind,
+    pub bit: u8,
+    /// An exposed weak point a grenade can reach from the ground.
+    pub pos: Vec3,
+}
+
 pub struct World {
     pub seed: u64,
     pub map: u8,
@@ -168,6 +183,8 @@ pub struct World {
     pub trees: Vec<Tree>,
     pub points: [Vec3; 5],
     pub bases: [Vec3; 2],
+    pub features: Vec<Feature>,
+    /// Destruction slots, including both crates and grouped map features.
     pub n_crates: usize,
 }
 
@@ -291,6 +308,10 @@ fn full_height(x: f32, z: f32, s: u32, map: u8) -> f32 {
         flat(dx, dz, 6.0);
         flat(-dx, -dz, 6.0);
     }
+    h = landmarks::settle(x, z, map % MAPS.len() as u8, h, |cx, cz| shape(cx, cz, s, map));
+    if map % MAPS.len() as u8 == fallen_giant::MAP_ID {
+        h = fallen_giant::settle(x, z, h, shape(0.0, 0.0, s, map));
+    }
     // Ridge walls enclosing the playable valley.
     let ex = (x.abs() - (HALF_X + 2.0)).max(0.0);
     let ez = (z.abs() - (HALF_Z + 2.0)).max(0.0);
@@ -328,6 +349,7 @@ impl World {
             trees: Vec::new(),
             points: [Vec3::ZERO; 5],
             bases: [Vec3::ZERO; 2],
+            features: Vec::new(),
             n_crates: 0,
         };
         for (i, (x, z)) in def.points.iter().enumerate() {
@@ -482,7 +504,7 @@ impl World {
     }
 
     fn footprint_free(&self, cx: f32, cz: f32, r: f32) -> bool {
-        !self.blocks.iter().any(|b| {
+        !landmarks::reserved(self.map, cx, cz, r, r) && !fallen_giant::reserved(self.map, cx, cz, r, r) && !self.blocks.iter().any(|b| {
             cx + r > b.min.x && cx - r < b.max.x && cz + r > b.min.z && cz - r < b.max.z
         })
     }
@@ -705,6 +727,8 @@ impl World {
 
     /// Nothing solid within the rectangle, here or at the mirrored spot.
     fn rect_free(&self, cx: f32, cz: f32, hx: f32, hz: f32) -> bool {
+        if landmarks::reserved(self.map, cx, cz, hx, hz) { return false; }
+        if fallen_giant::reserved(self.map, cx, cz, hx, hz) { return false; }
         let free = |x: f32, z: f32| {
             !self.blocks.iter().any(|b| x + hx > b.min.x && x - hx < b.max.x && z + hz > b.min.z && z - hz < b.max.z)
         };
@@ -993,6 +1017,7 @@ impl World {
     fn build_quarry(&mut self, rng: &mut Rng) {
         use BlockKind::*;
         self.build_bases();
+        landmarks::build(self);
 
         // --- A / E: site office, a walled yard up on the rim ---
         let (ox, oz) = shift(-78.0, -20.0);
@@ -1056,6 +1081,7 @@ impl World {
     fn build_ridgeline(&mut self, rng: &mut Rng) {
         use BlockKind::*;
         self.build_bases();
+        landmarks::build(self);
 
         // --- A / E: walled outpost at the forest edge ---
         let (ox, oz) = shift(-74.0, 22.0);
@@ -1072,12 +1098,8 @@ impl World {
         self.sym(-26.5 + ox, -35.0 + oz, 0.45, 2.4, 0.0, 1.1, Sandbag, 1);
         self.crates(rng, -32.5 + ox, -28.0 + oz, 5);
 
-        // --- C: watch post on the saddle (self-symmetric) ---
-        self.ruin(rng, 0.0, 0.0, 18.0, 13.0, 3.6, (-200.0, 0.0), 0b1101);
-        self.add(0.0, 0.0, 1.6, 1.6, 0.0, 5.0, Concrete, 2);
-        self.add(0.0, 0.0, 2.0, 2.0, 5.0, 0.4, Concrete, 1);
-        self.sym(-5.5, 3.5, 0.45, 2.2, 0.0, 1.1, Sandbag, 1);
-        self.crates(rng, -5.0, -3.5, 3);
+        // --- C: the Fallen Giant, a cargo aircraft across the saddle ---
+        fallen_giant::build(self);
 
         // --- The crest: a wall of rock everywhere but the passes ---
         let (ux, uz) = (0.35 / 1.0595, 1.0 / 1.0595);
@@ -1086,7 +1108,7 @@ impl World {
         while along < 76.0 * SPREAD {
             let (x, z) = (ux * along + rng.range(-1.2, 1.2), uz * along + rng.range(-1.0, 1.0));
             let size = rng.range(1.6, 2.4);
-            if (along - pass).abs() > 8.5 * SPREAD && z.abs() < HALF_Z - 3.0 && !self.near_objective(x, z, 13.0, 16.0) {
+            if (along - pass).abs() > 8.5 * SPREAD && z.abs() < HALF_Z - 3.0 && !self.near_objective(x, z, 13.0, 16.0) && self.clear_both(x, z, 3.6) {
                 self.rock(rng, x, z, size);
             }
             along += 4.2;
@@ -1107,6 +1129,7 @@ impl World {
     fn build_depot(&mut self, rng: &mut Rng) {
         use BlockKind::*;
         self.build_bases();
+        landmarks::build(self);
 
         // --- A / E: warehouse shell ---
         let (ox, oz) = shift(-74.0, -8.0);
@@ -1125,13 +1148,7 @@ impl World {
         self.sym(-45.5 + ox, 6.5 + oz, 0.45, 2.4, 0.0, 1.1, Sandbag, 1);
         self.crates(rng, -38.0 + ox, 9.5 + oz, 5);
 
-        // --- C: gantry crane over the central crossing (self-symmetric) ---
-        let top = self.height(0.0, 0.0) + 9.0;
-        for (x, z) in [(-7.0, -5.0), (-7.0, 5.0)] {
-            self.sym_abs(x, z, 0.5, 0.5, self.height(x, z) - 0.6, top, Metal, 0);
-        }
-        self.sym_abs(0.0, -5.0, 7.8, 0.6, top, top + 0.8, Metal, 1);
-        self.add_abs(0.0, 0.0, 0.8, 5.6, top + 0.8, top + 1.4, Metal, 1);
+        // --- C: container cover below the yard-wide gantry ---
         self.sym(-4.2, 2.4, 3.0, 1.25, 0.0, 2.6, Container, 1);
         self.sym(-11.5, 0.0, 0.45, 2.4, 0.0, 1.1, Sandbag, 1);
         self.crates(rng, -5.5, -4.5, 4);
@@ -1342,6 +1359,7 @@ impl World {
     fn build_structures(&mut self, rng: &mut Rng) {
         use BlockKind::*;
         self.build_bases();
+        landmarks::build(self);
 
         // --- A / E: walled outpost ---
         let (ox, oz) = shift(-72.0, 14.0);
@@ -1446,23 +1464,48 @@ pub struct Nav {
 
 impl Nav {
     pub fn build(world: &World) -> Nav {
+        Self::build_mask(world, 0)
+    }
+
+    /// Rebuild routes against the authoritative destroyed-feature state.
+    pub fn build_mask(world: &World, dmask: u64) -> Nav {
         let w = (2.0 * HALF_X / NAV_CELL).ceil() as usize;
         let h = (2.0 * HALF_Z / NAV_CELL).ceil() as usize;
         let mut blocked = vec![false; w * h];
+        let mut ground = vec![0.0; w * h];
         for cz in 0..h {
             for cx in 0..w {
                 let x = -HALF_X + (cx as f32 + 0.5) * NAV_CELL;
                 let z = -HALF_Z + (cz as f32 + 0.5) * NAV_CELL;
-                let g = world.height(x, z);
-                let r = 0.6;
-                blocked[cz * w + cx] = world.blocks.iter().any(|b| {
-                    x + r > b.min.x
-                        && x - r < b.max.x
-                        && z + r > b.min.z
-                        && z - r < b.max.z
-                        && b.max.y - g > 0.45
-                        && b.min.y - g < 1.9
-                }) || world.lava(x, z, 0.9); // bots take the bridges
+                ground[cz * w + cx] = world.height(x, z);
+                blocked[cz * w + cx] = world.lava(x, z, 0.9); // bots take the bridges
+            }
+        }
+        // A structural blast rebuilds navigation during a server tick.
+        // Rasterize each solid footprint instead of testing every collider
+        // against every cell. Keep the exact overlap/headroom rules below.
+        let r = 0.6;
+        let range = |lo: f32, hi: f32, half: f32, count: usize| {
+            let first = (((lo - r + half) / NAV_CELL - 0.5).floor() as i32).clamp(0, count as i32 - 1);
+            let last = (((hi + r + half) / NAV_CELL - 0.5).ceil() as i32).clamp(0, count as i32 - 1);
+            first as usize..=last as usize
+        };
+        for (i, b) in world.blocks.iter().enumerate() {
+            if !world.solid(i, dmask) { continue; }
+            let xs = range(b.min.x, b.max.x, HALF_X, w);
+            for cz in range(b.min.z, b.max.z, HALF_Z, h) {
+                let z = -HALF_Z + (cz as f32 + 0.5) * NAV_CELL;
+                if z + r <= b.min.z || z - r >= b.max.z { continue; }
+                for cx in xs.clone() {
+                    let cell = cz * w + cx;
+                    if blocked[cell] { continue; }
+                    let x = -HALF_X + (cx as f32 + 0.5) * NAV_CELL;
+                    let g = ground[cell];
+                    if x + r > b.min.x && x - r < b.max.x
+                        && b.max.y - g > 0.45 && b.min.y - g < 1.9 {
+                        blocked[cell] = true;
+                    }
+                }
             }
         }
         let mut near = vec![false; w * h];
@@ -1475,12 +1518,35 @@ impl Nav {
             }
         }
         let mut nav = Nav { w, h, blocked, fields: Vec::new() };
-        for goal in 0..NAV_GOALS {
+        let changed_features = world.features.iter().any(|f| dmask & (1u64 << f.bit) != 0);
+        let workers = if changed_features {
+            std::thread::available_parallelism().map_or(1, |n| n.get().min(4))
+        } else { 1 };
+        let compute = |job: usize| {
+            let goal = job / NAV_LANES;
             let gp = if goal < 5 { world.points[goal] } else { world.bases[goal - 5] };
-            for lane in 0..NAV_LANES {
-                let f = nav.field(gp.x, gp.z, lane, &near);
-                nav.fields.push(f);
-            }
+            nav.field(gp.x, gp.z, job % NAV_LANES, &near)
+        };
+        if workers == 1 {
+            nav.fields = (0..NAV_GOALS * NAV_LANES).map(compute).collect();
+        } else {
+            // Each goal/lane field is independent. Bound the thread count
+            // during a blast and collect by index, preserving the exact same
+            // routes regardless of worker scheduling or machine core count.
+            let mut fields = vec![Vec::new(); NAV_GOALS * NAV_LANES];
+            std::thread::scope(|scope| {
+                let jobs: Vec<_> = (0..workers).map(|worker| {
+                    let compute = &compute;
+                    scope.spawn(move || (worker..NAV_GOALS * NAV_LANES).step_by(workers)
+                        .map(|job| (job, compute(job))).collect::<Vec<_>>())
+                }).collect();
+                for worker in jobs {
+                    for (job, field) in worker.join().expect("navigation worker") {
+                        fields[job] = field;
+                    }
+                }
+            });
+            nav.fields = fields;
         }
         nav
     }
@@ -1587,16 +1653,16 @@ impl Nav {
 mod tests {
     use super::*;
 
-    // Captured when the maps were spread out by half again (SPREAD).
+    // Captured after the authored landmark sites and Ridgeline cargo wreck.
     // Millimetre quantisation tolerates tiny floating-point differences
     // between targets, but covers the complete terrain, collision geometry,
     // trees, objectives and crate assignment of every map.
     const FINGERPRINTS_FE221: [u64; 7] = [
-        0x7f9890ad8391e69f, 0x46cf4128fdd146d, 0x8ef4ebe32b9aae4c, 0x90b4f8025d90cb91,
+        0xe5a9186a98463522, 0x8d6a72a4e55cb258, 0x99c100d1ea100d86, 0x57c62f6f2f7b39da,
         0x9add6dc3e14285f4, 0xf1134b5f6ab0c68f, 0xa4522d55ba21aae2,
     ];
     const FINGERPRINTS_D091: [u64; 7] = [
-        0x2847fba65b5cbf3a, 0xfb132e44cafe997f, 0xb7c7ed21c8252e89, 0x7735b775b6c294ee,
+        0x56fcf92cda86bcfc, 0xc57680dd94415d9c, 0x8530e9d166094ead, 0x57246f9b0a5621e4,
         0x4b79a71339bec22c, 0x378a3fde022bcd47, 0xa89dded116c53bbc,
     ];
 
@@ -1621,6 +1687,11 @@ mod tests {
             add(b.tint as u32);
             add(b.dest.map_or(64, |n| n as u32));
         }
+        for feature in &w.features {
+            add(feature.kind as u32);
+            add(feature.bit as u32);
+            for v in feature.pos.to_array() { add(mm(v)); }
+        }
         for t in &w.trees {
             for v in t.base.to_array().into_iter().chain([t.height, t.radius]) {
                 add(mm(v));
@@ -1634,6 +1705,59 @@ mod tests {
             }
         }
         h
+    }
+
+    #[test]
+    fn parallel_navigation_fields_match_serial_routes_after_a_breach() {
+        for map in 0..4 {
+            let world = World::with_map(0xFE221, map);
+            let nav = Nav::build_mask(&world, 1u64 << world.features[0].bit);
+            let near: Vec<bool> = (0..nav.w * nav.h).map(|cell| {
+                let (cx, cz) = ((cell % nav.w) as i32, (cell / nav.w) as i32);
+                DIRS.iter().any(|&(dx, dz)| {
+                    let (nx, nz) = (cx + dx, cz + dz);
+                    nx >= 0 && nz >= 0 && nx < nav.w as i32 && nz < nav.h as i32
+                        && nav.blocked[nz as usize * nav.w + nx as usize]
+                })
+            }).collect();
+            for job in 0..NAV_GOALS * NAV_LANES {
+                let goal = job / NAV_LANES;
+                let gp = if goal < 5 { world.points[goal] } else { world.bases[goal - 5] };
+                assert!(nav.fields[job] == nav.field(gp.x, gp.z, job % NAV_LANES, &near),
+                    "map {map}: parallel navigation changed goal/lane {job}");
+            }
+        }
+    }
+
+    #[test]
+    fn navigation_rasterization_matches_collision_sampling() {
+        for seed in [17, 0xFE221] {
+            for map in 0..MAPS.len() as u8 {
+                let world = World::with_map(seed, map);
+                let features = world.features.iter().fold(0u64, |mask, f| mask | 1u64 << f.bit);
+                let mut masks = vec![0, features, u64::MAX];
+                masks.sort_unstable();
+                masks.dedup();
+                for mask in masks {
+                    let nav = Nav::build_mask(&world, mask);
+                    for cz in 0..nav.h {
+                        for cx in 0..nav.w {
+                            let p = nav.center(cx, cz);
+                            let g = world.height(p.x, p.y);
+                            let reference = world.lava(p.x, p.y, 0.9)
+                                || world.blocks.iter().enumerate().any(|(i, b)| {
+                                    world.solid(i, mask) && p.x + 0.6 > b.min.x
+                                        && p.x - 0.6 < b.max.x && p.y + 0.6 > b.min.z
+                                        && p.y - 0.6 < b.max.z && b.max.y - g > 0.45
+                                        && b.min.y - g < 1.9
+                                });
+                            assert_eq!(nav.blocked[cz * nav.w + cx], reference,
+                                "map {map}, seed {seed:x}, mask {mask:x}: collision differs at {p:?}");
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

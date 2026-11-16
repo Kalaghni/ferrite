@@ -968,6 +968,11 @@ impl Game {
 
     fn hit_block(&mut self, bi: usize, dmg: f32) {
         if let Some(d) = self.world.blocks[bi].dest {
+            // Structural groups share the persistent destruction mask with
+            // crates, but only explosives can release their marked supports.
+            if self.world.features.iter().any(|feature| feature.bit == d) {
+                return;
+            }
             let d = d as usize;
             if self.dmask & (1 << d) != 0 {
                 return;
@@ -1230,11 +1235,35 @@ impl Game {
 
     fn explode(&mut self, pos: Vec3, owner: usize, team: u8) {
         self.push_fx(Fx::Boom { pos: pos.to_array() });
+        let before = self.dmask;
+        // Decide exposure against the intact field. A released panel cannot
+        // let this same blast reach another structure through its new hole.
+        let broken: Vec<_> = self.world.features.iter().filter(|feature| {
+            let bit = 1u64 << feature.bit;
+            if before & bit != 0 { return false; }
+            let exposed = |target: Vec3| {
+                pos.distance_squared(target) <= 4.5 * 4.5
+                    && self.world.los(pos, target, before | bit)
+            };
+            // Ignore only this group's own collision when testing exposure.
+            // Nearby permanent walls and other intact groups still shield it.
+            exposed(feature.pos) || self.world.blocks.iter().any(|block| {
+                block.dest == Some(feature.bit) && exposed(pos.clamp(block.min, block.max))
+            })
+        }).map(|feature| (feature.bit, feature.kind as u8, feature.pos)).collect();
         for bi in 0..self.world.blocks.len() {
             let b = &self.world.blocks[bi];
             if b.dest.is_some() && ((b.min + b.max) * 0.5 - pos).length() < 5.5 {
                 self.hit_block(bi, 1000.0);
             }
+        }
+        let structural_change = !broken.is_empty();
+        for (bit, kind, at) in broken {
+            self.dmask |= 1u64 << bit;
+            self.push_fx(Fx::MapBreak { kind, pos: at.to_array() });
+        }
+        if structural_change {
+            self.nav = Nav::build_mask(&self.world, self.dmask);
         }
         let src = pos + vec3(0.0, 0.3, 0.0);
         for j in 0..self.players.len() {
@@ -1619,7 +1648,6 @@ impl Game {
         self.round_no += 1;
         if next != self.world.map {
             self.world = World::with_map(self.cfg.seed, next);
-            self.nav = Nav::build(&self.world);
             self.fx.clear();
             for p in self.players.iter_mut() {
                 p.hist = [Vec3::ZERO; HIST];
@@ -1628,6 +1656,9 @@ impl Game {
         }
         self.reset_field();
         self.dmask = 0;
+        // The same map can repeat: restore routes through intact structures,
+        // as well as their colliders, before choosing the next spawns.
+        self.nav = Nav::build(&self.world);
         self.crate_hp = vec![110.0; self.world.n_crates];
         self.grenades.clear();
         self.phase = 0;
@@ -2013,5 +2044,31 @@ fn dummy() -> Player {
         killer: SPECTATOR_ID,
         hits: Vec::new(),
         hist: [Vec3::ZERO; HIST],
+    }
+}
+
+#[cfg(test)]
+mod map_feature_tests {
+    use super::*;
+
+    #[test]
+    fn firearms_never_release_structural_groups_but_still_break_crates() {
+        let mut g = Game::new(Config { per_team: 1, max_bots: 0, log: false, discover: false, ..Default::default() });
+        let structural: Vec<_> = g.world.blocks.iter().enumerate().filter(|(_, block)| {
+            block.dest.is_some_and(|bit| g.world.features.iter().any(|feature| feature.bit == bit))
+        }).map(|(i, _)| i).collect();
+        assert!(!structural.is_empty());
+        for bi in structural {
+            g.hit_block(bi, 10000.0);
+        }
+        assert_eq!(g.dmask, 0, "even overwhelming bullet damage must not release explosive charges");
+        assert!(g.fx.is_empty());
+        let crate_block = g.world.blocks.iter().enumerate().find(|(_, block)| {
+            block.dest.is_some_and(|bit| !g.world.features.iter().any(|feature| feature.bit == bit))
+        }).map(|(i, _)| i).expect("the classic crates still exist");
+        let bit = g.world.blocks[crate_block].dest.unwrap();
+        g.hit_block(crate_block, 110.0);
+        assert_ne!(g.dmask & (1u64 << bit), 0);
+        assert!(g.fx.iter().any(|(_, fx)| matches!(fx, Fx::CrateBreak { .. })));
     }
 }

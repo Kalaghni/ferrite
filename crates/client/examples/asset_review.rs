@@ -3,6 +3,11 @@
 //! Modes: players, weapons, skins, sights, or a map name.
 //! Optional player pose: run/crouch/slide/air/reload/melee/fall; weapons accepts a finish ID.
 //! Slag Cathedral views: overview / nave / gallery / furnace / approach.
+//! Classic map views: workshop / interior / passage / landmark / breach / walkway.
+//! Ridgeline aircraft views: wreck / cargo / tail.
+//! A fourth argument freezes machinery and wind at that second.
+//! A fifth argument selects a destruction mask (decimal/0xhex), or "broken"
+//! to show all designated map features in their destroyed state.
 
 #[allow(dead_code)]
 #[path = "../src/gfx.rs"]
@@ -60,6 +65,11 @@ async fn main() {
     let pose = args.get(2).map(String::as_str).unwrap_or("idle");
     let map = map_by_name(mode).unwrap_or(0);
     let w = World::with_map(0xFE221, map);
+    let dmask = match args.get(4).map(String::as_str) {
+        Some("broken") => w.features.iter().fold(0, |mask, f| mask | (1u64 << f.bit)),
+        Some(mask) => mask.strip_prefix("0x").map_or_else(|| mask.parse().ok(), |hex| u64::from_str_radix(hex, 16).ok()).unwrap_or(0),
+        None => 0,
+    };
     let models = mode == "players";
     let weapons = mode == "weapons";
     let skins = mode == "skins";
@@ -173,7 +183,7 @@ async fn main() {
                 }
             }
         } else if !gallery {
-            scene::crates(&mut opaque, &w, 0);
+            scene::crates(&mut opaque, &w, dmask);
             scene::beacons(
                 &mut opaque,
                 &mut alpha,
@@ -187,13 +197,50 @@ async fn main() {
                     (1, 0.0, false),
                 ],
                 time,
+                dmask,
             );
         }
         let aspect = mq::screen_width() / mq::screen_height();
         let (eye, target) = if models {
             (vec3(2.7, 5.0, 13.0), vec3(0.0, 0.6, 0.0))
+        } else if !gallery && map == 2 && matches!(pose, "wreck" | "cargo" | "tail") {
+            let g = w.height(0.0, 0.0);
+            match pose {
+                "cargo" => (vec3(-39.0, g + 1.8, -1.8), vec3(30.0, g + 3.0, 0.0)),
+                "tail" => (vec3(-62.0, w.height(-62.0, -35.0) + 9.0, -35.0), vec3(-26.0, g + 14.0, 0.0)),
+                _ => (vec3(75.0, w.height(75.0, -78.0) + 35.0, -78.0), vec3(0.0, g + 8.0, 0.0)),
+            }
+        } else if !gallery && map < 4 && matches!(pose, "workshop" | "interior" | "passage" | "landmark" | "breach" | "walkway") {
+            use ferrite_shared::map::landmarks::{floor, walkway_site, PASSAGES, WORKSHOPS};
+            let site = match pose {
+                "passage" => PASSAGES[map as usize],
+                "walkway" => walkway_site(map),
+                _ => WORKSHOPS[map as usize],
+            };
+            let c = vec3(site.x, floor(&w, site), site.z);
+            let above_ground = |dx: f32, dy: f32, dz: f32| {
+                let (x, z) = (c.x + dx, c.z + dz);
+                vec3(x, w.height(x, z) + dy, z)
+            };
+            match pose {
+                "breach" => {
+                    let panel = w.features.iter().find(|f| f.kind == ferrite_shared::map::FeatureKind::BreachPanel).unwrap();
+                    let outward = (panel.pos.z - site.z).signum();
+                    let eye = panel.pos + vec3(-3.5, 2.0, 7.0 * outward);
+                    (vec3(eye.x, w.height(eye.x, eye.z) + 2.4, eye.z), panel.pos + Vec3::Y * 0.8)
+                }
+                "walkway" => (above_ground(-14.0, 5.0, -9.0), c + Vec3::Y),
+                "interior" => (c + vec3(-site.hx + 1.0, 1.7, -site.hz + 1.0), c + vec3(2.0, 1.7, 1.0)),
+                "passage" => (above_ground(-site.hx - 3.0, 2.0, 0.0), c + vec3(2.0, 1.8, 0.0)),
+                "landmark" if map == 3 => (vec3(-53.0, 14.0, -59.0), vec3(0.0, 17.0, 0.0)),
+                _ => (above_ground(-site.hx - 18.0, 9.0, -site.hz - 20.0), c + vec3(0.0, 2.8, 0.0)),
+            }
+        } else if !gallery && map == 5 && pose == "mast" {
+            let root = vec3(0.0, w.height(0.0, 126.0), 126.0);
+            (vec3(-37.0, 16.0, 40.0), root + vec3(0.0, 36.0, 0.0))
         } else if map == ferrite_shared::map::slag_cathedral::MAP_ID && !gallery {
             match pose {
+                "volcano" => (vec3(56.0, 24.0, -85.0), vec3(0.0, w.height(0.0, -160.0) + 36.0, -160.0)),
                 "nave" => (vec3(-31.5, 4.8, 0.0), vec3(10.0, 14.0, 0.0)),
                 "gallery" => (vec3(-22.0, 5.1, 15.0), vec3(11.0, 9.0, -3.0)),
                 "furnace" => (vec3(-51.0, 5.0, -49.0), vec3(-17.0, 19.0, -31.0)),
@@ -235,7 +282,7 @@ async fn main() {
             cam: eye,
             sun: scene::sun_for(map).normalize(),
             tone: scene::tone_for(map),
-            time: 0.0,
+            time,
             fog: if gallery {
                 [0.055, 0.07, 0.1, 0.0]
             } else {

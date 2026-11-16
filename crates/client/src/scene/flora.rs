@@ -870,6 +870,8 @@ pub fn grow(m: &mut Mesh, w: &World) {
     // Ivy on standing concrete, moss on rock, weeds along the foot of walls.
     let open = Occ::new(w, 0.0);
     for (i, blk) in w.blocks.iter().enumerate() {
+        // Moving to the destroyed state must not leave floating static ivy.
+        if blk.dest.is_some() { continue; }
         let mut r = rng_for(9, i);
         if relay && super::relay::owns(blk) {
             continue;

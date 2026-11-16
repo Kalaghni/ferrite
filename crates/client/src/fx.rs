@@ -66,6 +66,17 @@ impl Fx {
         vec3(self.rng.range(-1.0, 1.0), self.rng.range(-1.0, 1.0), self.rng.range(-1.0, 1.0))
     }
 
+    /// Persistent state, rather than a possibly lost debris event, removes
+    /// bullet marks attached to surfaces that no longer exist.
+    pub fn remove_destroyed_decals(&mut self, world: &World, changed: u64) {
+        if changed == 0 { return; }
+        self.decals.retain(|d| !world.blocks.iter().any(|b| {
+            b.dest.is_some_and(|bit| changed & (1u64 << bit) != 0)
+                && d.pos.cmpge(b.min - Vec3::splat(0.08)).all()
+                && d.pos.cmple(b.max + Vec3::splat(0.08)).all()
+        }));
+    }
+
     fn push(&mut self, p: Particle) {
         if self.parts.len() < 2200 {
             self.parts.push(p);
@@ -164,6 +175,30 @@ impl Fx {
         for _ in 0..3 {
             let v = self.rv() * 0.8 + vec3(0.0, 0.8, 0.0);
             self.push(Particle { pos, vel: v, life: 1.0, max: 1.0, size: 0.45, col: [0.7, 0.62, 0.5], kind: Kind::Smoke, spin: 0.0 });
+        }
+    }
+
+    /// Cosmetic fragments for a discrete server-confirmed map change.
+    /// Collision changes only when its persistent snapshot bit arrives.
+    pub fn map_break(&mut self, pos: Vec3, feature: u8) {
+        let metal = feature != 0;
+        let color = if metal { [0.39, 0.43, 0.43] } else { [0.58, 0.55, 0.48] };
+        for _ in 0..28 {
+            let p = pos + self.rv() * 0.6;
+            let vel = self.rv() * 4.0 + vec3(0.0, 4.5, 0.0);
+            let size = self.rng.range(0.06, 0.19);
+            self.push(Particle { pos: p, vel, life: 2.6, max: 2.6, size, col: color, kind: Kind::Cube, spin: 9.0 });
+        }
+        for _ in 0..7 {
+            let vel = self.rv() * 1.4 + vec3(0.0, 1.1, 0.0);
+            self.push(Particle { pos, vel, life: 2.0, max: 2.0, size: 0.65, col: [0.40, 0.38, 0.34], kind: Kind::Smoke, spin: 0.0 });
+        }
+        if metal {
+            for _ in 0..16 {
+                let vel = self.rv() * 6.5 + vec3(0.0, 3.0, 0.0);
+                self.push(Particle { pos, vel, life: 0.55, max: 0.55, size: 0.08, col: [1.0, 0.68, 0.25], kind: Kind::Spark, spin: 0.0 });
+            }
+            self.light(pos, 9.0, [1.0, 0.58, 0.22], 1.5, 0.25);
         }
     }
 

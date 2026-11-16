@@ -788,6 +788,13 @@ impl App {
                 self.fx.crate_break(p);
                 self.audio.play_at(Sfx::Crate, p, listener, 0.7, 22.0);
             }
+            Fx::MapBreak { kind, pos } => {
+                let p = Vec3::from(pos);
+                self.fx.map_break(p, kind);
+                self.audio.play_at(Sfx::Crate, p, listener, 0.85, 32.0);
+                self.audio.play_at(Sfx::Boom, p, listener, 0.45, 38.0);
+                self.shake = self.shake.max((1.0 - p.distance(listener) / 22.0).max(0.0) * 0.45);
+            }
             Fx::Throw { who } => {
                 let p = self.last_pos[who as usize % 64];
                 self.audio.play_at(Sfx::Throw, p, listener, 0.5, 14.0);
@@ -1881,6 +1888,7 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         }
         let fresh = std::mem::take(&mut app.net.fresh);
         for s in &fresh {
+            app.fx.remove_destroyed_decals(&app.world, s.dmask & !app.dmask);
             app.dmask = s.dmask;
             for f in &s.fx {
                 // While the killcam plays, what is seen and heard is the
@@ -2275,6 +2283,15 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         vm_add.clear();
         let time = now as f32;
         let blob = !gpu.shadows();
+        // A quiet, positional ambient cue once per gust, behind combat audio.
+        // This is cosmetic and never creates a network event or damage.
+        if app.world.map == 2 && app.kc.is_none()
+            && (now / 7.0) as u64 != ((now - dt as f64) / 7.0) as u64 {
+            let panel = vec3(12.0, app.world.height(0.0, 0.0) + 6.3, 6.25);
+            if panel.distance(eye) < 42.0 {
+                app.audio.play_at(Sfx::MetalRattle, panel, eye, 0.22, 12.0);
+            }
+        }
         for v in &app.views {
             scene::soldier(&mut opaque, &mut alpha, &app.world, v, time, blob);
         }
@@ -2301,9 +2318,10 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         if trail {
             app.trail_acc = 0.0;
         }
-        scene::crates(&mut opaque, &app.world, app.dmask);
         // The world as it stands - or, in the killcam, as it stood.
         let at_rt = replay.and_then(|(rt, _)| app.net.snaps.iter().rev().find(|s| s.tick as f64 <= rt)).or(app.net.latest());
+        let visual_dmask = at_rt.map_or(app.dmask, |s| s.dmask);
+        scene::crates(&mut opaque, &app.world, visual_dmask);
         let nades: Vec<Vec3> = at_rt.map_or(Vec::new(), |s| s.grenades.iter().map(|g| Vec3::from(g.pos)).collect());
         if trail {
             for p in &nades {
@@ -2325,7 +2343,7 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
                     (if used { p.owner } else { 255 }, p.progress as f32 / 100.0, p.n[0] > 0 && p.n[1] > 0)
                 })
                 .collect();
-            scene::beacons(&mut opaque, &mut alpha, &mut add, &app.world, &owners, time);
+            scene::beacons(&mut opaque, &mut alpha, &mut add, &app.world, &owners, time, visual_dmask);
             scene::ambience(&mut opaque, &mut alpha, &mut add, &app.world, eye, cam_right, cam_up, time);
             if s.mode == mode::CTF {
                 for (f, fl) in s.flags.iter().enumerate() {

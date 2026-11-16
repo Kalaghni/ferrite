@@ -174,9 +174,14 @@ pub fn build_world(w: &World) -> Mesh {
     const CONTAINER: [[f32; 3]; 4] = [[0.66, 0.27, 0.16], [0.18, 0.46, 0.48], [0.80, 0.60, 0.18], [0.34, 0.38, 0.47]];
     let groups = shade_groups(w);
     for (i, b) in w.blocks.iter().enumerate() {
+        // Breakable route pieces and cabinets are drawn from the current mask
+        // every frame, just like crates; none can survive in the static mesh.
+        if b.dest.is_some() { continue; }
+        if w.map == fallen_giant::ID && ferrite_shared::map::fallen_giant::owns(b) { fallen_giant::block(&mut m, b); continue; }
         let g = groups[i]; // shade of the group, so coplanar faces match
         if w.map == slag_cathedral::ID { slag_cathedral::block(&mut m, b, g); continue; }
         if w.map == relay::ID && relay::owns(b) { continue; }
+        if landmarks::owns(w, b) { landmarks::block(&mut m, w, b); continue; }
         let j = 0.9 + 0.2 * hash01(g as u32, 91);
         match b.kind {
             BlockKind::Crate => {}
@@ -236,6 +241,7 @@ pub fn build_world(w: &World) -> Mesh {
     }
     if w.map == slag_cathedral::ID {
         slag_cathedral::build(&mut m, w);
+        special_landmarks::build(&mut m, w);
         return m;
     }
     for (i, t) in w.trees.iter().enumerate() {
@@ -246,6 +252,9 @@ pub fn build_world(w: &World) -> Mesh {
     if w.map == relay::ID {
         relay::build(&mut m, w);
     }
+    landmarks::build(&mut m, w);
+    fallen_giant::build(&mut m, w);
+    special_landmarks::build(&mut m, w);
     m
 }
 
@@ -527,9 +536,13 @@ pub fn flag(m: &mut Mesh, add: &mut Mesh, pos: Vec3, team: u8, carried: bool, ti
 /// Objective beacons: flag pole, ground ring and a light pillar readable
 /// from across the map. An owner of 255 hides that objective (modes that
 /// do not use it).
-pub fn beacons(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, owners: &[(u8, f32, bool)], time: f32) {
+pub fn beacons(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, owners: &[(u8, f32, bool)], time: f32, dmask: u64) {
     if w.map == slag_cathedral::ID { slag_cathedral::atmosphere(alpha, add, w, time); }
     if w.map == relay::ID { relay::atmosphere(m, alpha, add, w, time); }
+    landmarks::features(m, alpha, add, w, dmask, time);
+    landmarks::atmosphere(m, alpha, add, w, time, dmask);
+    special_landmarks::atmosphere(m, alpha, add, w, time);
+    fallen_giant::atmosphere(m, alpha, add, w, time);
     for (k, &(owner, progress, contested)) in owners.iter().enumerate() {
         if owner == 255 {
             continue;
@@ -607,3 +620,9 @@ mod slag_cathedral;
 mod relay;
 #[path = "scene/flora.rs"]
 mod flora;
+#[path = "scene/landmarks.rs"]
+mod landmarks;
+#[path = "scene/special_landmarks.rs"]
+mod special_landmarks;
+#[path = "scene/fallen_giant.rs"]
+mod fallen_giant;
