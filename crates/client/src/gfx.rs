@@ -192,6 +192,7 @@ struct Uniforms {
     lcols: [[f32; 4]; 4],
     sh: [f32; 4],
     tone: [[f32; 4]; 3],
+    post: [f32; 4],
 }
 
 const VS: &str = r#"#version 100
@@ -226,6 +227,8 @@ void main() {
 // (the first-person weapon dims when you stand in shade), .w is the wind
 // clock (0 = still air). u_tone: sun colour, sky ambient, ground ambient.
 // u_sh: x = shadow texel size, y = shadows on, z = depth bias, w = grain on.
+// u_post.x: 0 = draw to the screen, 1 = opaque alpha is the distance to the
+// eye (depth of field), 2 = opaque alpha is -1 (never blurred).
 const FS: &str = r#"#version 100
 precision highp float;
 varying vec4 v_col;
@@ -240,6 +243,7 @@ uniform vec4 u_lights[4];
 uniform vec4 u_lcols[4];
 uniform vec4 u_sh;
 uniform vec4 u_tone[3];
+uniform vec4 u_post;
 uniform sampler2D u_shadow;
 
 float unpack(vec4 c) {
@@ -314,6 +318,13 @@ void main() {
         lit = lit / (1.0 + max(lit - 0.75, 0.0) * 0.6);
         c = mix(lit, v_col.rgb, v_col.a);
         c = mix(c, fogc, f);
+        // Drawing for depth of field: alpha carries the distance to the
+        // eye, or -1 for what is never blurred (the weapon in hand).
+        if (u_post.x > 1.5) {
+            a = -1.0;
+        } else if (u_post.x > 0.5) {
+            a = dist;
+        }
     } else if (u_params.x < 1.5) {
         c = mix(v_col.rgb, fogc, f);
         a = v_col.a;
@@ -480,6 +491,150 @@ pub struct Frame<'a> {
     pub view_add: &'a Mesh,
 }
 
+/// Depth of field for the cinematic camera.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Dof {
+    /// Distance in focus, in metres.
+    pub focus: f32,
+    /// Blur radius of the far distance, as a fraction of the image height.
+    /// Things nearer than the focus blur more, up to `MAX_BLUR`.
+    pub blur: f32,
+}
+
+/// Largest blur radius, as a fraction of the image height.
+pub const MAX_BLUR: f32 = 0.045;
+
+/// What the depth-of-field pass reads for the sky: far away.
+const SKY_DIST: f32 = 5000.0;
+
+/// Gather blur over the scene drawn off screen. Alpha holds the distance
+/// from the eye (negative: never blurred). Each pixel walks a golden-angle
+/// spiral out to the largest blur radius; a sample counts where its own
+/// blur circle reaches back to this pixel, so a blurred foreground spreads
+/// over what is behind it while a sharp subject does not bleed into its
+/// blurred background (after Dennis Gustafsson's single-pass bokeh).
+const DOF_VS: &str = r#"#version 100
+attribute vec2 in_pos;
+varying vec2 v_uv;
+void main() {
+    v_uv = in_pos * 0.5 + 0.5;
+    gl_Position = vec4(in_pos, 0.0, 1.0);
+}"#;
+
+// u_dof: x = focus distance (m), y = blur radius of the far distance (px),
+// z = largest blur radius (px), w = samples (0 = plain copy).
+// u_px: xy = one texel in uv, z = spiral step.
+const DOF_FS: &str = r#"#version 100
+precision highp float;
+varying vec2 v_uv;
+uniform sampler2D u_scene;
+uniform vec4 u_dof;
+uniform vec4 u_px;
+float coc(float d) {
+    if (d < 0.0) return 0.0;
+    return min(abs(1.0 - u_dof.x / max(d, 0.05)) * u_dof.y, u_dof.z);
+}
+float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+}
+void main() {
+    vec4 c0 = texture2D(u_scene, v_uv);
+    c0.rgb = clamp(c0.rgb, 0.0, 3.0);
+    if (u_dof.w < 0.5) {
+        gl_FragColor = vec4(c0.rgb, 1.0);
+        return;
+    }
+    float cs = coc(c0.a);
+    vec3 acc = c0.rgb;
+    float tot = 1.0;
+    // Start the spiral at a different angle per pixel: noise, not rings.
+    float ang = hash(gl_FragCoord.xy) * 6.2831853;
+    float r = 0.5;
+    for (int i = 0; i < 256; i++) {
+        if (float(i) >= u_dof.w) break;
+        vec4 s = texture2D(u_scene, v_uv + vec2(cos(ang), sin(ang)) * u_px.xy * r);
+        // Highlights may be far past white (or past what half floats hold):
+        // a little headroom makes bokeh of them, too much a solid disc.
+        s.rgb = clamp(s.rgb, 0.0, 3.0);
+        float ss = coc(s.a);
+        // Something behind this pixel cannot blur over it by more than
+        // this pixel's own blur.
+        if (s.a > c0.a) ss = min(ss, cs * 2.0);
+        acc += mix(acc / tot, s.rgb, smoothstep(r - 0.5, r + 0.5, ss));
+        tot += 1.0;
+        ang += 2.39996323;
+        r += u_px.z / r;
+    }
+    gl_FragColor = vec4(acc / tot, 1.0);
+}"#;
+
+#[repr(C)]
+struct PostUniforms {
+    dof: [f32; 4],
+    px: [f32; 4],
+}
+
+/// The scene drawn off screen for depth of field or a capture: multisampled
+/// colour (alpha = distance) and depth, resolved into `color`. A capture
+/// also has `out`, an image the size of the target to read back.
+struct Target {
+    w: u32,
+    h: u32,
+    textures: Vec<TextureId>,
+    color: TextureId,
+    pass: RenderPass,
+    out: Option<(TextureId, RenderPass)>,
+}
+
+impl Target {
+    fn new(ctx: &mut dyn RenderingBackend, w: u32, h: u32, samples: i32, out: bool) -> Target {
+        let params = |format, sample_count| TextureParams {
+            format,
+            width: w,
+            height: h,
+            min_filter: FilterMode::Linear,
+            mag_filter: FilterMode::Linear,
+            wrap: TextureWrap::Clamp,
+            sample_count,
+            ..Default::default()
+        };
+        let ms_color = ctx.new_render_texture(params(TextureFormat::RGBA16F, samples));
+        let ms_depth = ctx.new_render_texture(params(TextureFormat::Depth32, samples));
+        let (color, pass, textures) = if samples > 1 {
+            let color = ctx.new_render_texture(params(TextureFormat::RGBA16F, 1));
+            (color, ctx.new_render_pass_mrt(&[ms_color], Some(&[color]), Some(ms_depth)), vec![ms_color, ms_depth, color])
+        } else {
+            (ms_color, ctx.new_render_pass(ms_color, Some(ms_depth)), vec![ms_color, ms_depth])
+        };
+        let out = out.then(|| {
+            let t = ctx.new_render_texture(params(TextureFormat::RGBA8, 1));
+            (t, ctx.new_render_pass(t, None))
+        });
+        Target { w, h, textures, color, pass, out }
+    }
+
+    fn free(self, ctx: &mut dyn RenderingBackend) {
+        ctx.delete_render_pass(self.pass);
+        for t in self.textures {
+            ctx.delete_texture(t);
+        }
+        if let Some((t, p)) = self.out {
+            ctx.delete_render_pass(p);
+            ctx.delete_texture(t);
+        }
+    }
+}
+
+/// The depth-of-field pass and the screen-sized target it reads, made the
+/// first time they are needed: a frame without depth of field never
+/// touches them.
+struct Post {
+    pipe: Pipeline,
+    shader: ShaderId,
+    quad: Bindings,
+    screen: Option<Target>,
+}
+
 struct Shadow {
     pass: RenderPass,
     color: TextureId,
@@ -507,6 +662,10 @@ pub struct Gpu {
     d_view_add: DynBuf,
     d_overlay: DynBuf,
     pub tris: usize,
+    /// Depth of field for the next `render`. None draws straight to the
+    /// screen, exactly as if this did not exist.
+    pub dof: Option<Dof>,
+    post: Option<Post>,
 }
 
 fn upload_static(ctx: &mut dyn RenderingBackend, mesh: Mesh, tex: TextureId) -> Vec<(Bindings, i32)> {
@@ -535,6 +694,7 @@ fn uniform_meta(images: Vec<String>) -> ShaderMeta {
                 UniformDesc::new("u_lcols", UniformType::Float4).array(4),
                 UniformDesc::new("u_sh", UniformType::Float4),
                 UniformDesc::new("u_tone", UniformType::Float4).array(3),
+                UniformDesc::new("u_post", UniformType::Float4),
             ],
         },
     }
@@ -564,6 +724,20 @@ impl Gpu {
             ctx.delete_texture(s.depth);
         }
         ctx.delete_texture(self.dummy);
+        if let Some(p) = self.post {
+            ctx.delete_pipeline(p.pipe);
+            ctx.delete_shader(p.shader);
+            for v in &p.quad.vertex_buffers {
+                ctx.delete_buffer(*v);
+            }
+            ctx.delete_buffer(p.quad.index_buffer);
+            for t in p.quad.images {
+                ctx.delete_texture(t);
+            }
+            if let Some(t) = p.screen {
+                t.free(ctx);
+            }
+        }
     }
 
     /// `shadow_res`: side of the sun shadow map in texels, 0 for none.
@@ -579,6 +753,9 @@ impl Gpu {
             VertexAttribute::new("in_nrm", VertexFormat::Float3),
             VertexAttribute::new("in_col", VertexFormat::Float4),
         ];
+        // Blended draws leave the alpha underneath alone: off screen it
+        // holds the distance the depth-of-field pass reads.
+        let keep_alpha = BlendState::new(Equation::Add, BlendFactor::Zero, BlendFactor::One);
         let mk = |ctx: &mut dyn RenderingBackend, shader: ShaderId, blend: Option<BlendState>| {
             ctx.new_pipeline(
                 &[BufferLayout::default()],
@@ -588,6 +765,7 @@ impl Gpu {
                     depth_test: Comparison::LessOrEqual,
                     depth_write: true,
                     color_blend: blend,
+                    alpha_blend: blend.map(|_| keep_alpha),
                     cull_face: CullFace::Nothing,
                     ..Default::default()
                 },
@@ -671,6 +849,8 @@ impl Gpu {
             d_overlay: DynBuf::new(ctx, 60000, tex),
             shadow,
             tris,
+            dof: None,
+            post: None,
         }
     }
 
@@ -696,6 +876,7 @@ impl Gpu {
             lcols: [[0.0; 4]; 4],
             sh: [0.0; 4],
             tone: tone4(&TONE),
+            post: [0.0; 4],
         };
         ctx.begin_default_pass(PassAction::Clear { color: None, depth: Some(1.0), stencil: None });
         ctx.apply_pipeline(&self.opaque);
@@ -709,44 +890,75 @@ impl Gpu {
         self.shadow.is_some()
     }
 
+    /// Draw a frame to the screen, through the depth-of-field pass when
+    /// `dof` is set.
     pub fn render(&mut self, f: &Frame) {
         let mut gl = unsafe { get_internal_gl() };
         gl.flush();
         let ctx = gl.quad_context;
+        self.prepare(ctx, f);
+        let Some(dof) = self.dof else {
+            self.draw_world(ctx, f, None, 0.0);
+            self.draw_view(ctx, f, None, 0.0);
+            return;
+        };
+        let (w, h) = window::screen_size();
+        let (w, h) = (w.max(1.0) as u32, h.max(1.0) as u32);
+        let mut post = self.post.take().unwrap_or_else(|| Post::new(ctx));
+        if post.screen.as_ref().is_some_and(|t| (t.w, t.h) != (w, h)) {
+            if let Some(t) = post.screen.take() {
+                t.free(ctx);
+            }
+        }
+        let target = post.screen.take().unwrap_or_else(|| Target::new(ctx, w, h, 4, false));
+        self.draw_world(ctx, f, Some(target.pass), 1.0);
+        self.draw_view(ctx, f, Some(target.pass), 2.0);
+        ctx.begin_default_pass(PassAction::Nothing);
+        post.apply(ctx, target.color, w, h, Some(dof), 64.0);
+        ctx.end_render_pass();
+        post.screen = Some(target);
+        self.post = Some(post);
+    }
+
+    /// Draw a frame off screen at `w` x `h` (the screen's aspect ratio, a
+    /// whole multiple of its size for a sharper picture) and read it back:
+    /// RGBA, bottom row first, as `macroquad::texture::Image` holds it.
+    pub fn capture(&mut self, f: &Frame, w: u32, h: u32) -> Vec<u8> {
+        let mut gl = unsafe { get_internal_gl() };
+        gl.flush();
+        let ctx = gl.quad_context;
+        self.prepare(ctx, f);
+        let mut post = self.post.take().unwrap_or_else(|| Post::new(ctx));
+        // Multisampling a very large picture costs a lot of memory; past a
+        // 4K picture it is supersampled enough once scaled down.
+        let samples = if w as u64 * h as u64 <= 3840 * 2160 { 4 } else { 1 };
+        let target = Target::new(ctx, w, h, samples, true);
+        self.draw_world(ctx, f, Some(target.pass), 1.0);
+        self.draw_view(ctx, f, Some(target.pass), 2.0);
+        let mut px = vec![0u8; w as usize * h as usize * 4];
+        if let Some((out, out_pass)) = target.out {
+            ctx.begin_pass(Some(out_pass), PassAction::Nothing);
+            post.apply(ctx, target.color, w, h, self.dof, 256.0);
+            ctx.end_render_pass();
+            ctx.texture_read_pixels(out, &mut px);
+        }
+        target.free(ctx);
+        self.post = Some(post);
+        px
+    }
+
+    /// Upload this frame's moving geometry and draw the sun's shadow map.
+    fn prepare(&mut self, ctx: &mut dyn RenderingBackend, f: &Frame) {
         self.d_opaque.upload(ctx, f.opaque);
         self.d_alpha.upload(ctx, f.alpha);
         self.d_add.upload(ctx, f.add);
         self.d_view.upload(ctx, f.view_opaque);
         self.d_view_add.upload(ctx, f.view_add);
-
-        let (light_vp, sh) = match &self.shadow {
-            Some(s) => (s.vp, [s.texel, 1.0, s.bias, 1.0]),
-            None => (Mat4::IDENTITY, [0.0, 0.0, 0.0, 1.0]),
-        };
-        let mut lights = [[0.0f32, 0.0, 0.0, 0.01]; 4];
-        let mut lcols = [[0.0f32; 4]; 4];
-        for (k, l) in f.lights.iter().enumerate() {
-            lights[k] = [l.pos.x, l.pos.y, l.pos.z, l.radius.max(0.01)];
-            lcols[k] = [l.col[0], l.col[1], l.col[2], l.power];
-        }
-        let uni = |vp: &Mat4, cam: Vec3, sun: Vec3, mode: f32, fog_k: f32, lit: f32, world: bool| Uniforms {
-            vp: vp.to_cols_array(),
-            cam: cam.to_array(),
-            sun: sun.to_array(),
-            fog: f.fog,
-            params: [mode, fog_k, lit, if world { f.time.max(0.001) } else { 0.0 }],
-            tone: tone4(&f.tone),
-            light: light_vp.to_cols_array(),
-            lights: if world { lights } else { [[0.0, 0.0, 0.0, 0.01]; 4] },
-            lcols: if world { lcols } else { [[0.0; 4]; 4] },
-            sh: if world { sh } else { [0.0; 4] },
-        };
-
         // Sun shadow map: everything solid, seen from the sun.
         if let Some(s) = &self.shadow {
             ctx.begin_pass(Some(s.pass), PassAction::Clear { color: Some((1.0, 1.0, 1.0, 1.0)), depth: Some(1.0), stencil: None });
             ctx.apply_pipeline(&s.pipe);
-            ctx.apply_uniforms(UniformsSource::table(&uni(&s.vp, Vec3::ZERO, f.sun, 0.0, 0.0, 1.0, false)));
+            ctx.apply_uniforms(UniformsSource::table(&self.uni(f, &s.vp, Vec3::ZERO, f.sun, [0.0, 0.0, 1.0], false, 0.0)));
             for (b, n) in &self.statics {
                 ctx.apply_bindings(b);
                 ctx.draw(0, *n, 1);
@@ -756,19 +968,54 @@ impl Gpu {
             }
             ctx.end_render_pass();
         }
+    }
 
-        ctx.begin_default_pass(PassAction::Clear { color: Some((f.fog[0], f.fog[1], f.fog[2], 1.0)), depth: Some(1.0), stencil: None });
+    /// `m`: draw mode, fog scale, sunlight scale (see the fragment shader).
+    /// `world`: lit by the map's lights and shadows, swaying in the wind.
+    #[allow(clippy::too_many_arguments)]
+    fn uni(&self, f: &Frame, vp: &Mat4, cam: Vec3, sun: Vec3, m: [f32; 3], world: bool, post: f32) -> Uniforms {
+        let (light_vp, sh) = match &self.shadow {
+            Some(s) => (s.vp, [s.texel, 1.0, s.bias, 1.0]),
+            None => (Mat4::IDENTITY, [0.0, 0.0, 0.0, 1.0]),
+        };
+        let mut lights = [[0.0f32, 0.0, 0.0, 0.01]; 4];
+        let mut lcols = [[0.0f32; 4]; 4];
+        if world {
+            for (k, l) in f.lights.iter().enumerate() {
+                lights[k] = [l.pos.x, l.pos.y, l.pos.z, l.radius.max(0.01)];
+                lcols[k] = [l.col[0], l.col[1], l.col[2], l.power];
+            }
+        }
+        Uniforms {
+            vp: vp.to_cols_array(),
+            cam: cam.to_array(),
+            sun: sun.to_array(),
+            fog: f.fog,
+            params: [m[0], m[1], m[2], if world { f.time.max(0.001) } else { 0.0 }],
+            tone: tone4(&f.tone),
+            light: light_vp.to_cols_array(),
+            lights,
+            lcols,
+            sh: if world { sh } else { [0.0; 4] },
+            post: [post, 0.0, 0.0, 0.0],
+        }
+    }
+
+    /// Sky and world, into `pass` (None = the screen); `post` is `u_post.x`.
+    fn draw_world(&self, ctx: &mut dyn RenderingBackend, f: &Frame, pass: Option<RenderPass>, post: f32) {
+        let sky_a = if post > 0.0 { SKY_DIST } else { 1.0 };
+        ctx.begin_pass(pass, PassAction::Clear { color: Some((f.fog[0], f.fog[1], f.fog[2], sky_a)), depth: Some(1.0), stencil: None });
         // Sky: camera-centred dome, no fog, no depth write.
         ctx.apply_pipeline(&self.alpha);
         depth_mask(false);
-        ctx.apply_uniforms(UniformsSource::table(&uni(&f.sky_vp, Vec3::ZERO, f.sun, 1.0, 0.0, 1.0, false)));
+        ctx.apply_uniforms(UniformsSource::table(&self.uni(f, &f.sky_vp, Vec3::ZERO, f.sun, [1.0, 0.0, 1.0], false, 0.0)));
         for (b, n) in &self.sky {
             ctx.apply_bindings(b);
             ctx.draw(0, *n, 1);
         }
         ctx.apply_pipeline(&self.opaque);
         depth_mask(true);
-        ctx.apply_uniforms(UniformsSource::table(&uni(&f.vp, f.cam, f.sun, 0.0, 1.0, 1.0, true)));
+        ctx.apply_uniforms(UniformsSource::table(&self.uni(f, &f.vp, f.cam, f.sun, [0.0, 1.0, 1.0], true, post)));
         for (b, n) in &self.statics {
             ctx.apply_bindings(b);
             ctx.draw(0, *n, 1);
@@ -779,33 +1026,89 @@ impl Gpu {
         if self.d_alpha.n > 0 {
             ctx.apply_pipeline(&self.alpha);
             depth_mask(false);
-            ctx.apply_uniforms(UniformsSource::table(&uni(&f.vp, f.cam, f.sun, 1.0, 1.0, 1.0, true)));
+            ctx.apply_uniforms(UniformsSource::table(&self.uni(f, &f.vp, f.cam, f.sun, [1.0, 1.0, 1.0], true, post)));
             self.d_alpha.draw(ctx);
         }
         if self.d_add.n > 0 {
             ctx.apply_pipeline(&self.add);
             depth_mask(false);
-            ctx.apply_uniforms(UniformsSource::table(&uni(&f.vp, f.cam, f.sun, 2.0, 0.6, 1.0, true)));
+            ctx.apply_uniforms(UniformsSource::table(&self.uni(f, &f.vp, f.cam, f.sun, [2.0, 0.6, 1.0], true, post)));
             self.d_add.draw(ctx);
         }
         depth_mask(true);
         ctx.end_render_pass();
+    }
 
-        // First-person weapon: own projection, depth cleared so it never
-        // clips into the world.
-        if self.d_view.n > 0 {
-            ctx.begin_default_pass(PassAction::Clear { color: None, depth: Some(1.0), stencil: None });
-            ctx.apply_pipeline(&self.opaque);
-            ctx.apply_uniforms(UniformsSource::table(&uni(&f.view_vp, Vec3::ZERO, f.view_sun, 0.0, 0.0, 0.3 + 0.7 * f.view_lit, false)));
-            self.d_view.draw(ctx);
-            if self.d_view_add.n > 0 {
-                ctx.apply_pipeline(&self.add);
-                depth_mask(false);
-                ctx.apply_uniforms(UniformsSource::table(&uni(&f.view_vp, Vec3::ZERO, f.view_sun, 2.0, 0.0, 1.0, false)));
-                self.d_view_add.draw(ctx);
-                depth_mask(true);
-            }
-            ctx.end_render_pass();
+    /// First-person weapon: own projection, depth cleared so it never
+    /// clips into the world.
+    fn draw_view(&self, ctx: &mut dyn RenderingBackend, f: &Frame, pass: Option<RenderPass>, post: f32) {
+        if self.d_view.n == 0 {
+            return;
         }
+        ctx.begin_pass(pass, PassAction::Clear { color: None, depth: Some(1.0), stencil: None });
+        ctx.apply_pipeline(&self.opaque);
+        let lit = 0.3 + 0.7 * f.view_lit;
+        ctx.apply_uniforms(UniformsSource::table(&self.uni(f, &f.view_vp, Vec3::ZERO, f.view_sun, [0.0, 0.0, lit], false, post)));
+        self.d_view.draw(ctx);
+        if self.d_view_add.n > 0 {
+            ctx.apply_pipeline(&self.add);
+            depth_mask(false);
+            ctx.apply_uniforms(UniformsSource::table(&self.uni(f, &f.view_vp, Vec3::ZERO, f.view_sun, [2.0, 0.0, 1.0], false, post)));
+            self.d_view_add.draw(ctx);
+            depth_mask(true);
+        }
+        ctx.end_render_pass();
+    }
+}
+
+impl Post {
+    fn new(ctx: &mut dyn RenderingBackend) -> Post {
+        let shader = ctx
+            .new_shader(
+                ShaderSource::Glsl { vertex: DOF_VS, fragment: DOF_FS },
+                ShaderMeta {
+                    images: vec!["u_scene".to_string()],
+                    uniforms: UniformBlockLayout {
+                        uniforms: vec![UniformDesc::new("u_dof", UniformType::Float4), UniformDesc::new("u_px", UniformType::Float4)],
+                    },
+                },
+            )
+            .unwrap_or_else(|e| panic!("depth of field shader compile failed: {e:?}"));
+        let pipe = ctx.new_pipeline(
+            &[BufferLayout::default()],
+            &[VertexAttribute::new("in_pos", VertexFormat::Float2)],
+            shader,
+            PipelineParams::default(),
+        );
+        let corners: [[f32; 2]; 4] = [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]];
+        let vb = ctx.new_buffer(BufferType::VertexBuffer, BufferUsage::Immutable, BufferSource::slice(&corners));
+        let ib = ctx.new_buffer(BufferType::IndexBuffer, BufferUsage::Immutable, BufferSource::slice(&[0u16, 1, 2, 0, 2, 3]));
+        let blank = ctx.new_texture_from_rgba8(1, 1, &[0, 0, 0, 255]);
+        Post { pipe, shader, quad: Bindings { vertex_buffers: vec![vb], index_buffer: ib, images: vec![blank] }, screen: None }
+    }
+
+    /// Draw `scene` (w x h) over the current pass, blurred by `dof` with up
+    /// to `most` samples a pixel (fewer on screen, more for a picture).
+    fn apply(&mut self, ctx: &mut dyn RenderingBackend, scene: TextureId, w: u32, h: u32, dof: Option<Dof>, most: f32) {
+        let (far, max, samples, step) = match dof {
+            Some(d) if d.blur > 0.0 => {
+                let far = d.blur.min(MAX_BLUR) * h as f32;
+                let max = (far * 2.5).min(MAX_BLUR * h as f32).max(1.0);
+                // Enough samples to cover the blur circle without gaps.
+                let samples = (max * max * 0.45).clamp(24.0, most);
+                (far, max, samples, max * max / (2.0 * samples))
+            }
+            _ => (0.0, 0.0, 0.0, 0.0),
+        };
+        let u = PostUniforms {
+            dof: [dof.map_or(10.0, |d| d.focus.max(0.1)), far, max, samples],
+            px: [1.0 / w as f32, 1.0 / h as f32, step, 0.0],
+        };
+        let blank = std::mem::replace(&mut self.quad.images[0], scene);
+        ctx.apply_pipeline(&self.pipe);
+        ctx.apply_bindings(&self.quad);
+        ctx.apply_uniforms(UniformsSource::table(&u));
+        ctx.draw(0, 6, 1);
+        self.quad.images[0] = blank;
     }
 }

@@ -4,6 +4,7 @@
 
 mod audio;
 mod bindings;
+mod cine;
 mod controller;
 mod fx;
 mod gfx;
@@ -125,6 +126,16 @@ pub struct Args {
     time: u32,
     /// On-screen stick and buttons, with the mouse standing in for a finger.
     touch: bool,
+    /// Scripted cinematic shot: eye and target, field of view, focus
+    /// distance (None = autofocus), aperture (None = no depth of field).
+    cine: Option<(Vec3, Vec3)>,
+    cine_fov: f32,
+    cine_focus: Option<f32>,
+    cine_aperture: Option<f32>,
+    /// Posing aid for staged shots: a file of soldiers placed by hand.
+    cine_cast: Option<String>,
+    /// `--shot` (and the screenshot key) at this multiple of the screen size.
+    shot_scale: u32,
 }
 
 fn parse_args() -> Args {
@@ -173,6 +184,12 @@ fn parse_args() -> Args {
         score: 0,
         time: 0,
         touch: false,
+        cine: None,
+        cine_fov: cine::FOV,
+        cine_focus: None,
+        cine_aperture: None,
+        cine_cast: None,
+        shot_scale: 1,
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -243,6 +260,17 @@ fn parse_args() -> Args {
             "--shot-at" => a.shot_at = val.parse().expect("--shot-at <secs>"),
             "--quit-at" => a.quit_at = Some(val.parse().expect("--quit-at <secs>")),
             "--menu-shot" => a.menu_shot = Some(val),
+            "--cine" => {
+                a.cine = Some(cine::parse_pose(&val).unwrap_or_else(|| {
+                    eprintln!("--cine wants six numbers: eyeX,eyeY,eyeZ,targetX,targetY,targetZ");
+                    std::process::exit(2);
+                }))
+            }
+            "--cine-fov" => a.cine_fov = val.parse().expect("--cine-fov <degrees>"),
+            "--cine-focus" => a.cine_focus = Some(val.parse().expect("--cine-focus <metres>")),
+            "--cine-aperture" => a.cine_aperture = Some(val.parse().expect("--cine-aperture <0..4>")),
+            "--cine-cast" => a.cine_cast = Some(val),
+            "--shot-scale" => a.shot_scale = val.parse::<u32>().expect("--shot-scale <1..8>").clamp(1, 8),
             "--team" => {
                 a.team = match val.to_ascii_lowercase().as_str() {
                     "ember" | "0" => 0,
@@ -308,7 +336,7 @@ fn parse_args() -> Args {
             }
             "--fullscreen" => used = 1,
             "-h" | "--help" => {
-                println!("ferrite [--connect host[:port]] [--host] [--team ember|cobalt|auto] [--name N] [--map NAME] [--mode conquest|tdm|ctf|stronghold] [--score N] [--time SECS] [--touch] [--no-rotate] [--lobby 30] [--bots 12] [--max-bots N] [--port 27500] [--seed N] [--tickets 250] [--difficulty recruit|regular|veteran|elite]\n        [--volume 0.7] [--no-music] [--shadows high|low|off] [--fullscreen] [--version] [--update] [--no-update] [--spectate] [--auto] [--shot file.png --shot-at SECS] [--quit-at SECS]");
+                println!("ferrite [--connect host[:port]] [--host] [--team ember|cobalt|auto] [--name N] [--map NAME] [--mode conquest|tdm|ctf|stronghold] [--score N] [--time SECS] [--touch] [--no-rotate] [--lobby 30] [--bots 12] [--max-bots N] [--port 27500] [--seed N] [--tickets 250] [--difficulty recruit|regular|veteran|elite]\n        [--volume 0.7] [--no-music] [--shadows high|low|off] [--fullscreen] [--version] [--update] [--no-update] [--spectate] [--auto] [--shot file.png --shot-at SECS] [--shot-scale N] [--quit-at SECS]\n        [--cine eyeX,eyeY,eyeZ,targetX,targetY,targetZ] [--cine-fov DEG] [--cine-focus METRES] [--cine-aperture 0.5] [--cine-cast FILE]");
                 std::process::exit(0);
             }
             other => {
@@ -573,6 +601,13 @@ pub struct App {
     pub power: u8,
     /// On-screen touch controls are in use.
     pub touch: bool,
+    /// The cinematic camera, and where the game camera was last frame (it
+    /// starts from there).
+    pub cine: cine::Cine,
+    last_cam: (Vec3, Vec3),
+    /// Soldiers placed by hand for a staged shot, and their clock.
+    cast: Vec<cine::Extra>,
+    cast_clock: f32,
 }
 
 impl App {
@@ -1390,6 +1425,13 @@ async fn play(
     profile: &mut menu::Profile,
 ) -> (bool, Option<String>) {
     touch::set_enabled(args.touch || prefs.touch);
+    let cast = match &args.cine_cast {
+        Some(p) => match std::fs::read_to_string(p).map_err(|e| e.to_string()).and_then(|t| cine::parse_cast(&t)) {
+            Ok(c) => c,
+            Err(e) => return (false, Some(format!("--cine-cast {p}: {e}"))),
+        },
+        None => Vec::new(),
+    };
     let mut server = None;
     let addr = match choice {
         menu::Choice::Join(a) => {
@@ -1439,6 +1481,8 @@ async fn play(
         let (sw, sh) = (mq::screen_width(), mq::screen_height());
         mq::clear_background(ui::color::INK);
         ui::backdrop(&art.lobby, sw, sh);
+        let (lx, ly, lw) = ui::LOBBY_LOGO;
+        ui::logo(art, sw, sh, lx, ly, lw);
         mq::draw_rectangle(0.0, sh - 64.0, sw, 64.0, ui::color::GLASS);
         ui::text(&format!("CONNECTING TO {addr}"), (78.0 * ui::art_scale(sw, sh)).max(24.0), sh - 24.0, 24.0, ui::color::WHITE);
         mq::next_frame().await;
@@ -1599,7 +1643,15 @@ async fn play(
         streak: 0,
         power: 0,
         touch: touch::enabled(),
+        cine: cine::Cine::default(),
+        last_cam: (Vec3::ZERO, Vec3::Z),
+        cast,
+        cast_clock: 0.0,
     };
+    if let Some((eye, target)) = args.cine {
+        app.cine.script(eye, target, args.cine_fov, args.cine_focus, args.cine_aperture);
+    }
+    app.cine.scale = args.shot_scale;
     // A look or a finish that is not ours (a hand-edited settings file)
     // goes back to standard issue.
     if !app.profile.owns_look(app.skin_choice) {
@@ -1700,6 +1752,7 @@ async fn play(
             } else if !app.spectator
                 && !app.auto
                 && !app.team_pick
+                && !app.cine.on
                 && (app.bind_pressed(Action::ChatAll) || app.bind_pressed(Action::ChatTeam))
             {
                 app.chat_open = true;
@@ -1723,6 +1776,20 @@ async fn play(
                 || controller::pause_pressed()
                 || touch::pause_pressed()
                 || (ui_input && controller::menu_back()));
+        // Cinematic camera: its key turns it on and off; Esc leaves it.
+        let cine_key = app.action_pressed(Action::Cinematic);
+        if app.cine.on && (cine_key || back_pressed) {
+            app.cine.stop();
+            picked = true; // swallow this Esc
+        } else if cine_key && !app.team_pick && !app.lobby {
+            app.cine.start(app.last_cam.0, app.last_cam.1, app.fov);
+            app.captured = true;
+            app.loadout_open = false;
+        }
+        if app.action_pressed(Action::HideHud) {
+            app.cine.hide_hud = !app.cine.hide_hud;
+        }
+        let want_shot = app.action_pressed(Action::Screenshot);
         if app.team_pick {
             if app.action_pressed(Action::ChangeTeam) || back_pressed {
                 app.team_pick = false;
@@ -1740,7 +1807,7 @@ async fn play(
                 }
                 picked = true; // this click chose a team, it does not deploy
             }
-        } else if app.action_pressed(Action::ChangeTeam) && !app.spectator && !app.auto {
+        } else if app.action_pressed(Action::ChangeTeam) && !app.spectator && !app.auto && !app.cine.on {
             app.team_pick = true;
             app.captured = false;
         }
@@ -1751,7 +1818,7 @@ async fn play(
         } else if app.loadout_open && back_pressed {
             app.loadout_open = false;
             picked = true; // swallow this Esc
-        } else if app.action_pressed(Action::Loadout) && app.captured && !app.spectator && !app.auto && !app.team_pick {
+        } else if app.action_pressed(Action::Loadout) && app.captured && !app.spectator && !app.auto && !app.team_pick && !app.cine.on {
             app.loadout_open = !app.loadout_open;
         }
         // Lobby: vote for a map, say when you are ready.
@@ -1766,7 +1833,7 @@ async fn play(
                 app.captured = true; // the match is starting: take the mouse
             }
         }
-        if app.lobby && !app.spectator && !app.team_pick {
+        if app.lobby && !app.spectator && !app.team_pick && !app.cine.on {
             let before = (app.vote, app.ready, app.mode_vote);
             if pressed(mq::KeyCode::R) {
                 app.ready = !app.ready;
@@ -1862,7 +1929,7 @@ async fn play(
         }
         // The mouse is only held while you are alive: dead, it is visible and
         // free to leave the window, and it is taken back when you deploy.
-        let want_grab = app.captured && app.alive && !app.loadout_open;
+        let want_grab = app.captured && (app.alive || app.cine.on) && !app.loadout_open;
         if want_grab != grabbed {
             grabbed = want_grab;
             if !app.touch {
@@ -1876,7 +1943,7 @@ async fn play(
         {
             break;
         }
-        app.input_blocked = ui_input || picked || !grabbed || typing();
+        app.input_blocked = ui_input || picked || !grabbed || typing() || app.cine.on;
         if app.input_blocked {
             app.jump_latch = false;
             app.fire_latch = false;
@@ -1895,7 +1962,27 @@ async fn play(
         } else {
             (mdx, mdy)
         };
-        if grabbed && !picked && !typing() {
+        if app.cine.on {
+            // The free camera takes the mouse and the movement keys; the
+            // soldier stands still.
+            let key = |a| !typing() && app.bind_down(a);
+            let held = |k| !typing() && mq::is_key_down(k);
+            let axis = |a: bool, b: bool| a as i8 as f32 - b as i8 as f32;
+            let c = cine::Controls {
+                look: if grabbed && !picked { (mdx, if app.invert_y { -mdy } else { mdy }) } else { (0.0, 0.0) },
+                sens: app.sens,
+                mv: vec3(
+                    axis(key(Action::StrafeRight), key(Action::StrafeLeft)),
+                    axis(key(Action::Jump) || held(mq::KeyCode::E), key(Action::Crouch) || held(mq::KeyCode::Q)),
+                    axis(key(Action::Forward), key(Action::Backward)),
+                ),
+                fast: key(Action::Sprint),
+                slow: held(mq::KeyCode::LeftAlt) || held(mq::KeyCode::RightAlt),
+            };
+            if !typing() {
+                app.cine.update(&c, dt, now);
+            }
+        } else if grabbed && !picked && !typing() {
             let s = app.sens * (app.fov / app.base_fov);
             let mdy = if app.invert_y { -mdy } else { mdy };
             app.yaw = ferrite_shared::wrap_angle(app.yaw - mdx * s);
@@ -1911,14 +1998,14 @@ async fn play(
             app.swap_latch |= app.action_pressed(Action::SwapWeapon);
             app.melee_latch |= app.action_pressed(Action::Melee);
         }
-        if app.spectator && controller::left_pressed() {
+        if app.spectator && !app.cine.on && controller::left_pressed() {
             app.spec_since = -100.0;
         }
         sway.0 *= 1.0 - (10.0 * dt).min(1.0);
         sway.1 *= 1.0 - (10.0 * dt).min(1.0);
         // 1-3 class, 4 next primary, 5 next sidearm, 6 next look. Only while
         // the loadout panel is up (lobby, dead, or L): never mid-fight.
-        let panel = app.loadout_shown();
+        let panel = app.loadout_shown() && !app.cine.on;
         if panel && !picked && app.action_pressed(Action::NextLook) && !app.spectator {
             app.pick_loadout(3, 0);
             app.sub_banner = Some((format!("LOOK: {}", sim::SKINS[app.skin_choice as usize % sim::SKINS.len()].0), now));
@@ -1958,7 +2045,7 @@ async fn play(
                 ));
             }
         }
-        if grabbed && !picked && app.action_pressed(Action::CycleSight) && app.alive && !app.spectator {
+        if grabbed && !picked && app.action_pressed(Action::CycleSight) && app.alive && !app.spectator && !app.cine.on {
             // Cycle the sight on the weapon in hand.
             let w = sim::wid(&app.st);
             let opts = scene::sights_for(w);
@@ -1972,10 +2059,10 @@ async fn play(
         if app.action_pressed(Action::ToggleStats) {
             app.show_net = !app.show_net;
         }
-        if app.action_pressed(Action::SensitivityDown) {
+        if app.action_pressed(Action::SensitivityDown) && !app.cine.on {
             app.sens = (app.sens * 0.9).max(0.0004);
         }
-        if app.action_pressed(Action::SensitivityUp) {
+        if app.action_pressed(Action::SensitivityUp) && !app.cine.on {
             app.sens = (app.sens * 1.1).min(0.01);
         }
 
@@ -2016,6 +2103,7 @@ async fn play(
                 app.kc_armed = None;
             }
         }
+        let frozen = app.cine.on && app.cine.freeze;
         let fresh = std::mem::take(&mut app.net.fresh);
         for s in &fresh {
             app.fx.remove_destroyed_decals(&app.world, s.dmask & !app.dmask);
@@ -2023,7 +2111,7 @@ async fn play(
             for f in &s.fx {
                 // While the killcam plays, what is seen and heard is the
                 // past; the present is only kept track of.
-                if app.kc.is_none() || matches!(f, Fx::Hit { .. }) {
+                if (app.kc.is_none() || matches!(f, Fx::Hit { .. })) && !frozen {
                     app.handle_fx(f, listener, now, false);
                 }
             }
@@ -2190,6 +2278,7 @@ async fn play(
         }
         let skip = !app.auto
             && !picked
+            && !app.cine.on
             && (app.action_pressed(Action::Jump) || app.action_pressed(Action::Fire) || (!typing() && controller::left_pressed()));
         let mut replayed: Vec<Fx> = Vec::new();
         if let Some(k) = app.kc.as_mut() {
@@ -2211,6 +2300,8 @@ async fn play(
         let replay = app.kc.as_ref().map(|k| (k.rt, k.killer));
 
         // ---- remote players ----
+        // (held as they are while the cinematic camera holds the action)
+        let held_views = frozen.then(|| app.views.clone());
         let rt = replay.map_or(app.net.render_tick(now), |r| r.0);
         app.views.clear();
         let roster: Vec<(u8, u8, u8, u8, [u8; 2])> = app.net.roster.iter().map(|r| (r.id, r.team, r.kit, r.prim, r.wskin)).collect();
@@ -2331,6 +2422,26 @@ async fn play(
             }
         }
 
+        if let Some(v) = held_views {
+            app.views = v;
+        }
+        // Staged soldiers (`--cine-cast`): the ones firing send a round,
+        // with its flash and tracer, several times a second.
+        if !frozen {
+            let volley = (app.cast_clock * 7.0) as i64;
+            app.cast_clock += dt;
+            let volley = (app.cast_clock * 7.0) as i64 != volley;
+            for (k, e) in app.cast.iter().enumerate().filter(|(_, e)| e.pose == cine::Pose::Fire) {
+                let (from, d) = e.muzzle(&e.view(k, &app.world, app.cast_clock));
+                if volley {
+                    app.fx.muzzle(from);
+                    let to = from + d * app.world.raycast(from, d, 220.0, app.dmask).map_or(220.0, |h| h.t);
+                    app.fx.tracer(from, to, if e.team == 0 { [1.0, 0.72, 0.38] } else { [0.5, 0.8, 1.0] });
+                }
+            }
+        }
+        let cast_views: Vec<PlayerView> = app.cast.iter().enumerate().map(|(k, e)| e.view(k, &app.world, app.cast_clock)).collect();
+
         // ---- camera ----
         let aspect = mq::screen_width() / mq::screen_height().max(1.0);
         let shake = vec3((now as f32 * 61.0).sin(), (now as f32 * 47.0).sin(), 0.0) * app.shake * 0.12;
@@ -2411,11 +2522,16 @@ async fn play(
             let look = (app.death_pos + h * 6.0 + vec3(0.0, 1.0, 0.0) - e).normalize();
             (e, look)
         };
+        app.last_cam = (eye, dir);
+        let (eye, dir) = if app.cine.on { app.cine.view() } else { (eye, dir) };
+        if app.cine.on {
+            app.fov = app.cine.show_fov;
+        }
         listener = eye;
         let proj = Mat4::perspective_rh_gl(app.fov.to_radians(), aspect, 0.08, 900.0);
         let cam_right = dir.cross(Vec3::Y).normalize_or_zero();
         // The view tips a little into a strafe and more into a slide.
-        let tip = if playing { (app.strafe_vis * 0.012 + app.slide_vis * 0.045) * (1.0 - app.ads) } else { 0.0 };
+        let tip = if playing && !app.cine.on { (app.strafe_vis * 0.012 + app.slide_vis * 0.045) * (1.0 - app.ads) } else { 0.0 };
         let up_dir = (Vec3::Y + cam_right * tip).normalize();
         let view = Mat4::look_to_rh(eye, dir, up_dir);
         let vp = proj * view;
@@ -2428,7 +2544,7 @@ async fn play(
         app.view_lit += (if lit { 1.0 } else { 0.0 } - app.view_lit) * (6.0 * dt).min(1.0);
 
         // ---- build dynamic geometry ----
-        app.fx.update(dt, &app.world);
+        app.fx.update(if frozen { 0.0 } else { dt }, &app.world);
         opaque.clear();
         alpha.clear();
         add.clear();
@@ -2444,7 +2560,7 @@ async fn play(
                 app.audio.play_at(Sfx::MetalRattle, panel, eye, 0.22, 12.0);
             }
         }
-        for v in &app.views {
+        for v in app.views.iter().chain(&cast_views) {
             scene::soldier(&mut opaque, &mut alpha, &app.world, v, time, blob);
         }
         app.corpses.retain(|c| now - c.1 < 7.0);
@@ -2527,7 +2643,9 @@ async fn play(
             }
         }
         app.fx.build(&mut opaque, &mut alpha, &mut add, eye, cam_right, cam_up);
-        if playing {
+        // No weapon in hand with the HUD hidden or the camera off on its own.
+        let show_vm = !app.cine.on && !app.cine.hide_hud;
+        if playing && show_vm {
             scene::viewmodel(
                 &mut vm_opaque,
                 &mut vm_add,
@@ -2565,7 +2683,7 @@ async fn play(
                     melee: args.vm_melee.unwrap_or(app.st.melee as f32 / sim::MELEE_TICKS as f32),
                 },
             );
-        } else if let (Some((wid, ksight, kads, kv)), Some((_, kid))) = (kc_vm, replay) {
+        } else if let (true, Some((wid, ksight, kads, kv)), Some((_, kid))) = (show_vm, kc_vm, replay) {
             // The killer's weapon, posed from what the snapshots say of them.
             let i = kid as usize % 64;
             let kwd = sim::weapon_def(wid);
@@ -2603,7 +2721,11 @@ async fn play(
         }
         let scoped = (playing && sight >= scene::SCOPE4 && app.ads > 0.85) || kc_vm.is_some_and(|k| k.1 >= scene::SCOPE4 && k.2 > 0.85);
         let empty = gfx::Mesh::default();
-        gpu.render(&gfx::Frame {
+        gpu.dof = {
+            let (w, views, dmask) = (&app.world, &app.views, app.dmask);
+            app.cine.dof(|| cine::focus_distance(w, &[views.as_slice(), &cast_views].concat(), eye, dir, dmask), dt)
+        };
+        let frame = gfx::Frame {
             vp,
             sky_vp,
             cam: eye,
@@ -2620,13 +2742,14 @@ async fn play(
             view_lit: app.view_lit,
             view_opaque: if scoped { &empty } else { &vm_opaque },
             view_add: if scoped { &empty } else { &vm_add },
-        });
+        };
+        gpu.render(&frame);
 
         let frame_tris = gpu.tris + opaque.triangles() + alpha.triangles() + add.triangles();
         peak_tris = peak_tris.max(frame_tris);
         frames += 1;
         // Weapon models go on top of the loadout panel.
-        let icons = hud::draw(&app, &vp, now, scoped, frame_tris);
+        let icons = if app.cine.hide_hud && !app.paused() { Vec::new() } else { hud::draw(&app, &vp, now, scoped, frame_tris) };
         if !icons.is_empty() {
             over_mesh.clear();
             let sh = mq::screen_height();
@@ -2646,10 +2769,35 @@ async fn play(
             let kc_ok = !args.shot_killcam || app.kc.as_ref().is_some_and(|k| k.rt > k.from + 110.0);
             if !shot_done && t >= args.shot_at && kc_ok && (!args.shot_dead || (app.spec_killer && app.dead_for > 2.2)) {
                 shot_done = true;
-                let img = mq::get_screen_data();
-                img.export_png(path);
+                if app.cine.on || args.shot_scale > 1 {
+                    // Drawn again off screen: no HUD, any size.
+                    let (w, h) = (mq::screen_width() as u32 * args.shot_scale, mq::screen_height() as u32 * args.shot_scale);
+                    let bytes = gpu.capture(&frame, w, h);
+                    mq::Image { bytes, width: w as u16, height: h as u16 }.export_png(path);
+                } else {
+                    mq::get_screen_data().export_png(path);
+                }
             }
         }
+        if want_shot {
+            // What is on screen; with the HUD hidden (or bigger than the
+            // screen), the world drawn again off screen at the chosen size.
+            let path = cine::screenshot_path();
+            let k = app.cine.scale;
+            let (w, h) = (mq::screen_width() as u32, mq::screen_height() as u32);
+            let (bytes, w, h) = if app.cine.hide_hud || k > 1 {
+                (gpu.capture(&frame, w * k, h * k), w * k, h * k)
+            } else {
+                let img = mq::get_screen_data();
+                (img.bytes, img.width as u32, img.height as u32)
+            };
+            let name = path.file_name().map_or(String::new(), |n| n.to_string_lossy().to_string());
+            cine::save_png(path, bytes, w, h);
+            app.cine.notify(format!("SCREENSHOT SAVED  -  screenshots/{name}  ({w} x {h})"), now);
+            app.audio.play(Sfx::Step, 0.5);
+        }
+        // After any picture is taken, so it is never in one.
+        app.cine.draw_note(now);
         if let Some(why) = &app.net.rejected {
             ended = Some(format!("Disconnected: {why}"));
             break;

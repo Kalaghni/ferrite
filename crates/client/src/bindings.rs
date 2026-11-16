@@ -35,10 +35,13 @@ pub enum Action {
     ToggleStats,
     SensitivityDown,
     SensitivityUp,
+    Cinematic,
+    HideHud,
+    Screenshot,
 }
 
 impl Action {
-    pub const ALL: [Self; 30] = [
+    pub const ALL: [Self; 33] = [
         Self::Forward,
         Self::Backward,
         Self::StrafeLeft,
@@ -69,6 +72,9 @@ impl Action {
         Self::ToggleStats,
         Self::SensitivityDown,
         Self::SensitivityUp,
+        Self::Cinematic,
+        Self::HideHud,
+        Self::Screenshot,
     ];
     pub fn id(self) -> &'static str {
         match self {
@@ -102,6 +108,9 @@ impl Action {
             Self::ToggleStats => "toggle_stats",
             Self::SensitivityDown => "sensitivity_down",
             Self::SensitivityUp => "sensitivity_up",
+            Self::Cinematic => "cinematic_camera",
+            Self::HideHud => "hide_hud",
+            Self::Screenshot => "screenshot",
         }
     }
     pub fn label(self) -> &'static str {
@@ -136,6 +145,9 @@ impl Action {
             Self::ToggleStats => "FPS / PING",
             Self::SensitivityDown => "SENSITIVITY DOWN",
             Self::SensitivityUp => "SENSITIVITY UP",
+            Self::Cinematic => "CINEMATIC CAMERA",
+            Self::HideHud => "HIDE HUD",
+            Self::Screenshot => "SCREENSHOT",
         }
     }
 }
@@ -392,6 +404,9 @@ impl Default for Bindings {
                 vec![Key(K::F3)],
                 vec![Key(K::Minus)],
                 vec![Key(K::Equal)],
+                vec![Key(K::P)],
+                vec![Key(K::F1)],
+                vec![Key(K::F12)],
             ],
         }
     }
