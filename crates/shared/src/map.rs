@@ -313,7 +313,7 @@ fn full_height(x: f32, z: f32, s: u32, map: u8, tunnels: &[tunnels::Tunnel]) -> 
     }
     h = landmarks::settle(x, z, map % MAPS.len() as u8, h, |cx, cz| shape(cx, cz, s, map));
     if map % MAPS.len() as u8 == fallen_giant::MAP_ID {
-        h = fallen_giant::settle(x, z, h, shape(0.0, 0.0, s, map));
+        h = fallen_giant::settle(x, z, h, |cx, cz| shape(cx, cz, s, map));
     }
     h = tunnels::sculpt(x, z, h, tunnels);
     // Ridge walls enclosing the playable valley.
@@ -1768,14 +1768,15 @@ mod tests {
         assert!(!w.foliage(foot + vec3(30.0, 0.6, 0.0), foot));
     }
 
-    // Captured after the authored landmark sites and Ridgeline cargo wreck.
+    // Captured after the authored landmark sites and Ridgeline cargo wreck
+    // (map 2 recaptured for the crash furrow, frames and strewn wreckage).
     // Millimetre quantisation tolerates tiny floating-point differences
     // between targets, but covers the complete terrain, collision geometry,
     // trees, objectives and crate assignment of every map.
     const FINGERPRINTS_FE221: [u64; 7] = [
         0xe5a9186a98463522,
         0x3b49936209c2b08f,
-        0xb095d4e1e84c1c93,
+        0x3445e849b5f38255,
         0x57c62f6f2f7b39da,
         0x9add6dc3e14285f4,
         0xf1134b5f6ab0c68f,
@@ -1784,7 +1785,7 @@ mod tests {
     const FINGERPRINTS_D091: [u64; 7] = [
         0x56fcf92cda86bcfc,
         0x38841009e290d9e0,
-        0x77237995086e2c09,
+        0xe88f753d78825fa3,
         0x57246f9b0a5621e4,
         0x4b79a71339bec22c,
         0x378a3fde022bcd47,

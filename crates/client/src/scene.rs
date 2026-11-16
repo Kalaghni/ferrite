@@ -53,6 +53,9 @@ fn ground_col(w: &World, c: Vec3, n: Vec3, jitter: f32) -> Col {
     if w.map == relay::ID {
         col = relay::ground_tint(w, col, c, n);
     }
+    if w.map == fallen_giant::ID {
+        col = fallen_giant::ground_tint(col, c);
+    }
     let k = 0.9 + 0.2 * jitter;
     rgb(col[0] * k, col[1] * k, col[2] * k)
 }
@@ -263,7 +266,7 @@ pub fn build_world_profiled(w: &World) -> (Mesh, Profile) {
             continue;
         }
         if w.map == fallen_giant::ID && ferrite_shared::map::fallen_giant::owns(b) {
-            fallen_giant::block(&mut m, b);
+            fallen_giant::block(&mut m, w, b);
             meter.mark(&mut prof, &m, "fallen giant");
             continue;
         }
@@ -439,7 +442,7 @@ fn build_ground_cover(m: &mut Mesh, w: &World) {
         let x = (hash01(k, seed ^ 0x11) * 2.0 - 1.0) * (HALF_X + 6.0);
         let z = (hash01(k, seed ^ 0x22) * 2.0 - 1.0) * (HALF_Z + 6.0);
         let n = w.terrain_normal(x, z);
-        if n.y < 0.93 || !free(x, z) {
+        if n.y < 0.93 || !free(x, z) || (w.map == fallen_giant::ID && fallen_giant::bare(x, z)) {
             continue;
         }
         let mut near = f32::MAX;
