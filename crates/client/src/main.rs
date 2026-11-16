@@ -290,7 +290,7 @@ fn parse_args() -> Args {
                 used = 1;
             }
             "--pretend-version" => a.pretend_version = Some(val),
-            "--update" => used = 1, // handled before the window opens
+            "--update" | "--rollback" => used = 1, // handled before the window opens
             "--shadows" => {
                 a.shadows = match val.as_str() {
                     "off" | "0" => 0,
@@ -308,7 +308,7 @@ fn parse_args() -> Args {
             }
             "--fullscreen" => used = 1,
             "-h" | "--help" => {
-                println!("ferrite [--connect host[:port]] [--host] [--team ember|cobalt|auto] [--name N] [--map NAME] [--mode conquest|tdm|ctf|stronghold] [--score N] [--time SECS] [--touch] [--no-rotate] [--lobby 30] [--bots 12] [--max-bots N] [--port 27500] [--seed N] [--tickets 250] [--difficulty recruit|regular|veteran|elite]\n        [--volume 0.7] [--no-music] [--shadows high|low|off] [--fullscreen] [--version] [--update] [--no-update] [--spectate] [--auto] [--shot file.png --shot-at SECS] [--quit-at SECS]");
+                println!("ferrite [--connect host[:port]] [--host] [--team ember|cobalt|auto] [--name N] [--map NAME] [--mode conquest|tdm|ctf|stronghold] [--score N] [--time SECS] [--touch] [--no-rotate] [--lobby 30] [--bots 12] [--max-bots N] [--port 27500] [--seed N] [--tickets 250] [--difficulty recruit|regular|veteran|elite]\n        [--volume 0.7] [--no-music] [--shadows high|low|off] [--fullscreen] [--version] [--update] [--rollback] [--no-update] [--spectate] [--auto] [--shot file.png --shot-at SECS] [--quit-at SECS]");
                 std::process::exit(0);
             }
             other => {
@@ -332,6 +332,13 @@ fn window_conf() -> mq::Conf {
         let pretend = argv.iter().position(|a| a == "--pretend-version").and_then(|i| argv.get(i + 1));
         std::process::exit(update::run_cli(pretend.map(|s| s.as_str())));
     }
+    // `ferrite --rollback`: put back the version the last update replaced.
+    if argv.iter().any(|a| a == "--rollback") {
+        std::process::exit(update::run_rollback_cli());
+    }
+    // Tidy up after an update, or undo one that never got going (this may
+    // start the restored version and end here).
+    update::on_start();
     mq::Conf {
         window_title: "FERRITE".to_string(),
         window_width: 1280,
@@ -1209,7 +1216,6 @@ async fn main() {
     // Scripted and command-line launches go straight into a match.
     let direct = args.connect.is_some() || args.host || args.auto || args.spectate || args.shot.is_some() || args.quit_at.is_some();
     let art = ui::init();
-    update::clean_old(); // what the last update left behind
     menu::Menu::apply_saved_audio_device();
     let scripted = args.auto || args.spectate || args.shot.is_some() || args.quit_at.is_some();
     if direct {
@@ -1272,6 +1278,7 @@ async fn main() {
             &mut profile,
         )
         .await;
+        update::confirm_start(); // it ran: a fresh update works
         if !scripted {
             saved.profile = profile;
             saved.prefs.fullscreen = is_fullscreen();

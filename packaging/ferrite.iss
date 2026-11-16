@@ -56,6 +56,14 @@ Source: "{#SourceDir}\README.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\Quantico-OFL.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\start-server.bat"; DestDir: "{app}"; Flags: ignoreversion
 
+; What the launcher's updater leaves beside the game: the previous version
+; it kept, files waiting to be deleted, and a one-line notice.
+[UninstallDelete]
+Type: filesandordirs; Name: "{app}\ferrite-previous"
+Type: filesandordirs; Name: "{app}\ferrite-staging"
+Type: filesandordirs; Name: "{app}\ferrite-trash"
+Type: files; Name: "{app}\ferrite-update-notice.txt"
+
 [Icons]
 Name: "{group}\FERRITE"; Filename: "{app}\ferrite.exe"; WorkingDir: "{app}"
 Name: "{group}\FERRITE dedicated server"; Filename: "{app}\start-server.bat"; WorkingDir: "{app}"; IconFilename: "{app}\ferrite.exe"

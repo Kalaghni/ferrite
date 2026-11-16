@@ -367,7 +367,7 @@ impl Menu {
             rotate: true,
             loadout: [0, 0, 1, 2, 4, 0],
             updates: true,
-            updater: update::Updater::new(false, None),
+            updater: update::Updater::off(),
             wskins: [0; 20],
             sights: std::array::from_fn(|w| scene::sights_for(w as u8)[0]),
             uuid: [0; 16],
@@ -1150,8 +1150,8 @@ impl Menu {
             self.take_dropped();
             self.lan.poll(now);
             self.updater.poll();
-            if matches!(self.updater.state, Up::Installed(_)) {
-                // The new version is in place: start it.
+            if matches!(self.updater.state, Up::Installed(_) | Up::RolledBack(_)) {
+                // The new (or restored) version is in place: start it.
                 self.drop_map();
                 self.save();
                 if self.updater.restart() {
@@ -1973,6 +1973,16 @@ impl Menu {
                             if row("CHECK FOR UPDATES", on_off(self.updates), y) != 0 {
                                 self.updates = !self.updates;
                             }
+                            // The version the last update replaced, kept until the next one.
+                            if let Some(prev) = self.updater.previous.clone() {
+                                y += 54.0;
+                                ui::plate(x, y, w, 46.0, th::GLASS_STRONG, th::STROKE);
+                                ui::text("PREVIOUS VERSION", x + 14.0, y + 30.0, 20.0, th::WHITE);
+                                ui::text_c(&prev, x + w - 230.0, y + 30.0, 20.0, th::COBALT_BRIGHT);
+                                if button(x + w - 140.0, y + 6.0, 132.0, 34.0, "ROLL BACK", None, 18.0) {
+                                    self.updater.roll_back(); // then restarts, as after an update
+                                }
+                            }
                             y += 72.0;
                             ui::text("Field of view is vertical, in degrees. Aiming down a sight narrows it.", x, y, 18.0, th::QUIET);
                             ui::text("Lower the shadows on an older graphics card. F3 shows FPS in a match.", x, y + 24.0, 18.0, th::QUIET);
@@ -2011,6 +2021,17 @@ impl Menu {
                         self.updater.install();
                     }
                 }
+                // What the last start did about an update (a rollback), under it.
+                if let Some(note) = self.updater.notice.clone() {
+                    let bw = 70.0;
+                    let pw = (ui::width(&note, 18.0) + 36.0 + bw).min(sw - 48.0);
+                    let (px, py) = (sw - pw - 40.0, if line.is_empty() { 30.0 } else { 84.0 });
+                    ui::plate(px, py, pw, 44.0, th::GLASS_STRONG, th::WARNING);
+                    ui::text(&note, px + 16.0, py + 29.0, 18.0, th::WARNING);
+                    if button(px + pw - bw - 4.0, py + 5.0, bw, 34.0, "OK", None, 18.0) {
+                        self.updater.notice = None;
+                    }
+                }
             }
 
             // Now playing, bottom right: moving bars, the title, and a
@@ -2036,6 +2057,9 @@ impl Menu {
 
             controller::draw_cursor();
             self.frames += 1;
+            if self.frames >= 10 {
+                update::confirm_start(); // the launcher draws: a fresh update works
+            }
             // (a picture waits for the music, so it shows what is playing)
             if self.frames >= 20
                 && self.shot.is_some()
