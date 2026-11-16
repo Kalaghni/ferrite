@@ -16,7 +16,7 @@ with its owner and licence, in the same change.
 | `foundrite-lobby.ogg` | "Foundrite Lobby", lobby music | breadKernel | All rights reserved (music terms below) |
 | `slag-cathedral.ogg` | "Slag Cathedral", the Slag Cathedral map score | Supplied by the FERRITE project owner (see `slag-cathedral.txt`) | All rights reserved (music terms below) |
 | `slag-cathedral.txt` | Provenance and encoding notes for `slag-cathedral.ogg` | the FERRITE authors | MIT, with the source code |
-| `launcher-background.png`, `lobby-background.png` | Key art: launcher and lobby backgrounds | the FERRITE authors | All rights reserved (artwork terms below) |
+| `launcher-background.png`, `lobby-background.png` | Key art: launcher and lobby backgrounds - in-game renders of Slag Cathedral staged with the cinematic camera (reproduce with `docs/keyart/*.cast`) | the FERRITE authors | All rights reserved (artwork terms below) |
 | `ferrite-wordmark.png` | FERRITE logo | the FERRITE authors | All rights reserved (artwork terms below) |
 | `emblem-ember.png`, `emblem-cobalt.png` | Team emblems | the FERRITE authors | All rights reserved (artwork terms below) |
 | `icon-16.rgba`, `icon-32.rgba`, `icon-64.rgba` | Window icon (raw RGBA, 16/32/64 px), made from the artwork | the FERRITE authors | All rights reserved (artwork terms below) |

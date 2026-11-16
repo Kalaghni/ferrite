@@ -984,9 +984,9 @@ impl Menu {
 
     fn controls(&mut self, x: f32, mut y: f32, w: f32, sh: f32) {
         self.binding_cancel_rect = None;
-        let tabs = ["MOUSE", "PAD", "MOVE", "FIGHT", "UI", "KIT"];
+        let tabs = ["MOUSE", "PAD", "MOVE", "FIGHT", "UI", "KIT", "CAMERA"];
         let gap = 6.0;
-        let width = (w - gap * 5.0) / 6.0;
+        let width = (w - gap * (tabs.len() - 1) as f32) / tabs.len() as f32;
         for (index, name) in tabs.into_iter().enumerate() {
             let bx = x + index as f32 * (width + gap);
             let selected = self.controls_page as usize == index;
@@ -1059,6 +1059,7 @@ impl Menu {
             2 => &[Forward, Backward, StrafeLeft, StrafeRight, Jump, Sprint, Crouch],
             3 => &[Fire, Aim, Reload, Grenade, SwapWeapon, Melee, CycleSight],
             4 => &[Loadout, ChangeTeam, Scoreboard, ChatAll, ChatTeam, ToggleStats, SensitivityDown, SensitivityUp],
+            6 => &[Cinematic, HideHud, Screenshot],
             _ => &[ClassVanguard, ClassBreacher, ClassMarksman, NextPrimary, NextSidearm, NextLook, PrimaryFinish, SidearmFinish],
         };
         let row_h = ((sh - y - 126.0) / 8.0).clamp(25.0, 36.0).floor();
@@ -1154,6 +1155,8 @@ impl Menu {
             } else {
                 self.drop_map();
                 ui::backdrop(&art.launcher, sw, sh);
+                let (lx, ly, lw) = ui::LAUNCHER_LOGO;
+                ui::logo(art, sw, sh, lx, ly, lw);
             }
             self.typing(now);
             self.take_dropped();
@@ -1169,7 +1172,7 @@ impl Menu {
             }
             let mut out: Option<Choice> = None;
 
-            // The art carries the logo at the top left; the page hangs under it.
+            // The wordmark sits at the top left; the page hangs under it.
             let k = ui::art_scale(sw, sh);
             let x = (78.0 * k).max(24.0).floor();
             let mut y = (216.0 * k).max(130.0).floor();

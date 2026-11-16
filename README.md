@@ -101,7 +101,7 @@ If you already downloaded it in a browser, run `xattr -dr com.apple.quarantine .
 
 ## Run from source
 
-Needs stable Rust. No setup - geometry and sound effects are generated in code, and the few assets (launcher and lobby art, the Quantico typeface, the lobby track) are built into the executable.
+Needs stable Rust. No setup - geometry and sound effects are generated in code, and the few assets (launcher and lobby backgrounds, the Quantico typeface, the lobby track) are built into the executable.
 
 ```sh
 cargo run --release -p ferrite
@@ -147,6 +147,30 @@ Each human replaces a bot. Pick EMBER, COBALT or AUTO on the home screen (AUTO j
 | Esc | release mouse | Q | leave match (only while mouse is released) |
 | - / = | mouse sensitivity (remembered) | V / middle mouse | melee |
 | Enter / Y | chat to everyone | U | chat to your team |
+| P | cinematic camera on / off | F1 | hide the HUD |
+| F12 | screenshot | | |
+
+### Cinematic camera
+
+P frees the camera for footage and screenshots, while playing, dead or spectating; the HUD, crosshair, nameplates and weapon in hand are hidden and your soldier stands still. Esc or P again goes back. P, F1 and F12 can be rebound under SETTINGS > CONTROLS > CAMERA.
+
+| Key | In the cinematic camera |
+|---|---|
+| mouse, WASD | look, fly |
+| Space / E, Ctrl / C / Q | up, down |
+| Shift, Alt | four times as fast, slow and precise |
+| , / . | slower / faster flight |
+| wheel or - / =, Backspace | field of view (shown briefly), reset to 60 |
+| N | smoothing: off, soft, heavy |
+| B | depth of field on / off |
+| Z / X, O | focus nearer / farther, autofocus on what is under the centre |
+| [ / ] | aperture: less / more blur |
+| K | hold the action (soldiers, tracers and particles stop) |
+| 1-4 | screenshot size: 1 to 4 times the screen |
+
+F12 saves a PNG to `screenshots/` beside the game (and its `ferrite-client.txt`), named by the time in UTC, and says so on screen for a moment - the note is never in the picture. With the HUD showing it saves what is on screen; with the HUD hidden it draws the world again off screen, at the chosen multiple of the screen's size.
+
+For a reproducible shot: `--cine eyeX,eyeY,eyeZ,targetX,targetY,targetZ` starts in the cinematic camera there, with `--cine-fov DEG`, `--cine-focus METRES` (depth of field on, otherwise autofocus) and `--cine-aperture A` (depth of field on; 0.1 is subtle, 1 strong). `--shot-scale N` saves `--shot` at N times the screen size. Time of day and weather are the map's own. `--cine-cast FILE` is a posing aid for staged shots: soldiers placed by hand, drawn by this client only (one a line: `team kit x y z yaw pose [pitch] [look]`, y `-` for the ground; see `docs/keyart/`).
 
 Crouch while sprinting to slide. Hold Space while pushing into a ledge to climb it.
 
@@ -258,7 +282,7 @@ License: MIT.
 
 - Music by breadKernel: "Liquid Plasma", "Submariner" and "Barbed Wire" (launcher) and "Foundrite Lobby" (lobby).
 - Typeface: Quantico by Matthew Desmond, under the SIL Open Font License (`packaging/Quantico-OFL.txt`).
-- Launcher and lobby key art, palette and layout: the FERRITE UI kit, "The Frontline".
+- Launcher and lobby palette and layout: the FERRITE UI kit, "The Frontline". The launcher and lobby backgrounds are in-game shots of Slag Cathedral, staged with the cinematic camera (`docs/keyart/`).
 
 ## Licence
 

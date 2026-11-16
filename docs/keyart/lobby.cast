@@ -1,0 +1,15 @@
+# Lobby background: an Ember squad staging in the west yard of Slag
+# Cathedral, looking out over the works and the erupting volcano.
+# Rendered at 3x a 1280 x 720 window, then scaled to 1672 x 941 (Lanczos):
+#   ferrite --host --spectate --map slag --bots 0 --no-music --no-update
+#     --cine -128,2.6,48,-45.7,13,-26.9 --cine-fov 45 --cine-focus 9.5 --cine-aperture 0.12
+#     --cine-cast docs/keyart/lobby.cast --shot-scale 3 --shot lobby.png
+#     --shot-at 35 --quit-at 36
+# team kit x y z yaw pose [pitch] [look]
+ember 0 -119.90 - 44.07 157.3 idle 0 0
+ember 1 -119.18 - 44.74 102.3 reload 0 1
+ember 2 -118.37 - 41.72 122.3 idle 0 2
+ember 1 -120.23 - 46.10 282.3 crouch -10 3
+ember 0 -120.89 - 40.28 137.3 idle 0 4
+ember 2 -118.39 - 40.00 140.3 aim 2 5
+ember 0 -120.88 - 46.90 297.3 walk 0 0

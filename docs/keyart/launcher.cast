@@ -1,0 +1,17 @@
+# Launcher background: the Ember advance on the East Stockyard of Slag
+# Cathedral, the volcano erupting behind (its first eruption peaks about
+# 33 s into a match on the visual clock).
+# Rendered at 3x a 1280 x 720 window, then scaled to 1672 x 941 (Lanczos):
+#   ferrite --host --spectate --map slag --bots 0 --no-music --no-update
+#     --cine 130,1.6,55,50,17,0 --cine-fov 42 --cine-focus 6 --cine-aperture 0.1
+#     --cine-cast docs/keyart/launcher.cast --shot-scale 3 --shot launcher.png
+#     --shot-at 35 --quit-at 36
+# team kit x y z yaw pose [pitch] [look]
+ember 0 127.66 - 51.51 -149.5 aim 3 0
+ember 1 123.59 - 48.68 -116.5 sprint
+ember 2 121.09 - 44.20 -124.5 run 0 2
+ember 0 124.72 - 45.35 -156.5 fire 2 3
+ember 1 116.12 - 45.18 -120.5 fire 1 1
+cobalt 0 115.01 - 29.01 25.5 fire 0 0
+cobalt 1 77.29 - 12.03 60.5 fire 0 4
+cobalt 0 107.29 - 22.07 -4.5 run 0 5

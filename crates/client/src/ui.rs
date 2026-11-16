@@ -119,11 +119,23 @@ pub fn art_scale(sw: f32, sh: f32) -> f32 {
 }
 
 /// Fill the screen with a piece of key art. It is pinned to the top left,
-/// where its logo is, and cropped on the right and bottom.
+/// where the wordmark goes, and cropped on the right and bottom.
 pub fn backdrop(t: &Texture2D, sw: f32, sh: f32) {
     let k = art_scale(sw, sh);
     draw_texture_ex(t, 0.0, 0.0, WHITE, DrawTextureParams { dest_size: Some(vec2(ART_W * k, ART_H * k)), ..Default::default() });
 }
+
+/// The FERRITE wordmark over the key art (the art itself carries none):
+/// `x`, `y` and `width` in key-art pixels, scaled with the art.
+pub fn logo(art: &Art, sw: f32, sh: f32, x: f32, y: f32, width: f32) {
+    let k = art_scale(sw, sh);
+    let size = vec2(width, width * 316.0 / 1634.0) * k;
+    draw_texture_ex(&art.wordmark, x * k, y * k, WHITE, DrawTextureParams { dest_size: Some(size), ..Default::default() });
+}
+
+/// Where the launcher and the lobby put the wordmark (key-art pixels).
+pub const LAUNCHER_LOGO: (f32, f32, f32) = (46.0, 64.0, 620.0);
+pub const LOBBY_LOGO: (f32, f32, f32) = (30.0, 30.0, 440.0);
 
 /// A glass plate with a hairline border.
 pub fn plate(x: f32, y: f32, w: f32, h: f32, fill: Color, stroke: Color) {

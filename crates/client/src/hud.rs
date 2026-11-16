@@ -409,10 +409,12 @@ fn score_word(m: u8) -> &'static str {
 }
 
 fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32) {
-    // Staging-area key art (its logo sits top left) under a scrim.
+    // Staging-area key art under a scrim, the wordmark top left.
     draw_rectangle(0.0, 0.0, w, h, col(DARK, 1.0));
     crate::ui::backdrop(&app.lobby_bg, w, h);
     draw_rectangle(0.0, 0.0, w, h, col(DARK, 0.5));
+    let (lx, ly, lw) = crate::ui::LOBBY_LOGO;
+    crate::ui::logo(&app.art, w, h, lx, ly, lw);
     let pw = (w - 40.0).min(1080.0);
     let x0 = w / 2.0 - pw / 2.0;
     let tc = team_col(app.my_team);
