@@ -12,7 +12,7 @@ use ferrite_shared::rng::Rng;
 use ferrite_shared::sim::{self, PState, GRENADE_WEAPON};
 use ferrite_shared::{eligible, mode, vec3, Vec3, DT, FLAG_POINT, NEUTRAL, NUM_POINTS, POINT_RADIUS, TICK_HZ};
 
-pub use net::{run, spawn, ServerHandle};
+pub use net::{run, spawn, ServerHandle, CONNS_PER_IP, MAX_CONNS, RECV_PER_ADDR, RECV_PER_TICK};
 
 #[derive(Clone, Debug)]
 pub struct Config {

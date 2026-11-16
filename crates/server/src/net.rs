@@ -4,14 +4,79 @@ use crate::{Config, Game};
 use ferrite_shared::proto::*;
 use ferrite_shared::TICK_HZ;
 use std::collections::HashMap;
+use std::hash::BuildHasher;
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// Datagrams read from the socket in one pass of the loop; the rest wait
+/// for the next tick, so a flood cannot stall the simulation.
+pub const RECV_PER_TICK: usize = 2048;
+/// Datagrams from one address in one pass (a client sends a few a tick).
+pub const RECV_PER_ADDR: u16 = 48;
+/// Sessions from one IP address (a household or LAN party behind one NAT).
+pub const CONNS_PER_IP: usize = 8;
+/// Sessions in all.
+pub const MAX_CONNS: usize = 64;
+/// How long a challenge cookie stays valid: two buckets of this length.
+const COOKIE_BUCKET: Duration = Duration::from_secs(10);
+
+/// Per-process secrets and per-tick counters that protect the session
+/// layer. Nothing here is stored per unverified address, so spoofed traffic
+/// costs the server no memory.
+pub(crate) struct Guard {
+    keys: std::collections::hash_map::RandomState,
+    start: Instant,
+    seen: HashMap<SocketAddr, u16>,
+    rejects: u16,
+    issued: u64,
+}
+
+impl Guard {
+    pub(crate) fn new() -> Guard {
+        Guard { keys: std::collections::hash_map::RandomState::new(), start: Instant::now(), seen: HashMap::new(), rejects: 0, issued: 0 }
+    }
+    fn bucket(&self) -> u64 {
+        self.start.elapsed().as_secs() / COOKIE_BUCKET.as_secs()
+    }
+    /// A keyed hash of the address and time bucket. Never 0, which means
+    /// "no cookie" on the wire.
+    fn cookie_at(&self, addr: SocketAddr, bucket: u64) -> u64 {
+        self.keys.hash_one((addr, bucket, 0x636f_6f6b_u32)) | 1
+    }
+    fn cookie(&self, addr: SocketAddr) -> u64 {
+        self.cookie_at(addr, self.bucket())
+    }
+    /// Valid for the current and the previous bucket (10 to 20 seconds).
+    fn cookie_ok(&self, addr: SocketAddr, cookie: u64) -> bool {
+        let b = self.bucket();
+        cookie != 0 && (cookie == self.cookie_at(addr, b) || (b > 0 && cookie == self.cookie_at(addr, b - 1)))
+    }
+    /// An unguessable session token.
+    fn token(&mut self, addr: SocketAddr) -> u64 {
+        self.issued += 1;
+        self.keys.hash_one((addr, self.issued, self.start.elapsed().as_nanos())) | 1
+    }
+    /// Count a datagram from `addr`; false once it is over its share.
+    fn admit(&mut self, addr: SocketAddr) -> bool {
+        let n = self.seen.entry(addr).or_insert(0);
+        *n = n.saturating_add(1);
+        *n <= RECV_PER_ADDR
+    }
+    fn new_tick(&mut self) {
+        self.seen.clear();
+        self.rejects = 0;
+    }
+}
+
 struct Conn {
     player: Option<usize>,
+    /// Every packet after the Welcome must carry this.
+    token: u64,
+    /// When the Welcome was last (re)sent, to rate-limit repeats.
+    welcomed: Instant,
     last_heard: Instant,
     ack_feed: u32,
     fx_sent: u32,
@@ -113,6 +178,7 @@ fn serve(mut game: Game, sock: UdpSocket, stop: Arc<AtomicBool>) {
     let log = game.cfg.log;
     sock.set_nonblocking(true).expect("nonblocking socket");
     let mut conns: HashMap<SocketAddr, Conn> = HashMap::new();
+    let mut guard = Guard::new();
     let instance = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32)
         ^ std::process::id();
     let game_port = sock.local_addr().map(|a| a.port()).unwrap_or(game.cfg.port);
@@ -145,12 +211,15 @@ fn serve(mut game: Game, sock: UdpSocket, stop: Arc<AtomicBool>) {
         );
     }
     while !stop.load(Ordering::Relaxed) {
-        // Drain the socket. Commands are simulated on arrival.
-        loop {
+        // Drain the socket, up to a limit. Commands are simulated on arrival.
+        guard.new_tick();
+        for _ in 0..RECV_PER_TICK {
             match sock.recv_from(&mut buf) {
                 Ok((n, addr)) => {
                     pkts_in += 1;
-                    handle(&mut game, &mut conns, &sock, addr, &buf[..n], log);
+                    if guard.admit(addr) {
+                        handle(&mut game, &mut conns, &sock, addr, &buf[..n], log, &mut guard);
+                    }
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(_) => break, // e.g. Windows ICMP "connection reset" noise
@@ -266,16 +335,52 @@ fn serve(mut game: Game, sock: UdpSocket, stop: Arc<AtomicBool>) {
     }
 }
 
-fn handle(game: &mut Game, conns: &mut HashMap<SocketAddr, Conn>, sock: &UdpSocket, addr: SocketAddr, data: &[u8], log: bool) {
-    let Some(msg) = decode::<C2S>(data) else { return };
+#[allow(clippy::too_many_arguments)]
+fn handle(
+    game: &mut Game,
+    conns: &mut HashMap<SocketAddr, Conn>,
+    sock: &UdpSocket,
+    addr: SocketAddr,
+    data: &[u8],
+    log: bool,
+    guard: &mut Guard,
+) {
+    // The protocol version leads every datagram. An old or newer client is
+    // told why it cannot join - but only when the request is at least as big
+    // as the answer, and only a few times a tick, so this cannot amplify.
+    let Some(proto) = data.get(..4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]])) else { return };
+    if proto != PROTO {
+        if data.len() >= 48 && guard.rejects < 8 {
+            guard.rejects += 1;
+            let _ = sock.send_to(&encode(&S2C::Reject(format!("protocol mismatch: server speaks v{}", PROTO))), addr);
+        }
+        return;
+    }
+    let Some(Packet { token, msg, .. }) = decode::<Packet>(data) else { return };
+    // After the Welcome, only packets carrying the session's token count.
+    if let Some(c) = conns.get(&addr) {
+        if token != c.token && !matches!(msg, C2S::Hello { .. }) {
+            return;
+        }
+    }
     match msg {
-        C2S::Hello { proto, name, spectator, team, uuid, icon } => {
-            if proto != PROTO {
-                let _ = sock.send_to(&encode(&S2C::Reject(format!("protocol mismatch: server speaks v{}", PROTO))), addr);
-                return;
-            }
-            if !conns.contains_key(&addr) {
-                if conns.len() >= 64 {
+        C2S::Hello { cookie, name, spectator, team, uuid, icon } => {
+            if let Some(c) = conns.get_mut(&addr) {
+                // A repeat (the Welcome was lost): prove it is the same
+                // client, and answer at most a few times a second.
+                if (token != c.token && !guard.cookie_ok(addr, cookie)) || c.welcomed.elapsed() < Duration::from_millis(200) {
+                    return;
+                }
+                c.welcomed = Instant::now();
+            } else {
+                // First contact: a small challenge, no state kept. Only a
+                // Hello that comes back with the cookie gets a slot.
+                if !guard.cookie_ok(addr, cookie) {
+                    let _ = sock.send_to(&encode(&S2C::Challenge { cookie: guard.cookie(addr) }), addr);
+                    return;
+                }
+                let same_ip = conns.keys().filter(|a| a.ip() == addr.ip()).count();
+                if conns.len() >= MAX_CONNS || same_ip >= CONNS_PER_IP {
                     let _ = sock.send_to(&encode(&S2C::Reject("server full".into())), addr);
                     return;
                 }
@@ -296,6 +401,8 @@ fn handle(game: &mut Game, conns: &mut HashMap<SocketAddr, Conn>, sock: &UdpSock
                     addr,
                     Conn {
                         player,
+                        token: guard.token(addr),
+                        welcomed: Instant::now(),
                         last_heard: Instant::now(),
                         ack_feed: game.feed.len() as u32,
                         fx_sent: game.fx_seq,
@@ -313,7 +420,8 @@ fn handle(game: &mut Game, conns: &mut HashMap<SocketAddr, Conn>, sock: &UdpSock
                 Some(i) => (i as u8, game.players[i].team),
                 None => (SPECTATOR_ID, 0),
             };
-            let w = S2C::Welcome { id, team, seed: game.cfg.seed, map: game.world.map, feed_id: c.ack_feed, tick: game.tick };
+            let w =
+                S2C::Welcome { id, team, seed: game.cfg.seed, map: game.world.map, feed_id: c.ack_feed, tick: game.tick, token: c.token };
             let _ = sock.send_to(&encode(&w), addr);
             for p in roster_msgs(game) {
                 let _ = sock.send_to(&p, addr);
@@ -403,5 +511,47 @@ fn handle(game: &mut Game, conns: &mut HashMap<SocketAddr, Conn>, sock: &UdpSock
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(port: u16) -> SocketAddr {
+        SocketAddr::from(([127, 0, 0, 1], port))
+    }
+
+    #[test]
+    fn cookies_are_bound_to_the_address_and_never_zero() {
+        let g = Guard::new();
+        let c = g.cookie(at(5000));
+        assert_ne!(c, 0);
+        assert!(g.cookie_ok(at(5000), c));
+        assert!(!g.cookie_ok(at(5001), c));
+        assert!(!g.cookie_ok(at(5000), 0));
+        // Another process has other keys.
+        assert!(!Guard::new().cookie_ok(at(5000), c));
+    }
+
+    #[test]
+    fn one_address_gets_a_bounded_share_of_each_tick() {
+        let mut g = Guard::new();
+        let admitted = (0..500).filter(|_| g.admit(at(6000))).count();
+        assert_eq!(admitted, RECV_PER_ADDR as usize);
+        assert!(g.admit(at(6001)), "other addresses are unaffected");
+        g.new_tick();
+        assert!(g.admit(at(6000)));
+    }
+
+    #[test]
+    fn tokens_differ_per_session() {
+        let mut g = Guard::new();
+        let t: Vec<u64> = (0..100).map(|_| g.token(at(7000))).collect();
+        let mut u = t.clone();
+        u.sort();
+        u.dedup();
+        assert_eq!(u.len(), t.len());
+        assert!(t.iter().all(|&x| x != 0));
     }
 }

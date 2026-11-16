@@ -9,9 +9,11 @@ use crate::sim::PState;
 use bincode::Options;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
+/// 19: session handshake. Every client datagram is a `Packet` (protocol
+/// version, session token, message); a first Hello is answered with a
+/// `Challenge` cookie and only a Hello that returns it gets a slot.
 /// 18: Ridgeline's Fallen Giant replaces the central post and terrain pads.
-/// Clients and servers must generate the same map for movement prediction.
-pub const PROTO: u32 = 18;
+pub const PROTO: u32 = 19;
 pub const DEFAULT_PORT: u16 = 27500;
 pub const SPECTATOR_ID: u8 = 255;
 
@@ -197,8 +199,9 @@ pub enum C2S {
     /// `team`: 0 or 1 to ask for a side, anything else for auto-balance.
     /// `uuid`: who this is, whatever callsign they use today (all zeros =
     /// nobody in particular). `icon`: empty, or `ICON_BYTES` of RGBA.
+    /// `cookie`: 0 at first; then the one the server's `Challenge` gave.
     Hello {
-        proto: u32,
+        cookie: u64,
         name: String,
         spectator: bool,
         team: u8,
@@ -248,6 +251,8 @@ pub enum S2C {
         map: u8,
         feed_id: u32,
         tick: u32,
+        /// The session token every later packet from this client carries.
+        token: u64,
     },
     Snap(Snapshot),
     /// The roster, `ROSTER_PART` entries at a time: `at` is the index of
@@ -280,6 +285,74 @@ pub enum S2C {
         credits: u32,
         won: bool,
     },
+    /// Reply to a Hello without a valid cookie: send the Hello again with
+    /// this one. Proves the client receives at the address it claims before
+    /// the server spends a slot on it. Added last so older clients still
+    /// decode `Reject` at its old position.
+    Challenge {
+        cookie: u64,
+    },
+}
+
+/// Every datagram a client sends. `proto` comes first so a server can tell
+/// an incompatible client from noise and answer it with a `Reject`; `token`
+/// is 0 until the Welcome and that session's token after it.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Packet {
+    pub proto: u32,
+    pub token: u64,
+    pub msg: C2S,
+}
+
+/// Encode a client message for the wire.
+pub fn encode_c2s(token: u64, msg: &C2S) -> Vec<u8> {
+    encode(&Packet { proto: PROTO, token, msg: msg.clone() })
+}
+
+/// Join a server on a connected socket: send `hello` (its cookie is filled
+/// in here), answer the challenge, and return the Welcome and the session
+/// token. Retries for `limit`. Shared by the game client and the tests so
+/// there is one implementation of the handshake.
+pub fn handshake(sock: &std::net::UdpSocket, hello: &C2S, limit: std::time::Duration) -> Result<(S2C, u64), String> {
+    use std::time::{Duration, Instant};
+    let C2S::Hello { name, spectator, team, uuid, icon, .. } = hello else {
+        return Err("handshake needs a Hello".into());
+    };
+    let hello_with = |cookie: u64| {
+        encode_c2s(0, &C2S::Hello { cookie, name: name.clone(), spectator: *spectator, team: *team, uuid: *uuid, icon: icon.clone() })
+    };
+    let previous = sock.read_timeout().ok().flatten();
+    sock.set_read_timeout(Some(Duration::from_millis(50))).map_err(|e| e.to_string())?;
+    let start = Instant::now();
+    let mut cookie = 0u64;
+    let mut buf = [0u8; 8192];
+    let mut result = Err("no response".to_string());
+    'outer: while start.elapsed() < limit {
+        let _ = sock.send(&hello_with(cookie));
+        let wait = Instant::now();
+        while wait.elapsed() < Duration::from_millis(250) {
+            let Ok(n) = sock.recv(&mut buf) else { continue };
+            match decode::<S2C>(&buf[..n]) {
+                Some(S2C::Challenge { cookie: c }) => {
+                    if c != cookie {
+                        cookie = c;
+                        continue 'outer; // answer straight away
+                    }
+                }
+                Some(w @ S2C::Welcome { token, .. }) => {
+                    result = Ok((w, token));
+                    break 'outer;
+                }
+                Some(S2C::Reject(why)) => {
+                    result = Err(why);
+                    break 'outer;
+                }
+                _ => {}
+            }
+        }
+    }
+    let _ = sock.set_read_timeout(previous);
+    result
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]

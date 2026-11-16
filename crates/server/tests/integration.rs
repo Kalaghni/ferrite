@@ -209,25 +209,20 @@ fn udp_round_trip() {
     let mut buf = [0u8; 8192];
 
     // wrong protocol version is refused with a reason
-    sock.send(&encode(&C2S::Hello { proto: PROTO + 1, name: "old".into(), spectator: false, team: 2, uuid: [0; 16], icon: Vec::new() }))
-        .unwrap();
+    let old = Packet {
+        proto: PROTO + 1,
+        token: 0,
+        msg: C2S::Hello { cookie: 0, name: "old-client".into(), spectator: false, team: 2, uuid: [0; 16], icon: Vec::new() },
+    };
+    sock.send(&encode(&old)).unwrap();
     let n = sock.recv(&mut buf).unwrap();
     assert!(matches!(decode::<S2C>(&buf[..n]), Some(S2C::Reject(_))));
 
     // An id and a 16 x 16 icon go up with the hello.
     let icon: Vec<u8> = (0..ICON_BYTES).map(|k| (k * 7 % 251) as u8).collect();
-    sock.send(&encode(&C2S::Hello { proto: PROTO, name: "net-test".into(), spectator: false, team: 2, uuid: [7; 16], icon: icon.clone() }))
-        .unwrap();
-    let (mut id, mut seed, mut first_team) = (SPECTATOR_ID, 0, 0u8);
-    for _ in 0..10 {
-        let n = sock.recv(&mut buf).unwrap();
-        if let Some(S2C::Welcome { id: i, seed: s, team, .. }) = decode::<S2C>(&buf[..n]) {
-            id = i;
-            seed = s;
-            first_team = team;
-            break;
-        }
-    }
+    let hello = C2S::Hello { cookie: 0, name: "net-test".into(), spectator: false, team: 2, uuid: [7; 16], icon: icon.clone() };
+    let (welcome, token) = handshake(&sock, &hello, Duration::from_secs(4)).expect("welcome");
+    let S2C::Welcome { id, seed, team: first_team, .. } = welcome else { unreachable!() };
     assert_ne!(id, SPECTATOR_ID, "no welcome");
     assert_eq!(seed, 0xFE221);
 
@@ -247,28 +242,22 @@ fn udp_round_trip() {
             seq += 1;
             history.push(Cmd { seq, mz: 1, yaw: 1.0, ..Default::default() });
             let recent: Vec<Cmd> = history.iter().rev().take(3).rev().copied().collect();
-            sock.send(&encode(&C2S::Cmds {
-                cmds: recent,
-                ack_feed: 0,
-                kit: 1,
-                prim: 1,
-                side: 4,
-                skin: 2,
-                wskin: requested_finishes,
-                ack_chat,
-            }))
+            sock.send(&encode_c2s(
+                token,
+                &C2S::Cmds { cmds: recent, ack_feed: 0, kit: 1, prim: 1, side: 4, skin: 2, wskin: requested_finishes, ack_chat },
+            ))
             .unwrap();
             // Said three times, heard once.
             if seq == 20 || seq == 21 || seq == 22 {
-                sock.send(&encode(&C2S::Chat { id: 1, team: false, text: "hello  there\u{7}".into() })).unwrap();
+                sock.send(&encode_c2s(token, &C2S::Chat { id: 1, team: false, text: "hello  there\u{7}".into() })).unwrap();
             }
             if seq == 30 {
-                sock.send(&encode(&C2S::WantIcon(id))).unwrap();
+                sock.send(&encode_c2s(token, &C2S::WantIcon(id))).unwrap();
             }
         }
         if !asked_switch && start.elapsed() > Duration::from_millis(600) {
             asked_switch = true;
-            sock.send(&encode(&C2S::Team(1 - first_team))).unwrap();
+            sock.send(&encode_c2s(token, &C2S::Team(1 - first_team))).unwrap();
         }
         if let Ok(n) = sock.recv(&mut buf) {
             match decode::<S2C>(&buf[..n]) {
@@ -322,7 +311,7 @@ fn udp_round_trip() {
     assert_eq!(said.len(), 1, "{heard:?}");
     assert_eq!((said[0].text.as_str(), said[0].name.as_str(), said[0].all), ("hello  there", "net-test", true));
     assert!(icon_listed && icon_back, "icon listed {icon_listed}, sent back {icon_back}");
-    sock.send(&encode(&C2S::Bye)).unwrap();
+    sock.send(&encode_c2s(token, &C2S::Bye)).unwrap();
     assert_eq!(roster_team, 1 - first_team, "team change request was applied");
     server.stop();
 }
@@ -1175,19 +1164,9 @@ fn live_weapon_finishes_replicate_without_redeploying() {
     sock.connect(("127.0.0.1", server.addr.port())).unwrap();
     sock.set_read_timeout(Some(Duration::from_millis(10))).unwrap();
     let mut bytes = [0u8; 8192];
-    let hello =
-        encode(&C2S::Hello { proto: PROTO, name: "finish-test".into(), spectator: false, team: 0, uuid: [8; 16], icon: Vec::new() });
-    let deadline = Instant::now() + Duration::from_secs(3);
-    let mut id = None;
-    while Instant::now() < deadline && id.is_none() {
-        sock.send(&hello).unwrap();
-        if let Ok(n) = sock.recv(&mut bytes) {
-            if let Some(S2C::Welcome { id: who, .. }) = decode::<S2C>(&bytes[..n]) {
-                id = Some(who);
-            }
-        }
-    }
-    let id = id.expect("no cosmetic test welcome");
+    let hello = C2S::Hello { cookie: 0, name: "finish-test".into(), spectator: false, team: 0, uuid: [8; 16], icon: Vec::new() };
+    let (welcome, token) = handshake(&sock, &hello, Duration::from_secs(3)).expect("no cosmetic test welcome");
+    let S2C::Welcome { id, .. } = welcome else { unreachable!() };
     let mut baseline = None;
     for (kit, prim, side, wants, expected) in [
         (0, 0, 4, [0, 0], [0, 0]),
@@ -1201,8 +1180,11 @@ fn live_weapon_finishes_replicate_without_redeploying() {
         let (mut saw_state, mut saw_finish) = (false, false);
         while Instant::now() < deadline && !(saw_state && saw_finish) {
             if last_send.elapsed() >= Duration::from_millis(40) {
-                sock.send(&encode(&C2S::Cmds { cmds: Vec::new(), ack_feed: 0, kit, prim, side, skin: 0, wskin: wants, ack_chat: 0 }))
-                    .unwrap();
+                sock.send(&encode_c2s(
+                    token,
+                    &C2S::Cmds { cmds: Vec::new(), ack_feed: 0, kit, prim, side, skin: 0, wskin: wants, ack_chat: 0 },
+                ))
+                .unwrap();
                 last_send = Instant::now();
             }
             let Ok(n) = sock.recv(&mut bytes) else { continue };
@@ -1227,7 +1209,7 @@ fn live_weapon_finishes_replicate_without_redeploying() {
         }
         assert!(saw_state && saw_finish, "live finish request {wants:?} did not replicate as {expected:?}");
     }
-    sock.send(&encode(&C2S::Bye)).unwrap();
+    sock.send(&encode_c2s(token, &C2S::Bye)).unwrap();
     server.stop();
 }
 
@@ -1311,4 +1293,97 @@ fn spawns_spread_across_the_base_ground() {
             assert!(widest > 18.0, "map {map}, team {team}: spawns span only {widest:.1} m");
         }
     }
+}
+
+fn udp_client(port: u16) -> UdpSocket {
+    let sock = UdpSocket::bind("127.0.0.1:0").unwrap();
+    sock.connect(("127.0.0.1", port)).unwrap();
+    sock.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+    sock
+}
+
+/// Everything the server sends to `sock` for `ms` milliseconds.
+fn listen(sock: &UdpSocket, ms: u64) -> Vec<S2C> {
+    let mut buf = [0u8; 8192];
+    let mut got = Vec::new();
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_millis(ms) {
+        if let Ok(n) = sock.recv(&mut buf) {
+            got.extend(decode::<S2C>(&buf[..n]));
+        }
+    }
+    got
+}
+
+fn hello(cookie: u64, name: &str, spectator: bool) -> C2S {
+    C2S::Hello { cookie, name: name.into(), spectator, team: 2, uuid: [3; 16], icon: Vec::new() }
+}
+
+/// Session hardening: a slot needs a cookie proving the sender receives at
+/// its address, the cookie is bound to that address, the challenge is
+/// smaller than the hello, and later packets need the session token.
+#[test]
+fn sessions_need_a_returned_cookie_and_the_session_token() {
+    let mut server = ferrite_server::spawn(cfg(2)).expect("server");
+    let port = server.addr.port();
+
+    // A hello without a cookie, or with a made-up one, gets a challenge and
+    // nothing else: no Welcome, no roster, no snapshots.
+    let a = udp_client(port);
+    let first = encode_c2s(0, &hello(0, "spoofer", false));
+    a.send(&first).unwrap();
+    a.send(&encode_c2s(0, &hello(0x1234_5678_9abc_def1, "spoofer", false))).unwrap();
+    let got = listen(&a, 400);
+    assert!(!got.is_empty() && got.iter().all(|m| matches!(m, S2C::Challenge { .. })), "{got:?}");
+    let S2C::Challenge { cookie } = got[0] else { unreachable!() };
+    assert!(encode(&S2C::Challenge { cookie }).len() < first.len(), "the challenge must not amplify");
+
+    // That cookie is bound to the address it was sent to.
+    let b = udp_client(port);
+    b.send(&encode_c2s(0, &hello(cookie, "borrower", false))).unwrap();
+    let got = listen(&b, 400);
+    assert!(got.iter().all(|m| matches!(m, S2C::Challenge { .. })), "a cookie worked from another address: {got:?}");
+
+    // The real thing joins; packets with the wrong token are ignored.
+    let (_, token) = handshake(&a, &hello(0, "player", false), Duration::from_secs(4)).expect("welcome");
+    let (_, other) = handshake(&b, &hello(0, "bystander", true), Duration::from_secs(4)).expect("welcome");
+    assert_ne!(token, other);
+    a.send(&encode_c2s(token ^ 1, &C2S::Chat { id: 1, team: false, text: "forged".into() })).unwrap();
+    a.send(&encode_c2s(token ^ 1, &C2S::Bye)).unwrap();
+    a.send(&encode_c2s(token, &C2S::Chat { id: 2, team: false, text: "genuine".into() })).unwrap();
+    let mut said = Vec::new();
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_millis(1500) && !said.iter().any(|t: &String| t == "genuine") {
+        // Keep the session alive and acknowledge nothing, so chat is resent.
+        a.send(&encode_c2s(
+            token,
+            &C2S::Cmds { cmds: Vec::new(), ack_feed: 0, kit: 0, prim: 0, side: 4, skin: 0, wskin: [0, 0], ack_chat: 0 },
+        ))
+        .unwrap();
+        for m in listen(&b, 50) {
+            if let S2C::Chat(lines) = m {
+                said.extend(lines.into_iter().map(|l| l.text));
+            }
+        }
+    }
+    assert!(said.iter().any(|t| t == "genuine"), "the session survived a forged Bye: {said:?}");
+    assert!(!said.iter().any(|t| t == "forged"), "a packet with the wrong token was accepted");
+    server.stop();
+}
+
+/// One IP address cannot take every session.
+#[test]
+fn sessions_per_ip_are_capped() {
+    let mut server = ferrite_server::spawn(cfg(2)).expect("server");
+    let port = server.addr.port();
+    let mut socks = Vec::new();
+    for k in 0..ferrite_server::CONNS_PER_IP {
+        let s = udp_client(port);
+        handshake(&s, &hello(0, &format!("watcher{k}"), true), Duration::from_secs(4)).expect("welcome within the cap");
+        socks.push(s);
+    }
+    let extra = udp_client(port);
+    let refused = handshake(&extra, &hello(0, "one-too-many", true), Duration::from_secs(4));
+    assert_eq!(refused.err().as_deref(), Some("server full"));
+    server.stop();
 }

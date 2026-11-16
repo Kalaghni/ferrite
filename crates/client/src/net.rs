@@ -6,7 +6,7 @@ use ferrite_shared::proto::*;
 use ferrite_shared::wrap_angle;
 use std::collections::VecDeque;
 use std::net::{SocketAddr, UdpSocket};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Remote players are drawn this many server ticks in the past so there is
 /// always a pair of snapshots to interpolate between (100 ms at 60 Hz).
@@ -23,6 +23,8 @@ pub struct Welcome {
 
 pub struct Net {
     sock: UdpSocket,
+    /// Session token from the Welcome; every packet carries it.
+    token: u64,
     pub snaps: VecDeque<Snapshot>,
     pub roster: Vec<RosterEntry>,
     /// A roster still arriving, part by part.
@@ -72,31 +74,18 @@ impl Net {
         let sock = UdpSocket::bind(("0.0.0.0", 0)).map_err(|e| e.to_string())?;
         sock.connect(addr).map_err(|e| e.to_string())?;
         sock.set_read_timeout(Some(Duration::from_millis(100))).ok();
-        let hello = encode(&C2S::Hello { proto: PROTO, name: name.to_string(), spectator, team, uuid, icon: icon.to_vec() });
-        let start = Instant::now();
-        let mut buf = [0u8; 4096];
-        let mut welcome = None;
-        while start.elapsed() < Duration::from_secs(4) && welcome.is_none() {
-            let _ = sock.send(&hello);
-            let wait = Instant::now();
-            while wait.elapsed() < Duration::from_millis(250) {
-                if let Ok(n) = sock.recv(&mut buf) {
-                    match decode::<S2C>(&buf[..n]) {
-                        Some(S2C::Welcome { id, team, seed, map, feed_id, .. }) => {
-                            welcome = Some((Welcome { id, team, seed, map }, feed_id));
-                            break;
-                        }
-                        Some(S2C::Reject(why)) => return Err(why),
-                        _ => {}
-                    }
-                }
-            }
-        }
-        let (w, feed_id) = welcome.ok_or_else(|| format!("no response from {addr}"))?;
+        let hello = C2S::Hello { cookie: 0, name: name.to_string(), spectator, team, uuid, icon: icon.to_vec() };
+        let (welcome, token) = handshake(&sock, &hello, Duration::from_secs(4)).map_err(|e| match e.as_str() {
+            "no response" => format!("no response from {addr}"),
+            _ => e,
+        })?;
+        let S2C::Welcome { id, team, seed, map, feed_id, .. } = welcome else { unreachable!("handshake returns a Welcome") };
+        let w = Welcome { id, team, seed, map };
         sock.set_nonblocking(true).map_err(|e| e.to_string())?;
         Ok((
             Net {
                 sock,
+                token,
                 snaps: VecDeque::new(),
                 roster: Vec::new(),
                 roster_build: Vec::new(),
@@ -205,7 +194,7 @@ impl Net {
         }
         // Chat rides on plain UDP: say each thing three times.
         for m in self.chat_out.iter_mut().filter(|m| now >= m.4) {
-            let _ = self.sock.send(&encode(&C2S::Chat { id: m.0, team: m.1, text: m.2.clone() }));
+            let _ = self.sock.send(&encode_c2s(self.token, &C2S::Chat { id: m.0, team: m.1, text: m.2.clone() }));
             m.3 -= 1;
             m.4 = now + 0.12;
         }
@@ -219,7 +208,7 @@ impl Net {
     }
 
     pub fn want_icon(&self, id: u8) {
-        let _ = self.sock.send(&encode(&C2S::WantIcon(id)));
+        let _ = self.sock.send(&encode_c2s(self.token, &C2S::WantIcon(id)));
     }
 
     /// Tick-time at which remote entities are displayed right now.
@@ -235,32 +224,26 @@ impl Net {
                 self.sent.pop_front();
             }
         }
-        let _ = self.sock.send(&encode(&C2S::Cmds {
-            cmds: cmds.to_vec(),
-            ack_feed: self.ack_feed,
-            kit,
-            prim,
-            side,
-            skin,
-            wskin,
-            ack_chat: self.ack_chat,
-        }));
+        let _ = self.sock.send(&encode_c2s(
+            self.token,
+            &C2S::Cmds { cmds: cmds.to_vec(), ack_feed: self.ack_feed, kit, prim, side, skin, wskin, ack_chat: self.ack_chat },
+        ));
     }
 
     /// Ask the server to move us to `team`. Sent a few times because the
     /// request is a single unacknowledged datagram; repeats are harmless.
     pub fn send_team(&self, team: u8) {
         for _ in 0..3 {
-            let _ = self.sock.send(&encode(&C2S::Team(team)));
+            let _ = self.sock.send(&encode_c2s(self.token, &C2S::Team(team)));
         }
     }
 
     pub fn send_lobby(&self, vote: u8, ready: bool, mode: u8) {
-        let _ = self.sock.send(&encode(&C2S::Lobby { vote, ready, mode }));
+        let _ = self.sock.send(&encode_c2s(self.token, &C2S::Lobby { vote, ready, mode }));
     }
 
     pub fn bye(&self) {
-        let _ = self.sock.send(&encode(&C2S::Bye));
+        let _ = self.sock.send(&encode_c2s(self.token, &C2S::Bye));
     }
 
     pub fn latest(&self) -> Option<&Snapshot> {

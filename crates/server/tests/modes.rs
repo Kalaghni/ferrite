@@ -523,8 +523,8 @@ fn mode_vote_and_credits_cross_the_wire() {
     sock.connect(("127.0.0.1", server.addr.port())).unwrap();
     sock.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
     let mut buf = [0u8; 8192];
-    sock.send(&encode(&C2S::Hello { proto: PROTO, name: "voter".into(), spectator: false, team: 0, uuid: [9; 16], icon: Vec::new() }))
-        .unwrap();
+    let hello = C2S::Hello { cookie: 0, name: "voter".into(), spectator: false, team: 0, uuid: [9; 16], icon: Vec::new() };
+    let (_, token) = handshake(&sock, &hello, Duration::from_secs(4)).expect("welcome");
     let start = Instant::now();
     let (mut seq, mut voted, mut played, mut award) = (0u32, false, None, None);
     let mut last = Instant::now() - Duration::from_secs(1);
@@ -533,9 +533,12 @@ fn mode_vote_and_credits_cross_the_wire() {
             last = Instant::now();
             seq += 1;
             let cmd = Cmd { seq, ..Default::default() };
-            sock.send(&encode(&C2S::Cmds { cmds: vec![cmd], ack_feed: 0, kit: 0, prim: 0, side: 4, skin: 0, wskin: [0, 0], ack_chat: 0 }))
-                .unwrap();
-            sock.send(&encode(&C2S::Lobby { vote: 255, ready: true, mode: mode::KOTH })).unwrap();
+            sock.send(&encode_c2s(
+                token,
+                &C2S::Cmds { cmds: vec![cmd], ack_feed: 0, kit: 0, prim: 0, side: 4, skin: 0, wskin: [0, 0], ack_chat: 0 },
+            ))
+            .unwrap();
+            sock.send(&encode_c2s(token, &C2S::Lobby { vote: 255, ready: true, mode: mode::KOTH })).unwrap();
         }
         let Ok(n) = sock.recv(&mut buf) else { continue };
         match decode::<S2C>(&buf[..n]) {
