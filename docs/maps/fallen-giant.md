@@ -23,4 +23,4 @@ target/release/examples/asset_review ridgeline tail.png tail 10
 
 The fourth argument freezes wind and beacon animation. A custom six-number eye/target camera remains available for other views.
 
-Ridgeline's collision and terrain changed, so this development build uses protocol **18**. Build the client and dedicated server together.
+Ridgeline's collision and terrain changed in v0.11.0 (protocol **18**), so everyone in a match needs v0.11.0, including the dedicated server.

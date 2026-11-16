@@ -1,4 +1,4 @@
-# FERRITE 0.10.0
+# FERRITE 0.11.0
 
 ![The FERRITE launcher: host, join or change settings](docs/launcher.png)
 
@@ -21,11 +21,16 @@ v0.6 adds a new launcher and lobby look (key art, palette and typeface from the 
 
 v0.7 adds text chat, a melee strike, a killcam, player icons, callsigns backed by a player id (your record follows you when you rename), a kill feed that puts people ahead of bots, the plumbing for weapon finishes, a Windows installer, and updates from inside the launcher.
 
-## Map expansion (development)
+## v0.11
 
-The original four battlefields now have authored destinations alongside their scattered cover: complete workshops and warehouses, walk-through service tunnels, timbered mine adits, rock shelters and container passages. Foundry Valley's boiler works smoke and turn a flywheel; Quarry's winding gear operates above the mine; Ridgeline has a wind-powered ranger station and the Fallen Giant, a massive cargo-plane wreck with a walkable hold across the central saddle; a 52-metre gantry and working spreader dominate Depot. Relay gains a giant cellular mast, and a distant volcano beyond Slag Cathedral can erupt.
+- **Landmarks.** The four oldest battlefields gain authored destinations: boiler workshops and a service culvert in Foundry Valley, mine adits under a working headframe in the Quarry, ranger lodges, rock passages and wind turbines on Ridgeline, and container passages and warehouses under a 52-metre gantry in the Depot. Relay gains a giant cellular mast; a distant volcano beyond Slag Cathedral can erupt.
+- **The Fallen Giant.** A crashed cargo aircraft lies across Ridgeline's saddle with C on the floor of its walkable hold, open at both broken ends and through three tears in each side. See the [Fallen Giant guide](docs/maps/fallen-giant.md).
+- **Explosive changes.** Marked wall panels, walkways and machine controls break, collapse or shut down when a grenade goes off beside them. The server confirms each, updates collision and bot navigation, and a new round restores them. See the [expanded map guide](docs/maps/landmarks.md).
+- **Soldiers.** Rebuilt to match the launcher art: faceted pale armour over a dark suit, a domed helmet with a glowing visor, big shoulder plates and a team-coloured pack lid.
+- **Twice the detail.** About twice the polygons on every map: a finer ground mesh, finer round parts, rounder trees and bending grass.
+- **Fixes.** Bots no longer see through tree canopies. In Capture the Flag the DEFEND marker no longer covers BRING IT HERE while you carry a flag.
 
-Marked wall panels, service walkways and machine controls respond to explosives. The server confirms each breach, collapse or shutdown, updates collision and bot navigation, and includes the lasting state in snapshots. A fresh round restores them. See the [expanded map guide](docs/maps/landmarks.md) and [Fallen Giant guide](docs/maps/fallen-giant.md) for details and review views. These development builds use protocol **18**; clients and servers must be built together.
+The network protocol changed (18), so everyone in a match needs v0.11.0, including the dedicated server. See the [v0.11.0 release notes](docs/release-notes/v0.11.0.md).
 
 ## v0.10
 
@@ -88,8 +93,8 @@ Either way the game keeps itself current: the launcher checks this repository's 
 **macOS:** the build is not signed with an Apple Developer ID, so a copy downloaded in a browser is blocked by Gatekeeper. The simplest way round it is to download from Terminal, which does not get flagged:
 
 ```sh
-curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.10.0/ferrite-v0.10.0-macos-universal.tar.gz | tar xz
-./ferrite-v0.10.0-macos-universal/ferrite
+curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.11.0/ferrite-v0.11.0-macos-universal.tar.gz | tar xz
+./ferrite-v0.11.0-macos-universal/ferrite
 ```
 
 If you already downloaded it in a browser, run `xattr -dr com.apple.quarantine .` in the unpacked folder once.
@@ -222,6 +227,8 @@ The tests cover: prediction equals server state exactly over 900 random commands
 New in v0.8: complete geometry fingerprints for the original maps; seeded navigation and symmetry checks for Spillway and Relay; soldier pose and weapon-action bounds; all seven finish ids, live cosmetic changes without redeployment, safe handling of pending loadouts, roster and real UDP replication, and valid bot finishes; paint confined to weapon surfaces; clear optic apertures; and dynamic meshes spanning multiple pages. The discovery test also works while another local game is running.
 
 New in v0.10: deathmatch scoring, forward spawns and the clock; a flag taken, carried, dropped, returned by touch and by time, and captured; Stronghold scoring only while the centre is held; streak rewards at 3, 5 and 7 and the shutdown bonus; every pickup's effect, armour's share of a hit and its loss on death; credits for winners, losers, latecomers and too-short rounds; mode rotation and the lobby vote; a four-minute bot war in each mode with snapshots under 1400 bytes; a mode vote and a round's credits over real UDP; the armory's prices and purchases; and the touch layout fitting screens from a phone to 1440p without overlapping.
+
+New in v0.11: every Fallen Giant opening crossed standing up, its roof and hull stopping shots and walkers, and the hold balanced under a half turn; every mine adit, culvert and container passage walked both ways and every workshop door used; a breached panel opening a standing route and a walkway collapsing under the player on it; a grenade releasing each feature once, a solid wall shielding a panel, limited range, no chain reactions, a late client seeing the result over real UDP, and the next round restoring collision and navigation; tree canopies hiding a target from a sight line but not from someone standing under them; and soldier plates closed and facing outward.
 
 Scripted-run aids added for these: `--seek` (the scripted player walks to the front line, so it gets shot), `--shot-killcam`, `--say TEXT`, `--icon N`, `--vm-melee 0.75`, and `--update --pretend-version 0.5.0` to exercise the updater against a real release.
 

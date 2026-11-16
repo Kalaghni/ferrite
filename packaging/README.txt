@@ -1,6 +1,20 @@
 FERRITE - 12v12 front-line conquest
 https://github.com/Kalaghni/ferrite
 
+NEW IN v0.11
+  Landmarks on every map: workshops, mine adits, ranger lodges, container
+  passages and tunnels on the original four, giant machinery overhead, a
+  mast beyond Relay and an erupting volcano beyond Slag Cathedral.
+  The Fallen Giant: a crashed cargo aircraft across Ridgeline's saddle,
+  with point C inside its hold.
+  Grenades can breach marked wall panels, drop walkways and stop machines.
+  A new round puts them back.
+  Soldiers rebuilt to match the launcher art, and about twice the detail
+  on every map.
+  Bots no longer see through trees.
+  Also includes everything from v0.10 below, not released on its own.
+  Everyone in a match needs v0.11.0, including the dedicated server.
+
 NEW IN v0.10
   Four game modes: Conquest, Team Deathmatch (fast), Capture the Flag
   (slow) and Stronghold (hold the centre). Pick one on HOST & PLAY, or

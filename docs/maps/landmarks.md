@@ -23,7 +23,7 @@ The four priority maps have designated weak wall panels, service walkway section
 - A collapsed walkway removes its deck and supporting pieces. Anyone standing on it falls under the normal player physics.
 - A disabled control stops the associated machinery and changes its visible status.
 
-The server owns all transitions. The persistent destruction mask is included in every snapshot, so joining late or losing a cosmetic debris event does not restore a broken feature. Collision and navigation update together. Mirrored features have independent state; a new round restores the initial layout. Current development builds use protocol 18, including the Fallen Giant's changed Ridgeline collision, and require matching client/server builds.
+The server owns all transitions. The persistent destruction mask is included in every snapshot, so joining late or losing a cosmetic debris event does not restore a broken feature. Collision and navigation update together. Mirrored features have independent state; a new round restores the initial layout. v0.11.0 uses protocol 18, including the Fallen Giant's changed Ridgeline collision, so clients and servers must match.
 
 ## Review
 
