@@ -631,8 +631,178 @@ fn floor_and_services(m: &mut Mesh, w: &World) {
     }
 }
 
+/// A quad facing up whichever way its corners were listed.
+fn up_quad(m: &mut Mesh, a: Vec3, b: Vec3, c: Vec3, d: Vec3, col: Col) {
+    if (b - a).cross(c - a).y >= 0.0 {
+        m.quad(a, b, c, d, col);
+    } else {
+        m.quad(d, c, b, a, col);
+    }
+}
+
+/// Stations down the lava runner, about every `step` metres: (distance
+/// from the source, centre on the ground, unit direction, unit left).
+fn runner_stations(w: &World, step: f32) -> Vec<(f32, Vec3, Vec3, Vec3)> {
+    let mut out = Vec::new();
+    let mut s0 = 0.0;
+    let pts = layout::RUNNER;
+    for (i, pair) in pts.windows(2).enumerate() {
+        let (a, b) = (vec3(pair[0].0, 0.0, pair[0].1), vec3(pair[1].0, 0.0, pair[1].1));
+        let len = (b - a).length();
+        let dir = (b - a) / len;
+        let left = vec3(dir.z, 0.0, -dir.x);
+        let n = (len / step).ceil().max(1.0) as usize;
+        let last = i == pts.len() - 2;
+        for k in 0..n + usize::from(last) {
+            let t = k as f32 / n as f32;
+            let p = a + (b - a) * t;
+            out.push((s0 + len * t, vec3(p.x, w.height(p.x, p.z), p.z), dir, left));
+        }
+        s0 += len;
+    }
+    out
+}
+
+/// The lava runner's dry bed: a dark refractory trough with kerbs, the
+/// gratings that carry paths over it, and a lip where it pours into the
+/// southern casting channel. Hazard footprints come from the shared layout.
+fn runner(m: &mut Mesh, w: &World) {
+    let hw = layout::RUNNER_HALF_W;
+    let st = runner_stations(w, 1.5);
+    for pair in st.windows(2) {
+        let ((_, p, _, l), (_, q, _, r)) = (pair[0], pair[1]);
+        let bed = |c: Vec3, side: Vec3, k: f32| c + side * k + Vec3::Y * 0.014;
+        up_quad(m, bed(p, l, hw + 0.3), bed(p, l, -hw - 0.3), bed(q, r, -hw - 0.3), bed(q, r, hw + 0.3), DARK);
+        for side in [-1.0f32, 1.0] {
+            let (a, b) = (p + l * side * (hw + 0.13), q + r * side * (hw + 0.13));
+            beam(m, a + Vec3::Y * 0.045, b + Vec3::Y * 0.045, 0.24, 0.07, shade(RUST, 0.62));
+            beam(m, a + Vec3::Y * 0.083, b + Vec3::Y * 0.083, 0.07, 0.008, WARNING);
+        }
+    }
+    for &(a, b) in &layout::RUNNER_CROSSINGS {
+        let span: Vec<_> = st.iter().filter(|s| s.0 >= a - 0.8 && s.0 <= b + 0.8).copied().collect();
+        for pair in span.windows(2) {
+            let ((_, p, _, l), (_, q, _, r)) = (pair[0], pair[1]);
+            let lift = Vec3::Y * 0.05;
+            up_quad(
+                m,
+                p + l * (hw + 0.25) + lift,
+                p - l * (hw + 0.25) + lift,
+                q - r * (hw + 0.25) + lift,
+                q + r * (hw + 0.25) + lift,
+                shade(STEEL, 0.9),
+            );
+            let n = ((q - p).length() / 0.4).round().max(1.0) as usize;
+            for k in 0..n {
+                let c = p + (q - p) * (k as f32 / n as f32) + Vec3::Y * 0.06;
+                beam(m, c + l * (hw + 0.22), c - l * (hw + 0.22), 0.05, 0.02, DARK);
+            }
+        }
+        for s in [a, b] {
+            if let Some(&(_, c, _, l)) = st.iter().min_by(|x, y| (x.0 - s).abs().total_cmp(&(y.0 - s).abs())) {
+                beam(m, c + l * (hw + 0.3) + Vec3::Y * 0.07, c - l * (hw + 0.3) + Vec3::Y * 0.07, 0.12, 0.05, WARNING);
+            }
+        }
+    }
+    if let Some(&(_, end, _, l)) = st.last() {
+        beam(m, end + l * (hw + 0.3) + Vec3::Y * 0.05, end - l * (hw + 0.3) + Vec3::Y * 0.05, 0.18, 0.1, DARK);
+    }
+}
+
+/// Lava in the runner during and after an eruption (`events::lava_flow`):
+/// a molten ribbon advancing from the south with a bulging bright front,
+/// crusts drifting down it, heat shimmer and sparks; once it crusts over, a
+/// dark skin whose cracks glow and fade. Nothing is drawn while it is dry.
+fn runner_flow(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, time: f32) {
+    let flow = ferrite_shared::events::lava_flow(w.seed, time);
+    if flow.extent <= 0.0 {
+        return;
+    }
+    let hw = layout::RUNNER_HALF_W;
+    let molten = flow.front > 0.0;
+    let st = runner_stations(w, 1.2);
+    // Cooling lava darkens to a crust long before it stops glowing at all.
+    let cool = |c: Col, k: f32| -> Col {
+        let g = (flow.glow * k).powi(3);
+        [c[0] * g + 0.075 * (1.0 - g), c[1] * g + 0.062 * (1.0 - g), c[2] * g + 0.058 * (1.0 - g), c[3] * g]
+    };
+    for pair in st.windows(2) {
+        let ((s0, p, _, l), (s1, q, _, r)) = (pair[0], pair[1]);
+        if s0 >= flow.extent {
+            break;
+        }
+        // Clip the last piece at the front, and swell it into a rounded lobe.
+        let t = ((flow.extent - s0) / (s1 - s0)).min(1.0);
+        let q = p + (q - p) * t;
+        let lobe = |d: f32| if molten { (d / 2.5).clamp(0.35, 1.0).sqrt() } else { 1.0 };
+        let (wp, wq) = (hw * lobe(flow.extent - s0), hw * lobe(flow.extent - s0 - (s1 - s0) * t));
+        let y = Vec3::Y * 0.05;
+        up_quad(m, p + l * wp + y, p - l * wp + y, q - r * wq + y, q + r * wq + y, cool(shade(HOT, 0.7), 1.0));
+        // The hot core, broken by the crust drifting downstream.
+        let k = (s0 / 1.2) as u32;
+        let drift = (s0 - time * 1.6).rem_euclid(9.0);
+        let core = 0.35 + 0.25 * hash01(k, 31) + if drift < 3.0 { 0.0 } else { 0.15 };
+        let y2 = Vec3::Y * 0.056;
+        if molten {
+            up_quad(m, p + l * wp * core + y2, p - l * wp * core + y2, q - r * wq * core + y2, q + r * wq * core + y2, WHITE_HOT);
+        }
+        if molten {
+            // Shimmer that slides with the flow.
+            let a = (time * 0.9 + hash01(k, 33)).fract();
+            add.quad(
+                p + l * wp * 0.8 + Vec3::Y * 0.06,
+                q + r * wq * 0.8 + Vec3::Y * 0.06,
+                q - r * wq * 0.8 + Vec3::Y * 0.06,
+                p - l * wp * 0.8 + Vec3::Y * 0.06,
+                [1.0, 0.5, 0.12, 0.10 + 0.12 * (a * TAU).sin().abs()],
+            );
+        } else if flow.glow > 0.02 && hash01(k, 35) < 0.6 {
+            // Cooling: glowing cracks in the crust.
+            let c = p.lerp(q, 0.5) + Vec3::Y * 0.062;
+            let a = hash01(k, 36) * PI;
+            let d = vec3(a.cos(), 0.0, a.sin()) * hw * 0.7;
+            let g = flow.glow;
+            beam(m, c - d, c + d, 0.06, 0.01, [HOT[0] * g + 0.08 * (1.0 - g), HOT[1] * g + 0.06 * (1.0 - g), HOT[2] * g, g]);
+        }
+    }
+    if !molten {
+        return;
+    }
+    // Sparks and heat haze, densest at the advancing front.
+    for k in 0..48u32 {
+        let s = flow.front - hash01(k, 41).powf(1.8) * flow.front.min(60.0);
+        let Some(&(_, c, dir, l)) = st.iter().find(|x| x.0 >= s) else { continue };
+        let age = (time * (0.6 + hash01(k, 42) * 0.5) + hash01(k, 43)).fract();
+        let p = c + l * (hash01(k, 44) - 0.5) * hw * 1.6 + dir * age * 0.4 + Vec3::Y * (0.08 + age * (0.5 + hash01(k, 45) * 1.4));
+        let r = 0.015 + hash01(k, 46) * 0.025;
+        add.quad(
+            p + vec3(-r, -r * 2.0, 0.0),
+            p + vec3(r, -r * 2.0, 0.0),
+            p + vec3(r, r * 2.0, 0.0),
+            p + vec3(-r, r * 2.0, 0.0),
+            [1.0, 0.5, 0.1, (1.0 - age) * 0.9],
+        );
+    }
+    for k in 0..10u32 {
+        let s = flow.front - k as f32 * 7.0 - 1.0;
+        let Some(&(_, c, _, _)) = st.iter().find(|x| x.0 >= s.max(0.0)) else { continue };
+        let age = (time * 0.18 + hash01(k, 47)).fract();
+        let p = c + Vec3::Y * (0.8 + age * 4.5);
+        let rad = 0.9 + age * 2.2;
+        let o = (1.0 - age) * if k == 0 { 0.16 } else { 0.08 };
+        alpha.quad(
+            p + vec3(-rad, -rad, 0.0),
+            p + vec3(rad, -rad, 0.0),
+            p + vec3(rad, rad, 0.0),
+            p + vec3(-rad, rad, 0.0),
+            [0.14, 0.11, 0.12, o],
+        );
+    }
+}
+
 pub fn build(m: &mut Mesh, w: &World) {
     floor_and_services(m, w);
+    runner(m, w);
     nave(m);
     galleries(m);
     for (index, &(x, z)) in layout::FURNACE_ANCHORS.iter().enumerate() {
@@ -689,8 +859,10 @@ pub fn lights(w: &World, eye: Vec3, existing: [Light; 4]) -> [Light; 4] {
     result
 }
 
-/// Deterministic smoke, floating ash and furnace cinders; no gameplay state.
-pub fn atmosphere(alpha: &mut Mesh, add: &mut Mesh, w: &World, time: f32) {
+/// Deterministic smoke, floating ash and furnace cinders, and the runner's
+/// lava on the world clock.
+pub fn atmosphere(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, time: f32) {
+    runner_flow(m, alpha, add, w, time);
     for (f, &(x, z)) in layout::FURNACE_ANCHORS.iter().enumerate() {
         for k in 0..18u32 {
             let seed = k + f as u32 * 29;
@@ -797,7 +969,8 @@ mod tests {
                 let p = Vec3::from_array(v.pos);
                 assert!(p.is_finite() && Vec3::from_array(v.nrm).is_finite());
                 assert!(
-                    p.x.abs() < HALF_X && p.z.abs() < HALF_Z && p.y >= -8.0 && p.y < 48.0,
+                    // The lava runner starts just beyond the southern fence.
+                    p.x.abs() < HALF_X && p.z.abs() < HALF_Z + 12.0 && p.y >= -8.0 && p.y < 48.0,
                     "cathedral detail outside its bounds: {p:?}"
                 );
                 maximum_y = maximum_y.max(p.y);
@@ -809,16 +982,25 @@ mod tests {
     #[test]
     fn animated_ash_and_furnace_effects_keep_finite_bounded_meshes() {
         let w = World::with_map(0xFE221, ID);
-        for time in [0.0f32, 1.0, 17.0, 93.0] {
-            let (mut alpha, mut add) = (Mesh::default(), Mesh::default());
-            atmosphere(&mut alpha, &mut add, &w, time);
-            assert!(alpha.triangles() + add.triangles() < 2_000 && add.triangles() > 150, "atmosphere triangle budget");
-            for (vertices, indices) in alpha.finish().into_iter().chain(add.finish()) {
+        // A window that erupts: times in it cover the lava arriving,
+        // reaching the nave, crusting and cooling.
+        let period = ferrite_shared::events::ERUPTION_PERIOD;
+        let base = (0..64).map(|c| c as f32 * period).find(|&t| ferrite_shared::events::lava_flow(w.seed, t + 45.0).front > 0.0).unwrap();
+        for time in [0.0f32, 1.0, 17.0, 93.0, base + 33.0, base + 50.0, base + 66.0, base + 75.0] {
+            let (mut m, mut alpha, mut add) = (Mesh::default(), Mesh::default(), Mesh::default());
+            atmosphere(&mut m, &mut alpha, &mut add, &w, time);
+            assert!(alpha.triangles() + add.triangles() < 2_400 && add.triangles() > 150, "atmosphere triangle budget");
+            assert!(m.triangles() < 4_000, "runner lava budget: {}", m.triangles());
+            if (base + 33.0..base + 76.0).contains(&time) {
+                assert!(m.triangles() > 50, "lava in the runner at {time}");
+            }
+            for (vertices, indices) in m.finish().into_iter().chain(alpha.finish()).chain(add.finish()) {
                 assert!(indices.iter().all(|&i| (i as usize) < vertices.len()));
                 for vertex in vertices {
                     let p = Vec3::from_array(vertex.pos);
                     assert!(p.is_finite() && Vec3::from_array(vertex.nrm).is_finite());
-                    assert!(p.x.abs() < HALF_X && p.z.abs() < HALF_Z && p.y > -8.0 && p.y < 65.0);
+                    // The runner starts just beyond the southern fence.
+                    assert!(p.x.abs() < HALF_X && p.z.abs() < HALF_Z + 12.0 && p.y > -8.0 && p.y < 65.0);
                     assert!(vertex.col.into_iter().all(f32::is_finite));
                 }
             }

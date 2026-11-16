@@ -726,7 +726,7 @@ pub fn beacons_profiled(
         last = now;
     };
     if w.map == slag_cathedral::ID {
-        slag_cathedral::atmosphere(alpha, add, w, time);
+        slag_cathedral::atmosphere(m, alpha, add, w, time);
         mark(m, alpha, add, "slag cathedral");
     }
     if w.map == relay::ID {

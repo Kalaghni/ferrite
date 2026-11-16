@@ -422,3 +422,165 @@ fn bell_yards_are_mirrored_landmarks_a_player_can_walk_round_and_under() {
         assert!(cathedral::in_lava(lx - 1.0, lz, 0.0) && cathedral::in_lava(lx + 1.0, lz, 0.0));
     }
 }
+
+/// The first window in which seed `seed` erupts, as a time on the world clock.
+fn erupting_window(seed: u64) -> f32 {
+    use ferrite_shared::events::{lava_flow, ERUPTION_PERIOD};
+    (0..64).map(|c| c as f32 * ERUPTION_PERIOD).find(|&t| lava_flow(seed, t + 45.0).front > 0.0).expect("some window erupts")
+}
+
+/// A point on the runner's centre line `s` metres down it, plus `off` to
+/// its left.
+fn on_runner(w: &World, s: f32, off: f32) -> Vec3 {
+    let mut left = s;
+    for pair in cathedral::RUNNER.windows(2) {
+        let (a, b) = (vec2(pair[0].0, pair[0].1), vec2(pair[1].0, pair[1].1));
+        let len = a.distance(b);
+        if left <= len {
+            let d = (b - a) / len;
+            let p = a + d * left + vec2(d.y, -d.x) * off;
+            return vec3(p.x, w.height(p.x, p.y) + 0.02, p.y);
+        }
+        left -= len;
+    }
+    panic!("{s} is beyond the runner");
+}
+
+#[test]
+fn the_runner_fills_with_lava_from_the_south_only_during_an_eruption() {
+    use ferrite_shared::events::{LAVA_ARRIVES, LAVA_CRUSTS, LAVA_SPEED};
+    let len = cathedral::runner_length();
+    assert!(len > 95.0);
+    for seed in SEEDS {
+        let mut w = world(seed);
+        let base = erupting_window(seed);
+        let inside = |s: f32| !cathedral::RUNNER_CROSSINGS.iter().any(|&(a, b)| s > a && s < b);
+        // Stations clear of the gratings' ends, where either answer is fair.
+        let stations: Vec<f32> = (0..(len as usize - 1))
+            .map(|k| k as f32 + 0.5)
+            .filter(|&s| on_runner(&w, s, 0.0).z.abs() < HALF_Z)
+            .filter(|&s| cathedral::RUNNER_CROSSINGS.iter().all(|&(a, b)| (s - a).abs() > 0.3 && (s - b).abs() > 0.3))
+            .collect();
+        // Dry before the eruption, and in a window that does not erupt.
+        for t in [base + 5.0, base + LAVA_ARRIVES - 0.5, base + LAVA_CRUSTS + 0.5] {
+            w.clock = t;
+            assert!(stations.iter().all(|&s| !w.burning(on_runner(&w, s, 0.0))), "seed {seed:x}: lava at {t}");
+        }
+        // Halfway down while it advances; all the way once it has arrived.
+        w.clock = base + LAVA_ARRIVES + len * 0.5 / LAVA_SPEED;
+        for &s in &stations {
+            let p = on_runner(&w, s, 0.0);
+            if (s - len * 0.5).abs() > 0.6 {
+                assert_eq!(w.burning(p), s < len * 0.5 && inside(s), "seed {seed:x}: s {s} while advancing");
+            }
+        }
+        w.clock = base + LAVA_CRUSTS - 1.0;
+        for &s in &stations {
+            let at = |off: f32| w.burning(on_runner(&w, s, off));
+            assert_eq!(at(0.0), inside(s), "seed {seed:x}: s {s} in full flow");
+            assert_eq!(at(cathedral::RUNNER_HALF_W - 0.2), inside(s), "seed {seed:x}: s {s} near the kerb");
+            assert!(!at(cathedral::RUNNER_HALF_W + 0.2) && !at(-cathedral::RUNNER_HALF_W - 0.2), "seed {seed:x}: s {s} beside the runner");
+            // A jump clears it, as it does the casting channels.
+            let mut p = on_runner(&w, s, 0.0);
+            p.y += cathedral::LAVA_REACH + 0.05;
+            assert!(!w.burning(p));
+        }
+        // The grating over the casting channel where the runner pours in
+        // stays a bridge, and the runner never touches the north side.
+        assert!(!w.burning(vec3(0.0, 0.02, -cathedral::LAVA_Z)) && !w.burning(vec3(0.0, 0.02, -cathedral::LAVA_Z + 1.0)));
+        assert!(!w.burning(vec3(0.0, 0.02, 30.0)));
+        assert!(w.lava(-20.0, cathedral::LAVA_Z, 0.0) && w.lava_fixed(-20.0, cathedral::LAVA_Z, 0.0));
+        assert!(w.lava(0.0, -30.0, 0.0) && !w.lava_fixed(0.0, -30.0, 0.0), "navigation ignores the runner");
+    }
+}
+
+#[test]
+fn players_can_walk_across_the_dry_runner_and_its_gratings_in_full_flow() {
+    let mut w = world(0xFE221);
+    let base = erupting_window(w.seed);
+    for (clock, gratings_only) in [(base + 5.0, false), (base + ferrite_shared::events::LAVA_CRUSTS - 1.0, true)] {
+        w.clock = clock;
+        let spots: Vec<f32> =
+            if gratings_only { cathedral::RUNNER_CROSSINGS.iter().map(|&(a, b)| (a + b) * 0.5).collect() } else { vec![20.0, 50.0, 85.0] };
+        for s in spots {
+            let from = on_runner(&w, s, 4.5);
+            let to = on_runner(&w, s, -4.5);
+            let mut p = PState::spawn(from, 0);
+            let mut burned = false;
+            for seq in 1..=200 {
+                let d = vec2(to.x - p.pos.x, to.z - p.pos.z);
+                if d.length() < 0.3 {
+                    break;
+                }
+                sim::step(&mut p, &Cmd { seq, mz: 1, yaw: d.x.atan2(d.y), ..Default::default() }, &w, 0);
+                burned |= w.burning(p.pos);
+            }
+            assert!(vec2(to.x - p.pos.x, to.z - p.pos.z).length() < 0.3, "could not cross at s {s}");
+            assert!(!burned, "burned crossing at s {s} (clock {clock})");
+        }
+    }
+}
+
+#[test]
+fn bots_wait_for_the_runner_to_crust_rather_than_walk_into_it() {
+    use ferrite_server::{Config, Game};
+    use ferrite_shared::events::LAVA_CRUSTS;
+    use ferrite_shared::proto::Feed;
+    let mut g = Game::new(Config {
+        port: 0,
+        per_team: 8,
+        seed: 0xFE221,
+        map: cathedral::MAP_ID,
+        rotation: Vec::new(),
+        lobby_secs: 0,
+        tickets: 2000,
+        bot_skill: 1.0,
+        log: false,
+        discover: false,
+        ..Default::default()
+    });
+    let base = erupting_window(g.world.seed);
+    // Let the fight spread out over the map first, then run the eruption.
+    g.tick = ((base + 1.0) * 60.0) as u32;
+    let end = ((base + LAVA_CRUSTS + 12.0) * 60.0) as u32;
+    let mut entered = 0;
+    let mut beside = 0;
+    let mut was_in = vec![false; g.players.len()];
+    // Once lava fills the south yard, put the western team just west of
+    // it: their routes to the eastern objectives cross the runner.
+    let drop = ((base + ferrite_shared::events::LAVA_ARRIVES + 13.0) * 60.0) as u32;
+    while g.tick < end {
+        if g.tick == drop {
+            let spots = [20.3f32, 27.3, 42.5, 50.5, 57.6].map(|s| on_runner(&g.world, s, -4.5));
+            for (k, p) in g.players.iter_mut().filter(|p| p.alive && p.team == 0).enumerate() {
+                p.st.pos = spots[k % spots.len()];
+                p.st.vel = Vec3::ZERO;
+            }
+        }
+        g.tick();
+        for (i, p) in g.players.iter().enumerate() {
+            if !p.alive {
+                was_in[i] = false;
+                continue;
+            }
+            let molten = g.world.burning(p.st.pos) && !g.world.lava_fixed(p.st.pos.x, p.st.pos.z, 0.0);
+            if molten && !was_in[i] {
+                // Lava running in under someone already standing there is not
+                // walking into it.
+                let before = ferrite_shared::events::lava_flow(g.world.seed, g.world.clock - 0.5).front;
+                if cathedral::in_runner(p.st.pos.x, p.st.pos.z, 0.0, before) {
+                    entered += 1;
+                }
+            }
+            was_in[i] = molten;
+            let front = ferrite_shared::events::lava_flow(g.world.seed, g.world.clock).front;
+            if !molten && cathedral::in_runner(p.st.pos.x, p.st.pos.z, 3.0, front) {
+                beside += 1;
+            }
+        }
+    }
+    assert!(beside > 300, "bots never came to the runner while it flowed ({beside} bot-ticks beside it)");
+    assert_eq!(entered, 0, "bots walked into molten lava");
+    let lava_deaths = g.feed.iter().filter(|f| matches!(f, Feed::Kill { weapon, .. } if *weapon == sim::LAVA_WEAPON)).count();
+    assert_eq!(lava_deaths, 0, "bots burned to death");
+}

@@ -1,8 +1,8 @@
 //! Off-field landmarks: the relay's cellular backbone and the foundry's volcano.
 //! Their moving parts are ambient scenery; neither changes collision or damage.
-use super::hash01;
 use super::slag_cathedral::art::{annulus, cross, soft, stencil, wall};
 use super::slag_cathedral::{beam, pipe};
+use super::{hash01, smooth};
 use crate::gfx::{shade, Col, Mesh};
 use ferrite_shared::glam::{vec3, Mat4, Vec3};
 use ferrite_shared::map::World;
@@ -227,6 +227,37 @@ fn volcano_atmosphere(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World,
             beam(m, tail, p, size * 0.65, size * 0.65, [0.8, 0.14, 0.015, 0.95]);
             m.cuboid(p - Vec3::splat(size), p + Vec3::splat(size), [1.0, 0.61, 0.10, 1.0]);
             soft(add, p, size * 3.0, size * 3.0, [1.0, 0.28, 0.025, state.fountain * (1.0 - age) * 0.85]);
+        }
+    }
+    // The crater breaches on its northern flank and the overflow runs down
+    // into the runner that carries it onto the field (`events::lava_flow`).
+    if state.erupts {
+        let phase = state.age + 26.0;
+        let glow = smooth(26.5, 30.0, phase)
+            * (1.0 - smooth(ferrite_shared::events::LAVA_CRUSTS - 2.0, ferrite_shared::events::LAVA_COOLED, phase));
+        if glow > 0.0 {
+            let north = PI * 0.5;
+            let (sx, sz) = ferrite_shared::map::slag_cathedral::RUNNER[0];
+            let path = [
+                cone_point(root, 2, north) + vec3(0.0, -0.4, 0.0),
+                cone_point(root, 1, north + 0.03),
+                cone_point(root, 0, north - 0.02) + Vec3::Y * 0.4,
+                vec3(sx, w.height(sx, sz) + 0.1, sz),
+            ];
+            let hot = [
+                HOT[0] * glow + 0.08 * (1.0 - glow),
+                HOT[1] * glow + 0.07 * (1.0 - glow),
+                HOT[2] * glow + 0.06 * (1.0 - glow),
+                HOT[3] * glow,
+            ];
+            for (k, pair) in path.windows(2).enumerate() {
+                beam(m, pair[0] + Vec3::Y * 0.3, pair[1] + Vec3::Y * 0.3, 3.4 - k as f32 * 0.4, 0.6, hot);
+                beam(m, pair[0] + Vec3::Y * 0.62, pair[1] + Vec3::Y * 0.62, 1.2, 0.1, [1.0 * glow, 0.62 * glow, 0.18 * glow, glow]);
+                for j in 0..4 {
+                    let p = pair[0].lerp(pair[1], (j as f32 + 0.5) / 4.0) + Vec3::Y * 1.2;
+                    soft(add, p, 3.2, 2.0, [1.0, 0.3, 0.04, 0.22 * glow]);
+                }
+            }
         }
     }
     // The plume rains fine incandescent fragments after its main fountain.

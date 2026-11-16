@@ -39,6 +39,16 @@ Standing in the melt burns 40 health a second, for either team, and spawn protec
 
 Bots treat the molten stretches as blocked and cross on the bridges. They will not strafe or back into a channel during a firefight.
 
+## The lava runner
+
+A stone-lined runner carries lava from the volcano's northern flank onto the field. It runs on the map's centre line, the same distance from both bases: north across the south yard, under the service passage's roof, through the nave's south door and into the southern casting channel, where the melt runs on under the central bridge. It is 3.8 metres wide - more than a comfortable jump - and dry most of the time.
+
+When the volcano erupts (in roughly two windows out of five, every 96 seconds on the shared world clock), the crater breaches and lava pours down the cone into the runner about four seconds after the fountain starts. It advances about 5.5 metres a second, so it crosses the south yard in a few seconds and reaches the casting channel about 19 seconds after it appears at the fence. It stays molten for about 40 seconds in all, then crusts over and is safe again, glowing and cracking as it cools.
+
+While it flows, the south side of the map is cut in two: cross on the steel gratings in the south yard and under the service passage, over the gallery inside the nave, or around through the north side. It burns like the casting channels (40 health a second, reported as `Lava`). Everyone sees the same eruption at the same moment, because the server and every client run it from the world clock.
+
+Bots wait at the edge rather than walk into molten lava, and carry on once it has crusted.
+
 ## The story the works tells
 
 Works No. 6 cast bells. Its sixth great bell cracked as it cooled, and the seventh never left its mould. The furnaces cannot be let out, so the works still runs with nobody on shift. Everything on the map follows from that.

@@ -100,11 +100,12 @@ pub fn in_lava(x: f32, z: f32, margin: f32) -> bool {
 /// distance from both bases. It is dry and safe to cross until an eruption
 /// (`crate::events::lava_flow`) fills it from the south.
 /// Points run downstream, from beyond the southern fence.
-pub const RUNNER: [(f32, f32); 6] = [(1.5, -112.0), (-2.0, -90.0), (1.5, -66.0), (0.0, -47.0), (0.0, -22.0), (0.0, -LAVA_Z)];
+pub const RUNNER: [(f32, f32); 6] = [(1.5, -112.0), (-2.0, -90.0), (1.5, -66.0), (0.0, -47.0), (0.0, -22.0), (0.0, -LAVA_Z - LAVA_HALF_W)];
 pub const RUNNER_HALF_W: f32 = 1.9;
 /// Steel gratings carry the paths across the runner: (from, to) along it.
-/// One is under the service passage's roof, one in the south yard.
-pub const RUNNER_CROSSINGS: [(f32, f32); 2] = [(24.0, 28.5), (68.0, 74.0)];
+/// One is in the south yard beside the service block, one under the service
+/// passage's roof. The gallery passes over it inside the nave.
+pub const RUNNER_CROSSINGS: [(f32, f32); 2] = [(32.5, 37.0), (70.6, 76.6)];
 
 /// Where (x, z) lies along the runner: distance downstream from its source
 /// and distance from its centre line, for the nearest stretch.
@@ -133,7 +134,8 @@ pub fn runner_length() -> f32 {
 /// Whether (x, z), grown by `margin`, lies in the runner where lava has
 /// reached `front` metres down it, other than on a grating.
 pub fn in_runner(x: f32, z: f32, margin: f32, front: f32) -> bool {
-    if front <= 0.0 || z > -LAVA_Z + LAVA_HALF_W + margin {
+    // Where it meets the casting channel the melt runs on under the grating.
+    if front <= 0.0 || z > -LAVA_Z - LAVA_HALF_W + margin {
         return false;
     }
     let (s, d) = runner_at(x, z);
