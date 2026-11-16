@@ -292,7 +292,7 @@ License: MIT.
 
 ## Credits
 
-- Music by breadKernel: "Liquid Plasma", "Submariner" and "Barbed Wire" (launcher) and "Foundrite Lobby" (lobby).
+- Music by breadKernel: "Liquid Plasma", "Submariner" and "Barbed Wire" (launcher), "Foundrite Lobby" (lobby) and "Slag Cathedral" (the Slag Cathedral score, made with strudel.cc).
 - Typeface: Quantico by Matthew Desmond, under the SIL Open Font License (`packaging/Quantico-OFL.txt`).
 - Launcher and lobby palette and layout: the FERRITE UI kit, "The Frontline". The launcher and lobby backgrounds are in-game shots of Slag Cathedral, staged with the cinematic camera (`docs/keyart/`).
 

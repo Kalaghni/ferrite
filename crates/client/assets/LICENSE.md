@@ -14,7 +14,7 @@ with its owner and licence, in the same change.
 | `submariner.ogg` | "Submariner", launcher music | breadKernel | All rights reserved (music terms below) |
 | `barbed-wire.ogg` | "Barbed Wire", launcher music | breadKernel | All rights reserved (music terms below) |
 | `foundrite-lobby.ogg` | "Foundrite Lobby", lobby music | breadKernel | All rights reserved (music terms below) |
-| `slag-cathedral.ogg` | "Slag Cathedral", the Slag Cathedral map score | Supplied by the FERRITE project owner (see `slag-cathedral.txt`) | All rights reserved (music terms below) |
+| `slag-cathedral.ogg` | "Slag Cathedral", the Slag Cathedral map score, made with strudel.cc | breadKernel | All rights reserved (music terms below) |
 | `slag-cathedral.txt` | Provenance and encoding notes for `slag-cathedral.ogg` | the FERRITE authors | MIT, with the source code |
 | `launcher-background.png`, `lobby-background.png` | Key art: launcher and lobby backgrounds - in-game renders of Slag Cathedral staged with the cinematic camera (reproduce with `docs/keyart/*.cast`) | the FERRITE authors | All rights reserved (artwork terms below) |
 | `ferrite-wordmark.png` | FERRITE logo | the FERRITE authors | All rights reserved (artwork terms below) |
@@ -27,7 +27,7 @@ with its owner and licence, in the same change.
 ## Music - all rights reserved
 
 Copyright (c) breadKernel ("Liquid Plasma", "Submariner", "Barbed Wire",
-"Foundrite Lobby") and the owner of "Slag Cathedral". All rights reserved.
+"Foundrite Lobby", "Slag Cathedral"). All rights reserved.
 
 You may play these tracks as part of FERRITE, and keep them in a copy or fork
 of this repository so that the game builds. You may not otherwise copy,

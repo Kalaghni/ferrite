@@ -175,8 +175,8 @@ SKIP THE HOME SCREEN
   ferrite --host --map quarry       host directly on a chosen map
 
 CREDITS
-  Music by breadKernel: "Liquid Plasma", "Submariner", "Barbed Wire" and
-  "Foundrite Lobby".
+  Music by breadKernel: "Liquid Plasma", "Submariner", "Barbed Wire",
+  "Foundrite Lobby" and "Slag Cathedral" (made with strudel.cc).
   Copyright breadKernel, all rights reserved. The music and artwork are
   not covered by the game's MIT licence and may not be reused elsewhere.
   Typeface: Quantico by Matthew Desmond, SIL Open Font License
