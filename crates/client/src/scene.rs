@@ -248,7 +248,7 @@ pub fn build_world_profiled(w: &World) -> (Mesh, Profile) {
                 let n = (b - a).cross(c - a).normalize();
                 let cen = (a + b + c) / 3.0;
                 // Cells spanning a tunnel portal give way to its rock collar.
-                if w.tunnel_carves(cen, a.y.min(b.y).min(c.y), a.y.max(b.y).max(c.y)) {
+                if w.tunnel_carves([a, b, c]) {
                     continue;
                 }
                 let j = hash01((ix * 2 + k) as u32, iz as u32 ^ seed);

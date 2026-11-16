@@ -8,7 +8,7 @@ use super::hash01;
 use super::landmarks::{lamp, sign};
 use crate::gfx::{rgb, shade, Col, Light, Mesh};
 use ferrite_shared::glam::{vec2, vec3, Mat4, Vec3};
-use ferrite_shared::map::tunnels::{Tunnel, HALF_WIDTH as HW, HEIGHT as H};
+use ferrite_shared::map::tunnels::{Tunnel, FLARE, HALF_WIDTH as HW, HEIGHT as H};
 use ferrite_shared::map::World;
 
 const TIMBER: Col = [0.33, 0.23, 0.14, 0.0];
@@ -169,6 +169,13 @@ fn tunnel(m: &mut Mesh, w: &World, t: &Tunnel, which: u32) {
             let half = HW + 0.25;
             let q = [at(&g0, -half, lift, 0.0), at(&g1, -half, lift, 0.0), at(&g1, half, lift, 0.0), at(&g0, half, lift, 0.0)];
             face(m, q, g0.0 + Vec3::Y * 5.0, shade(col, 0.95));
+            // Aprons sloping under the cut's sides, beneath the cells left
+            // out beside the opening.
+            for k in [-1.0, 1.0] {
+                let (e, o) = (k * half, k * (HW + 1.4));
+                let q = [at(&g0, e, lift, 0.0), at(&g1, e, lift, 0.0), at(&g1, o, -0.35, 0.0), at(&g0, o, -0.35, 0.0)];
+                face(m, q, g0.0 + Vec3::Y * 5.0, shade(col, 0.9));
+            }
         }
     }
     for (s, out) in [(a, -1.0), (b, 1.0)] {
@@ -181,26 +188,48 @@ fn tunnel(m: &mut Mesh, w: &World, t: &Tunnel, which: u32) {
     }
 }
 
-/// Rock round a portal, from the opening out into the hillside, and a
-/// cap over the terrain cells left out above the mouth.
+/// Rock round a portal: one face from the opening out into the cut and the
+/// hillside, and a cap over the terrain cells left out above the mouth.
+/// The face flares out over the cells `World::tunnel_carves` leaves out in
+/// front of the portal; its walls and feet end buried in the cut, and its
+/// roof rises to the hill's rim, where the cap begins on the same vertices,
+/// so no edge of either is ever left hanging.
 fn collar(m: &mut Mesh, w: &World, t: &Tunnel, s: f32, out: f32, ring: u32) {
     let map = w.map;
     let inner = ring_points(t, map, s, ring);
     let f = frame(t, s);
+    let floor = f.0.y;
     let centre = at(&f, 0.0, H * 0.45, 0.0);
     let outward = f.2 * out;
+    let ground = |p: Vec3| w.height(p.x, p.z);
+    // `d` across and `l` back into the hill from the portal, `y` above the floor.
+    let spot = |d: f32, y: f32, l: f32| at(&f, d, y, -out * l);
+    let lid = |d: f32, l: f32| {
+        let p = spot(d, 0.0, l);
+        vec3(p.x, ground(p).max(floor + H + 0.95) + 0.04, p.z)
+    };
+    let top: Vec<bool> = inner.iter().map(|p| (*p - centre).normalize_or_zero().y > 0.55).collect();
     let mut outer = Vec::with_capacity(inner.len());
     for (k, p) in inner.iter().enumerate() {
         let rel = *p - centre;
-        let lateral = rel.dot(f.1);
-        let up = rel.y;
-        let dir = vec2(lateral, up).normalize_or_zero();
+        let lat = rel.dot(f.1);
+        let dir = vec2(lat, rel.y).normalize_or_zero();
+        let flare = FLARE + hash01(ring, k as u32 + 3) * 0.4;
         let reach = 2.8 + hash01(ring * 3 + k as u32, 4411) * 1.6;
-        let mut q = *p + f.1 * (dir.x * reach) + Vec3::Y * (dir.y * reach) + outward * (0.3 + hash01(ring, k as u32 + 3) * 0.5);
-        if up < 0.0 || k == 0 || k + 1 == inner.len() {
-            q.y = p.y - 0.4; // feet of the collar bury into the cut floor
-        }
-        q.y = q.y.min(w.height(q.x, q.z) + 0.6).max(p.y);
+        let q = if top[k] {
+            // The roof climbs the face to the rim over the flared mouth.
+            // Kept behind the boards hung over the opening.
+            lid(lat + dir.x * reach * 0.6, -0.2)
+        } else {
+            // Walls and feet: out and away until well inside the cut's
+            // sides or under its floor.
+            let mut q = *p + f.1 * (dir.x * reach) + Vec3::Y * (dir.y * reach) + outward * flare;
+            if rel.y < -H * 0.4 {
+                q.y = p.y - 0.45;
+            }
+            q.y = q.y.min(ground(q) - 0.3);
+            q
+        };
         outer.push(q);
     }
     let toward = centre + outward * 6.0;
@@ -208,21 +237,31 @@ fn collar(m: &mut Mesh, w: &World, t: &Tunnel, s: f32, out: f32, ring: u32) {
         let c = rock(map, ring, k + 40, 0.0);
         face(m, [inner[k], inner[k + 1], outer[k + 1], outer[k]], toward, shade(c, 0.92));
     }
-    // The cap: rock over the mouth, following the hill, never below the vault.
-    let (lo, hi) = (-HW - 1.5, HW + 1.5);
-    let along: [f32; 5] = [-0.4, 0.8, 2.0, 3.2, 4.4];
-    let height = |d: f32, l: f32| {
-        let p = at(&f, d, 0.0, -out * l);
-        let floor = p.y;
-        vec3(p.x, w.height(p.x, p.z).max(floor + H + 0.95) + 0.04, p.z)
-    };
-    let cols = 4;
-    for i in 0..along.len() - 1 {
-        for j in 0..cols {
-            let (d0, d1) = (lo + (hi - lo) * j as f32 / cols as f32, lo + (hi - lo) * (j + 1) as f32 / cols as f32);
-            let q = [height(d0, along[i]), height(d0, along[i + 1]), height(d1, along[i + 1]), height(d1, along[i])];
+    // The cap, from the face's top edge back over the hill.
+    let (first, last) = (top.iter().position(|&x| x).unwrap_or(0), top.iter().rposition(|&x| x).unwrap_or(0));
+    let edge: Vec<Vec3> = outer[first..=last].to_vec();
+    let along: [f32; 4] = [1.0, 2.2, 3.4, 4.6];
+    let mut rows = vec![edge.clone()];
+    for &l in &along {
+        rows.push(edge.iter().map(|q| lid((*q - f.0).dot(f.1), l)).collect());
+    }
+    for i in 0..rows.len() - 1 {
+        for j in 0..edge.len() - 1 {
+            let q = [rows[i][j], rows[i + 1][j], rows[i + 1][j + 1], rows[i][j + 1]];
             face(m, q, q[0] + Vec3::Y * 10.0, rock(map, ring + i as u32 * 5, j + 60, 1.0));
         }
+    }
+    // Skirts down into the hill along the cap's sides and back, so no gap
+    // opens under its edge where the ground dips.
+    let sink = |p: Vec3| vec3(p.x, ground(p).min(p.y) - 0.5, p.z);
+    let skirt = |m: &mut Mesh, p: Vec3, q: Vec3, c: Col| face(m, [p, q, sink(q), sink(p)], centre + Vec3::Y * 4.0 + outward * 3.0, c);
+    let (n, side) = (rows.len() - 1, edge.len() - 1);
+    for i in 0..n {
+        skirt(m, rows[i][0], rows[i + 1][0], rock(map, ring, 80 + i, 1.0));
+        skirt(m, rows[i][side], rows[i + 1][side], rock(map, ring, 85 + i, 1.0));
+    }
+    for j in 0..side {
+        skirt(m, rows[n][j], rows[n][j + 1], rock(map, ring, 90 + j, 1.0));
     }
 }
 

@@ -23,6 +23,9 @@ pub const CUT: f32 = 9.0;
 /// Beyond each portal the cavity reaches this far into the cut, so the
 /// terrain cells that cross the portal never decide where feet go.
 pub const MOUTH: f32 = 3.0;
+/// How far the rock collar round each portal reaches out into the cut;
+/// terrain cells crossing the portal within it give way to the collar.
+pub const FLARE: f32 = 1.3;
 /// Steepest floor, rise over run.
 const MAX_SLOPE: f32 = 0.3;
 /// Spacing of centreline samples.
@@ -336,16 +339,38 @@ impl World {
         want
     }
 
-    /// Whether a terrain triangle crosses a tunnel's cavity: the cells that
-    /// span a portal, which the renderer leaves out for the rock collar.
-    pub fn tunnel_carves(&self, centre: Vec3, low: f32, high: f32) -> bool {
+    /// Whether a terrain triangle gives way to a tunnel's rock: under the
+    /// vault, the cells over the cavity; in front of a portal, the cells
+    /// rising across the opening (the mouth's floor and aprons lie under
+    /// them); and the cells that cross a portal close beside or above the
+    /// opening, which the collar covers out to `FLARE` in front. The rest
+    /// of the cut stays whole.
+    pub fn tunnel_carves(&self, tri: [Vec3; 3]) -> bool {
+        let centre = (tri[0] + tri[1] + tri[2]) / 3.0;
+        let low = tri.iter().fold(f32::MAX, |m, p| m.min(p.y));
+        let high = tri.iter().fold(f32::MIN, |m, p| m.max(p.y));
         self.tunnels.iter().any(|t| {
-            t.locate(centre.x, centre.z, HALF_WIDTH + 0.9).is_some_and(|sp| {
-                // Behind the portal, the whole width the vault spans; in
-                // front of it only the opening, so the cut's sides stay whole.
-                let reach = if t.roofed(sp.s) { HALF_WIDTH + 0.9 } else { HALF_WIDTH + 0.2 };
-                sp.beyond == 0.0 && sp.d.abs() < reach && t.in_cavity(sp.s) && low < sp.floor + HEIGHT + 0.6 && high > sp.floor + 0.45
-            })
+            let [a, b] = t.portals;
+            // Under the vault, and in the opening just outside it.
+            let over = t.locate(centre.x, centre.z, HALF_WIDTH + 0.9).is_some_and(|sp| {
+                let front = (a - sp.s).max(sp.s - b);
+                let reach = if front > 0.0 { HALF_WIDTH + 0.2 } else { HALF_WIDTH + 0.9 };
+                sp.beyond == 0.0 && sp.d.abs() < reach && front < MOUTH && low < sp.floor + HEIGHT + 0.6 && high > sp.floor + 0.45
+            });
+            // Across a portal: vertices on both sides of it, near the opening,
+            // whose part inside the hill is hidden - beside the vault's walls
+            // or high enough to be under the cap.
+            let spots: Vec<_> = tri.iter().filter_map(|p| t.locate(p.x, p.z, HALF_WIDTH + 2.0)).collect();
+            let across = spots.len() == 3
+                && high > spots[0].floor + 0.45
+                && spots.iter().all(|sp| sp.d.abs() < HALF_WIDTH + 2.0)
+                && [(a, 1.0), (b, -1.0)].iter().any(|&(s, inward)| {
+                    let inside = |sp: &Spot| (sp.s - s) * inward > 0.0;
+                    spots.iter().any(|sp| !inside(sp))
+                        && spots.iter().any(inside)
+                        && tri.iter().zip(&spots).all(|(p, sp)| !inside(sp) || sp.d.abs() < HALF_WIDTH + 1.0 || p.y > sp.floor + HEIGHT)
+                });
+            over || across
         })
     }
 }

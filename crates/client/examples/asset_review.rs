@@ -7,6 +7,8 @@
 //! Slag Cathedral views: overview / nave / gallery / furnace / approach.
 //! Classic map views: workshop / interior / passage / landmark / breach / walkway.
 //! Ridgeline aircraft views: wreck / cargo / tail.
+//! Quarry's mine and Ridgeline's cave: portal / exit from outside, enter /
+//! leave from inside looking out of each end, tunnel along the inside.
 //! Monument views: foundry viaduct / train / crossing, quarry excavator /
 //! bucket / dragline, spillway dam / gates / crest.
 //! Spillway's gate deck: platform / outfall / channel / deck; give a fourth
@@ -193,7 +195,7 @@ async fn main() {
                 "tail" => (vec3(-62.0, w.height(-62.0, -35.0) + 9.0, -35.0), vec3(-26.0, g + 14.0, 0.0)),
                 _ => (vec3(75.0, w.height(75.0, -78.0) + 35.0, -78.0), vec3(0.0, g + 8.0, 0.0)),
             }
-        } else if !gallery && matches!(map, 1 | 2) && matches!(pose, "passage" | "tunnel" | "portal" | "exit") {
+        } else if !gallery && matches!(map, 1 | 2) && matches!(pose, "passage" | "tunnel" | "portal" | "exit" | "leave" | "enter") {
             // Quarry's mine and Ridgeline's cave run underground.
             let t = &w.tunnels[0];
             let [a, b] = t.portals;
@@ -208,6 +210,17 @@ async fn main() {
                     let (from, _) = t.at(t.length());
                     let (to, _) = t.at(b);
                     (vec3(from.x, w.height(from.x, from.z) + 2.6, from.z) + (from - to).normalize() * 4.0, lift(to, 1.6))
+                }
+                // From inside, looking out of the exit end / the entry end.
+                "leave" => {
+                    let (eye, _) = t.at(b - 5.0);
+                    let (to, _) = t.at((b + 12.0).min(t.length()));
+                    (lift(eye, 1.6), lift(to, 1.6))
+                }
+                "enter" => {
+                    let (eye, _) = t.at(a + 5.0);
+                    let (to, _) = t.at((a - 12.0).max(0.0));
+                    (lift(eye, 1.6), lift(to, 1.6))
                 }
                 _ => {
                     let (eye, _) = t.at(a + 6.0);
