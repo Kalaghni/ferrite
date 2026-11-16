@@ -1,24 +1,29 @@
-//! Off-field landmarks: the relay's cellular backbone and the foundry's volcano.
-//! Their moving parts are ambient scenery; neither changes collision or damage.
+//! Great landmarks: the relay's cellular backbone and the foundry's volcano.
+//! The mast stands on the field and can be climbed; everything a player can
+//! touch is drawn from the shared layout in `map::relay`, which builds the
+//! matching collision. The volcano is off-field. Moving parts of both are
+//! ambient scenery and change neither collision nor damage.
 use super::slag_cathedral::art::{annulus, cross, soft, stencil, wall};
 use super::slag_cathedral::{beam, pipe};
 use super::{hash01, smooth};
 use crate::gfx::{shade, Col, Mesh};
 use ferrite_shared::glam::{vec3, Mat4, Vec3};
+use ferrite_shared::map::relay as layout;
 use ferrite_shared::map::World;
 use std::f32::consts::{PI, TAU};
 
-pub(crate) const MAST_XZ: (f32, f32) = (0.0, 126.0);
+pub(crate) const MAST_XZ: (f32, f32) = layout::BACKBONE;
 pub(crate) const VOLCANO_XZ: (f32, f32) = (0.0, -160.0);
 pub(crate) use ferrite_shared::events::eruption;
 const STEEL: Col = [0.36, 0.39, 0.42, 0.0];
+const SAFETY: Col = [0.90, 0.66, 0.14, 0.0];
 const WHITE: Col = [0.84, 0.85, 0.80, 0.0];
 const RED: Col = [0.71, 0.19, 0.13, 0.0];
 const DARK: Col = [0.10, 0.12, 0.14, 0.0];
 const HOT: Col = [0.95, 0.21, 0.025, 0.9];
 
 pub(crate) fn mast_origin(w: &World) -> Vec3 {
-    vec3(MAST_XZ.0, w.height(MAST_XZ.0, MAST_XZ.1), MAST_XZ.1)
+    vec3(MAST_XZ.0, layout::mast_base(w), MAST_XZ.1)
 }
 pub(crate) fn volcano_origin(w: &World) -> Vec3 {
     vec3(VOLCANO_XZ.0, w.height(VOLCANO_XZ.0, VOLCANO_XZ.1), VOLCANO_XZ.1)
@@ -36,52 +41,79 @@ pub fn build(m: &mut Mesh, w: &World) {
     }
 }
 
+/// The parts of `y0..y1`, at least a metre tall, that leave the headroom
+/// above the ground and above each deck clear of bracing.
+fn braced_bands(y0: f32, y1: f32) -> Vec<(f32, f32)> {
+    let mut out = vec![(y0, y1)];
+    for floor in [0.0, layout::LANDING, layout::TOP_DECK] {
+        let (c0, c1) = (floor, floor + layout::HEADROOM);
+        out = out.into_iter().flat_map(|(a, b)| [(a, c0.min(b)), (c1.max(a), b)]).filter(|&(a, b)| b - a >= 1.0).collect();
+    }
+    out
+}
+
 fn cellular_mast(m: &mut Mesh, w: &World) {
     let root = mast_origin(w);
     let at = |x: f32, y: f32, z: f32| root + vec3(x, y, z);
-    let half = |y: f32| 4.3 - y * 0.057;
-    // Four tapering legs with individually braced bays, white and oxide red
-    // above the tree line. This is the whole station's unmistakable backbone.
+    let corner = |sx: f32, sz: f32, y: f32| at(sx * layout::mast_half(y), y, sz * layout::mast_half(y));
+    // Four tapering legs on concrete footings, white and oxide red, with
+    // braced bays. This is the whole station's unmistakable backbone. The
+    // bracing leaves head room above the ground and both decks, so what a
+    // player walks through is open lattice and what stops them is a leg.
+    let (foot, pad) = (layout::MAST_FOOT, layout::FOOTING_HALF);
     for sx in [-1.0f32, 1.0] {
         for sz in [-1.0f32, 1.0] {
-            m.cuboid(at(sx * 4.3 - 0.8, -1.0, sz * 4.3 - 0.8), at(sx * 4.3 + 0.8, 1.0, sz * 4.3 + 0.8), [0.45, 0.44, 0.40, 0.0]);
-            for bay in 0..10 {
-                let y0 = bay as f32 * 5.7;
-                let y1 = y0 + 5.7;
+            let (fx, fz) = (sx * foot, sz * foot);
+            m.cuboid(at(fx - pad, -0.6, fz - pad), at(fx + pad, layout::FOOTING_H, fz + pad), [0.45, 0.44, 0.40, 0.0]);
+            for bay in 0..layout::MAST_BAYS {
+                let y0 = bay as f32 * layout::MAST_BAY;
+                let y1 = y0 + layout::MAST_BAY;
                 let paint = if bay % 3 == 1 { RED } else { WHITE };
-                let p0 = at(sx * half(y0), y0, sz * half(y0));
-                let p1 = at(sx * half(y1), y1, sz * half(y1));
-                beam(m, p0, p1, 0.30, 0.30, paint);
-                for axis in [0, 1] {
-                    let q0 = if axis == 0 { at(-sx * half(y0), y0, sz * half(y0)) } else { at(sx * half(y0), y0, -sz * half(y0)) };
-                    let q1 = if axis == 0 { at(-sx * half(y1), y1, sz * half(y1)) } else { at(sx * half(y1), y1, -sz * half(y1)) };
-                    beam(m, p0, q1, 0.095, 0.095, shade(paint, 0.8));
-                    if sx > 0.0 && sz > 0.0 {
-                        beam(m, p0, q0, 0.16, 0.16, STEEL);
-                    }
+                beam(m, corner(sx, sz, y0.max(layout::FOOTING_H)), corner(sx, sz, y1), layout::MAST_LEG, layout::MAST_LEG, paint);
+                for (a, b) in braced_bands(y0, y1) {
+                    beam(m, corner(sx, sz, a), corner(-sx, sz, b), 0.095, 0.095, shade(paint, 0.8));
+                    beam(m, corner(sx, sz, a), corner(sx, -sz, b), 0.095, 0.095, shade(paint, 0.8));
                 }
             }
         }
     }
-    // Ladder and a dark cable tray disappear into the lattice.
-    for k in 0..113 {
-        let y = k as f32 * 0.49 + 0.5;
-        beam(m, at(-0.4, y, -0.5), at(0.4, y, -0.5), 0.045, 0.045, STEEL);
+    // Girts round all four faces at every bay and at the edges of the clear
+    // bands. Each band's bracing starts and ends on one.
+    let mut girts: Vec<f32> = (1..=layout::MAST_BAYS).map(|k| k as f32 * layout::MAST_BAY).collect();
+    girts.extend([layout::HEADROOM, layout::LANDING - 0.2, layout::LANDING + layout::HEADROOM]);
+    girts.extend([layout::TOP_DECK - 0.2, layout::TOP_DECK + layout::HEADROOM]);
+    for y in girts {
+        for s in [-1.0f32, 1.0] {
+            beam(m, corner(-1.0, s, y), corner(1.0, s, y), 0.16, 0.16, STEEL);
+            beam(m, corner(s, -1.0, y), corner(s, 1.0, y), 0.16, 0.16, STEEL);
+        }
     }
-    for x in [-0.43f32, 0.43] {
-        beam(m, at(x, 0.4, -0.5), at(x, 56.0, -0.5), 0.075, 0.075, STEEL);
-    }
-    m.cuboid(at(0.8, 0.4, -0.55), at(1.15, 57.0, -0.30), DARK);
+    mast_decks(m, &at, &corner);
+    mast_ladders(m, &at);
+    // A dark cable tray beside the first ladder, out of the way of both
+    // decks, and on up the mast above head height.
+    let tray = |m: &mut Mesh, y0: f32, y1: f32| m.cuboid(at(0.8, y0, -0.55), at(1.15, y1, -0.30), DARK);
+    tray(m, 0.4, layout::LANDING - layout::SLAB);
+    tray(m, layout::TOP_DECK + layout::HEADROOM, 57.0);
     // Three tiers of directional cellular panels, each visibly joined to
-    // its service ring and carrying a paired radio unit behind it.
-    for (tier, y) in [39.0f32, 48.0, 57.0].into_iter().enumerate() {
-        annulus(m, at(0.0, y - 2.25, 0.0), 0.8, 3.9, 20, DARK);
-        for k in 0..6 {
-            let a = k as f32 * TAU / 6.0 + tier as f32 * 0.17;
+    // its service ring and carrying a paired radio unit behind it. The
+    // first ring is the top deck: its panels stand round the rail (they are
+    // in the collision) and its ring is cut back to clear the deck.
+    for (tier, y) in [layout::PANEL_Y, 48.0, 57.0].into_iter().enumerate() {
+        if tier == 0 {
+            annulus(m, at(0.0, layout::TOP_DECK - layout::SLAB - 0.05, 0.0), 3.0, 3.9, 20, DARK);
+        } else {
+            annulus(m, at(0.0, y - 2.25, 0.0), 0.8, 3.9, 20, DARK);
+        }
+        for k in 0..layout::PANELS {
+            let a = k as f32 * TAU / layout::PANELS as f32 + tier as f32 * 0.17;
             let radial = vec3(a.sin(), 0.0, a.cos());
-            let f = Mat4::from_translation(at(0.0, y, 0.0) + radial * 3.5) * Mat4::from_rotation_y(a);
-            beam(m, at(0.0, y - 1.25, 0.0), at(0.0, y - 1.25, 0.0) + radial * 3.45, 0.14, 0.14, STEEL);
-            m.obox(&f, Vec3::ZERO, vec3(0.43, 1.85, 0.19), WHITE);
+            let f = Mat4::from_translation(at(0.0, y, 0.0) + radial * layout::PANEL_R) * Mat4::from_rotation_y(a);
+            if tier > 0 {
+                beam(m, at(0.0, y - 1.25, 0.0), at(0.0, y - 1.25, 0.0) + radial * 3.45, 0.14, 0.14, STEEL);
+            }
+            let (px, py, pz) = layout::PANEL_HALF;
+            m.obox(&f, Vec3::ZERO, vec3(px, py, pz), WHITE);
             m.obox(&f, vec3(0.0, 0.0, -0.25), vec3(0.32, 1.5, 0.09), STEEL);
             m.obox(&f, vec3(0.0, -0.55, -0.48), vec3(0.27, 0.48, 0.15), DARK);
             for seam in [-0.82f32, 0.82] {
@@ -104,11 +136,119 @@ fn cellular_mast(m: &mut Mesh, w: &World) {
         let end = at(a.cos() * 1.6 - 3.3, 29.0 + a.sin() * 1.6, -3.0);
         beam(m, end, at(-3.3, 29.0, -4.3), 0.035, 0.035, STEEL);
     }
-    let hut = at(10.5, 0.0, 1.5);
-    m.cuboid(hut, hut + vec3(6.0, 3.8, 5.0), [0.42, 0.43, 0.42, 0.0]);
-    m.cuboid(hut + vec3(-0.3, 3.8, -0.3), hut + vec3(6.3, 4.05, 5.3), DARK);
+    // The BACKBONE equipment hut behind the mast, its door facing the
+    // ladder, and a cable cover across the yard between them.
+    let (x0, z0, x1, z1, h) = layout::HUT;
+    let (hut, size, eave) = (at(x0, 0.0, z0), vec3(x1 - x0, h, z1 - z0), layout::HUT_EAVE);
+    m.cuboid(hut - Vec3::Y * 0.4, hut + size, [0.42, 0.43, 0.42, 0.0]);
+    m.cuboid(hut + vec3(-eave, h, -eave), hut + size + vec3(eave, layout::HUT_ROOF, eave), DARK);
     m.cuboid(hut + vec3(0.5, 0.1, -0.035), hut + vec3(2.1, 2.8, 0.0), STEEL);
     stencil(m, &wall(hut + vec3(4.0, 2.3, -0.045), PI), "BACKBONE", 0.09, WHITE);
+    m.cuboid(at(x0 + 1.1, -0.05, 1.0), at(x0 + 1.5, 0.05, z0), DARK);
+}
+
+/// The rest platform and the top deck, as `layout::mast` builds them:
+/// grating with the hatch cut out, two rails on posts round the edge, the
+/// rest platform's plate parapets, and the frame that carries each deck.
+fn mast_decks(m: &mut Mesh, at: &impl Fn(f32, f32, f32) -> Vec3, corner: &impl Fn(f32, f32, f32) -> Vec3) {
+    const GRATE: Col = [0.22, 0.24, 0.26, 0.0];
+    let (rh, slab) = (layout::RAIL_HALF, layout::SLAB);
+    let decks = [(layout::LANDING, layout::LANDING_HALF, &layout::LADDERS[0]), (layout::TOP_DECK, layout::TOP_HALF, &layout::LADDERS[1])];
+    for (y, half, ladder) in decks {
+        let (hx0, hz0, hx1, hz1) = layout::hatch(ladder);
+        let box_at = |m: &mut Mesh, a: (f32, f32), b: (f32, f32), y0: f32, y1: f32, col: Col| {
+            m.cuboid(at(a.0.min(b.0), y0, a.1.min(b.1)), at(a.0.max(b.0), y1, a.1.max(b.1)), col);
+        };
+        for (a, b) in [((-half, -half), (half, hz0)), ((-half, hz1), (half, half)), ((-half, hz0), (hx0, hz1)), ((hx1, hz0), (half, hz1))] {
+            box_at(m, a, b, y - slab, y, GRATE);
+        }
+        // A frame under the grating, braced back to the legs.
+        let e = half - 2.0 * rh;
+        for s in [-1.0f32, 1.0] {
+            box_at(m, (-half, s * half), (half, s * e), y - slab - 0.22, y - slab, STEEL);
+            box_at(m, (s * half, -half), (s * e, half), y - slab - 0.22, y - slab, STEEL);
+            for t in [-1.0f32, 1.0] {
+                beam(m, corner(s, t, y - 2.0), at(s * half, y - slab - 0.1, t * half), 0.12, 0.12, STEEL);
+            }
+        }
+        // Rails and their posts, exactly on the rail line.
+        for hgt in layout::RAIL_HEIGHTS {
+            let (r0, r1) = (y + hgt - rh, y + hgt + rh);
+            box_at(m, (-half, -half), (half, -e), r0, r1, SAFETY);
+            box_at(m, (-half, e), (half, half), r0, r1, SAFETY);
+            box_at(m, (-half, -e), (-e, e), r0, r1, SAFETY);
+            box_at(m, (e, -e), (half, e), r0, r1, SAFETY);
+        }
+        let posts = (half * 2.0 / 1.2).ceil() as usize;
+        for k in 0..=posts {
+            let t = -half + rh + (half * 2.0 - 2.0 * rh) * k as f32 / posts as f32;
+            for p in [(t, -half + rh), (t, half - rh), (-half + rh, t), (half - rh, t)] {
+                box_at(m, (p.0 - rh, p.1 - rh), (p.0 + rh, p.1 + rh), y, y + layout::RAIL_HEIGHTS[1] + rh, SAFETY);
+            }
+        }
+    }
+    // The rest platform's cage: a plate parapet in the middle of each side,
+    // white with a red cap.
+    let (p, e, t) = (layout::LANDING_PARAPET_HALF_LEN, layout::LANDING_HALF - 2.0 * rh, layout::PARAPET_T);
+    let (y0, y1) = (layout::LANDING, layout::LANDING + layout::LANDING_PARAPET_H);
+    for s in [-1.0f32, 1.0] {
+        for (a, b) in [((-p, s * e), (p, s * (e - t))), ((s * e, -p), (s * (e - t), p))] {
+            let (lo, hi) = (at(a.0.min(b.0), y0, a.1.min(b.1)), at(a.0.max(b.0), y1, a.1.max(b.1)));
+            m.cuboid(lo, hi - Vec3::Y * 0.12, WHITE);
+            m.cuboid(lo + Vec3::Y * (y1 - y0 - 0.12), hi, RED);
+        }
+    }
+}
+
+/// Both ladders as `layout::LADDERS` places them: rails that stand on as
+/// hand holds above the deck, rungs, the dark cable riser behind that is
+/// their collision, and a safety cage from head height up. Above the top
+/// deck a service ladder carries on up the mast, out of reach.
+fn mast_ladders(m: &mut Mesh, at: &impl Fn(f32, f32, f32) -> Vec3) {
+    for l in layout::LADDERS {
+        let face = vec3(l.face.0, 0.0, l.face.1);
+        let across = vec3(l.face.1, 0.0, -l.face.0);
+        let plane = |y: f32| at(l.x, y, l.z);
+        let rail = layout::LADDER_HALF;
+        for s in [-1.0f32, 1.0] {
+            beam(m, plane(l.foot) + across * (s * rail), plane(l.top + 1.1) + across * (s * rail), 0.075, 0.075, STEEL);
+        }
+        let mut y = l.foot + 0.5;
+        while y < l.top - 0.05 {
+            beam(m, plane(y) - across * (rail - 0.03), plane(y) + across * (rail - 0.03), 0.045, 0.045, STEEL);
+            y += layout::RUNG_PITCH;
+        }
+        let back = (plane(l.foot) - across * (rail + 0.05), plane(l.top) + across * (rail + 0.05) + face * layout::LADDER_BACK);
+        m.cuboid(back.0.min(back.1) - Vec3::Y * if l.foot <= 0.0 { 0.3 } else { 0.0 }, back.0.max(back.1), DARK);
+        // Cage hoops, open where the climber's hands are.
+        let hoop = |k: usize, y: f32| {
+            let t = k as f32 / 5.0 * PI;
+            plane(y) + across * (0.62 * t.cos()) - face * (0.95 * t.sin())
+        };
+        let (first, mut last) = (l.foot + layout::HEADROOM, l.foot + layout::HEADROOM);
+        let mut y = first;
+        while y < l.top - 0.3 {
+            for k in 0..5 {
+                beam(m, hoop(k, y), hoop(k + 1, y), 0.06, 0.06, STEEL);
+            }
+            last = y;
+            y += 1.2;
+        }
+        for k in 1..5 {
+            beam(m, hoop(k, first), hoop(k, last), 0.05, 0.05, STEEL);
+        }
+    }
+    let l = layout::LADDERS[1];
+    let plane = |y: f32| at(l.x, y, l.z);
+    let (start, end) = (layout::TOP_DECK + layout::HEADROOM, 56.0);
+    for s in [-1.0f32, 1.0] {
+        beam(m, plane(start) + Vec3::X * (s * layout::LADDER_HALF), plane(end) + Vec3::X * (s * layout::LADDER_HALF), 0.075, 0.075, STEEL);
+    }
+    let mut y = start + 0.2;
+    while y < end {
+        beam(m, plane(y) - Vec3::X * 0.4, plane(y) + Vec3::X * 0.4, 0.045, 0.045, STEEL);
+        y += layout::RUNG_PITCH;
+    }
 }
 
 // The outermost ring is planted into the surrounding ridge; all other rings
@@ -164,13 +304,17 @@ pub fn atmosphere(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, tim
     if w.map == 5 {
         let root = mast_origin(w);
         let pulse = if time.rem_euclid(2.0) < 0.18 { 1.0 } else { 0.08 };
-        for y in [26.0f32, 45.0, 64.0] {
-            let p = root + Vec3::Y * y;
+        // Obstruction lamps: a pair on the legs over the battlefield, then
+        // up the axis above the top deck, out of the climbers' faces.
+        let low = layout::mast_half(26.0) + 0.25;
+        for p in [vec3(-low, 26.0, -low), vec3(low, 26.0, -low), vec3(0.0, 45.0, 0.0), vec3(0.0, 64.0, 0.0)] {
+            let p = root + p;
             cross(add, p, 0.23, 0.23, [1.0, 0.10, 0.035, pulse]);
             soft(add, p, 1.2, 1.2, [1.0, 0.08, 0.025, pulse * 0.65]);
         }
-        // A rotating microwave scanner below the upper antenna crowns.
-        let g = Mat4::from_translation(root + vec3(0.0, 32.0, 0.0)) * Mat4::from_rotation_y(time * 0.35);
+        // A rotating microwave scanner between the first two panel rings,
+        // above the top deck and clear of the climb.
+        let g = Mat4::from_translation(root + vec3(0.0, 43.0, 0.0)) * Mat4::from_rotation_y(time * 0.35);
         m.obox(&g, vec3(0.0, 0.0, 3.4), vec3(1.7, 0.45, 0.14), WHITE);
         m.obox(&g, vec3(0.0, 0.0, 1.7), vec3(0.12, 0.13, 1.7), STEEL);
     } else if w.map == 6 {
@@ -284,16 +428,27 @@ mod tests {
     }
 
     #[test]
-    fn distant_landmarks_and_all_eruption_stages_are_finite_and_bounded() {
+    fn great_landmarks_and_all_eruption_stages_are_finite_and_bounded() {
         for id in [5, 6] {
             let w = World::with_map(0xFE221, id);
             let mut static_mesh = Mesh::default();
             build(&mut static_mesh, &w);
             finite(&static_mesh);
-            assert!(static_mesh.triangles() > 500 && static_mesh.triangles() < 14000);
+            assert!(static_mesh.triangles() > 500 && static_mesh.triangles() < 14000, "{} triangles", static_mesh.triangles());
+            // The mast stands on its own levelled site in the field; the
+            // volcano stays beyond it.
+            let (x0, z0, x1, z1) = layout::MAST_SITE;
+            let (mx, mz) = MAST_XZ;
+            let ground = mast_origin(&w).y;
             for vertices in static_mesh.chunks.iter().map(|(v, _)| v).chain(std::iter::once(&static_mesh.v)) {
                 for v in vertices {
-                    assert!(if id == 5 { v.pos[2] > 110.0 } else { v.pos[2] < -110.0 }, "landmark enters playable field: {:?}", v.pos);
+                    let [x, y, z] = v.pos;
+                    let ok = if id == 5 {
+                        x > mx + x0 && x < mx + x1 && z > mz + z0 && z < mz + z1 && y > ground - 1.0 && y < ground + 70.0
+                    } else {
+                        z < -110.0
+                    };
+                    assert!(ok, "landmark strays from its site: {:?}", v.pos);
                 }
             }
             for time in [0.0, 22.0, 32.0, 45.0, 62.0, 128.0, 224.0, 10001.0] {

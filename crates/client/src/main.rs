@@ -2227,7 +2227,9 @@ async fn play(
         let ease = |cur: &mut f32, on: bool, rate: f32| *cur += (if on { 1.0 } else { 0.0 } - *cur) * (rate * dt).min(1.0);
         ease(&mut app.slide_vis, playing && app.st.slide > 0, 12.0);
         ease(&mut app.air_vis, playing && !app.st.on_ground, 8.0);
-        let climbing = playing && app.mantling;
+        // On a ladder the weapon drops out of the way, as for a mantle:
+        // both hands are on the rungs and it cannot be fired.
+        let climbing = playing && (app.mantling || app.st.climbing);
         ease(&mut app.mantle_vis, climbing, 10.0);
         let side_v = if playing { app.st.vel.dot(sim::right_of(app.yaw)) / sim::WALK } else { 0.0 };
         app.strafe_vis += (side_v.clamp(-1.0, 1.0) - app.strafe_vis) * (8.0 * dt).min(1.0);

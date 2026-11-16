@@ -9,11 +9,13 @@ use crate::sim::PState;
 use bincode::Options;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
+/// 20: climbable ladders (`PState::climbing`); timed lava and flood
+/// hazards on the world clock.
 /// 19: session handshake. Every client datagram is a `Packet` (protocol
 /// version, session token, message); a first Hello is answered with a
 /// `Challenge` cookie and only a Hello that returns it gets a slot.
 /// 18: Ridgeline's Fallen Giant replaces the central post and terrain pads.
-pub const PROTO: u32 = 19;
+pub const PROTO: u32 = 20;
 pub const DEFAULT_PORT: u16 = 27500;
 pub const SPECTATOR_ID: u8 = 255;
 
