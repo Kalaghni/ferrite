@@ -91,6 +91,11 @@ UPDATES
   RESTART when there is one. SETTINGS > VIDEO > CHECK FOR UPDATES turns that
   off. "ferrite --update" updates from a terminal. Everyone in a match must
   be on the same release.
+  A download is installed only if it matches the release's SHA256SUMS. The
+  files it replaces are kept in the ferrite-previous folder until the next
+  update. If a new version fails to start, the next start puts the previous
+  one back by itself. To go back by hand: SETTINGS > VIDEO > ROLL BACK, or
+  "ferrite --rollback" from a terminal.
 
 RUN A DEDICATED SERVER
   Run start-server.bat (Windows) or ./start-server.sh (Linux, macOS).
