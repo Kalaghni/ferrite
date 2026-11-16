@@ -55,6 +55,9 @@ pub struct PlayerView {
     pub fall: f32,
     /// How far a body has sunk into the ground before it is removed.
     pub sink: f32,
+    /// Far enough away that the weapon's finish is drawn in its colours
+    /// only, without its pattern.
+    pub far: bool,
 }
 
 impl Default for PlayerView {
@@ -87,6 +90,7 @@ impl Default for PlayerView {
             vel: (0.0, 0.0),
             fall: 0.0,
             sink: 0.0,
+            far: false,
         }
     }
 }
@@ -179,6 +183,10 @@ fn segment(m: &mut Mesh, g: &Mat4, a: Vec3, b: Vec3, radius: f32, top: f32, col:
 
 /// Scale of a gun in another soldier's hands.
 const GUN_SCALE: f32 = 0.72;
+/// Beyond this many metres a soldier's weapon finish keeps its colours but
+/// drops its pattern: the paint is under a pixel there, and its layers sit
+/// closer together than the depth buffer can separate.
+pub const FINISH_DETAIL_RANGE: f32 = 10.0;
 /// How far in front of the chest plate's face (negative: sunk into it) the
 /// butt of a shouldered gun rests.
 const BUTT_SEAT: f32 = -0.03;
@@ -580,7 +588,7 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
         * Mat4::from_translation(vec3(if long { -0.135 } else { -0.12 }, -0.06, reach))
         * Mat4::from_rotation_y(std::f32::consts::PI)
         * Mat4::from_scale(Vec3::splat(GUN_SCALE));
-    gun_model_pose(m, p.wid, p.team, p.wskin, body * gun, p.reload_phase, p.cycle);
+    gun_model_pose(m, p.wid, p.team, p.wskin, body * gun, p.reload_phase, p.cycle, !p.far);
     let (mut grip, mut support) = gun_grips(p.wid);
     if long {
         // With the gun that far forward the off hand holds nearer the

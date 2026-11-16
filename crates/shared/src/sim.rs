@@ -163,8 +163,32 @@ pub static KITS: [KitDef; 3] = [
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WeaponPattern {
     Plain,
+    /// Square pixels in two inks.
     Digital,
-    Bands,
+    /// Green streaks running down from the top edge, crust along the bottom.
+    Patina,
+    /// Rounded leaf blots in three colours.
+    Blotch,
+    /// Sharp angular shards with short rain marks.
+    Splinter,
+    /// Warning chevrons pointing at the muzzle.
+    Chevron,
+    /// Tapered stripes reaching in from the top and bottom edges.
+    Tiger,
+    /// Dark plates with glowing cracks between them.
+    Magma,
+    /// Wavy light and dark layers of forged steel.
+    Damascus,
+    /// Two-by-two twill of carbon fibre.
+    Weave,
+    /// Honeycomb plates over a glowing backing.
+    Hex,
+    /// Engraved border lines and pearl panels.
+    Inlay,
+    /// Faceted ice in several tints.
+    Shards,
+    /// Engraved scrolling vine inside a border line.
+    Scroll,
 }
 
 /// A finish for a weapon: colours that replace the gun's own. `None`
@@ -184,8 +208,20 @@ pub struct WeaponSkinDef {
     pub detail: Option<[f32; 3]>,
     /// Paint pattern on solid panels, clear of the bore and sight picture.
     pub pattern: WeaponPattern,
-    /// Secondary paint colour; `None` leaves the finish unpatterned.
+    /// Main pattern colour; `None` leaves the finish unpatterned.
     pub pattern_color: Option<[f32; 3]>,
+    /// Second pattern colour, for patterns that use two.
+    pub pattern_alt: Option<[f32; 3]>,
+    /// Chamfered edges of the receiver: polished or worn-through metal.
+    pub edge: Option<[f32; 3]>,
+    /// Small metal hardware: charging handle, bolt, muzzle, trigger guard,
+    /// magazine base. `None` = the body colour.
+    pub hardware: Option<[f32; 3]>,
+    /// 0 = flat paint or polymer, 1 = polished metal (lighter towards the
+    /// top of each part, darker underneath).
+    pub sheen: f32,
+    /// How strongly the pattern colours and the accent glow, 0..1.
+    pub glow: f32,
 }
 
 /// Every finish. Index 0 is the gun as it comes and fits everything; add
@@ -202,149 +238,219 @@ pub static WEAPON_SKINS: [WeaponSkinDef; 14] = [
         detail: None,
         pattern: WeaponPattern::Plain,
         pattern_color: None,
+        pattern_alt: None,
+        edge: None,
+        hardware: None,
+        sheen: 0.0,
+        glow: 0.0,
     },
     WeaponSkinDef {
         name: "OXIDE",
-        blurb: "Burnt copper bands over charcoal furniture",
+        blurb: "Weathered copper streaked with green verdigris",
         weapons: &[],
-        body: Some([0.36, 0.16, 0.09]),
-        furniture: Some([0.13, 0.14, 0.15]),
-        accent: Some([0.83, 0.43, 0.20]),
-        detail: Some([0.08, 0.09, 0.10]),
-        pattern: WeaponPattern::Bands,
-        pattern_color: Some([0.62, 0.30, 0.14]),
+        body: Some([0.50, 0.24, 0.12]),
+        furniture: Some([0.27, 0.12, 0.07]),
+        accent: Some([0.90, 0.55, 0.30]),
+        detail: Some([0.09, 0.08, 0.075]),
+        pattern: WeaponPattern::Patina,
+        pattern_color: Some([0.27, 0.56, 0.47]),
+        pattern_alt: Some([0.17, 0.08, 0.05]),
+        edge: Some([0.95, 0.62, 0.40]),
+        hardware: None,
+        sheen: 0.6,
+        glow: 0.0,
     },
     WeaponSkinDef {
         name: "ARCTIC",
-        blurb: "Ivory and slate digital camouflage",
+        blurb: "Snow, ice grey and slate digital pixels",
         weapons: &[],
-        body: Some([0.78, 0.81, 0.79]),
-        furniture: Some([0.25, 0.30, 0.33]),
+        body: Some([0.80, 0.83, 0.82]),
+        furniture: Some([0.30, 0.34, 0.37]),
         accent: Some([0.43, 0.61, 0.66]),
         detail: Some([0.10, 0.13, 0.15]),
         pattern: WeaponPattern::Digital,
-        pattern_color: Some([0.40, 0.47, 0.49]),
+        pattern_color: Some([0.33, 0.39, 0.42]),
+        pattern_alt: Some([0.58, 0.64, 0.66]),
+        edge: None,
+        hardware: None,
+        sheen: 0.0,
+        glow: 0.0,
     },
     WeaponSkinDef {
         name: "WOODLAND",
-        blurb: "Olive and earth digital camouflage",
+        blurb: "Olive, brown and black leaf blots",
         weapons: &[],
-        body: Some([0.27, 0.33, 0.20]),
-        furniture: Some([0.23, 0.20, 0.15]),
+        body: Some([0.29, 0.35, 0.20]),
+        furniture: Some([0.22, 0.20, 0.15]),
         accent: Some([0.61, 0.55, 0.31]),
         detail: Some([0.10, 0.12, 0.09]),
-        pattern: WeaponPattern::Digital,
-        pattern_color: Some([0.43, 0.40, 0.28]),
+        pattern: WeaponPattern::Blotch,
+        pattern_color: Some([0.36, 0.25, 0.15]),
+        pattern_alt: Some([0.07, 0.075, 0.06]),
+        edge: None,
+        hardware: None,
+        sheen: 0.0,
+        glow: 0.0,
     },
     WeaponSkinDef {
         name: "MIDNIGHT",
-        blurb: "Navy receiver with blue-grey bands",
+        blurb: "Navy and black splinter camouflage",
         weapons: &[],
-        body: Some([0.10, 0.16, 0.24]),
+        body: Some([0.13, 0.19, 0.30]),
         furniture: Some([0.09, 0.10, 0.13]),
         accent: Some([0.30, 0.50, 0.64]),
         detail: Some([0.055, 0.065, 0.085]),
-        pattern: WeaponPattern::Bands,
-        pattern_color: Some([0.19, 0.27, 0.36]),
+        pattern: WeaponPattern::Splinter,
+        pattern_color: Some([0.04, 0.05, 0.08]),
+        pattern_alt: Some([0.29, 0.38, 0.50]),
+        edge: None,
+        hardware: None,
+        sheen: 0.0,
+        glow: 0.0,
     },
     WeaponSkinDef {
         name: "HAZARD",
-        blurb: "Industrial ochre with black warning bands",
+        blurb: "Warning chevrons, worn to bare steel at the edges",
         weapons: &[],
-        body: Some([0.65, 0.45, 0.08]),
+        body: Some([0.74, 0.52, 0.08]),
         furniture: Some([0.13, 0.14, 0.13]),
         accent: Some([0.94, 0.72, 0.19]),
         detail: Some([0.065, 0.07, 0.07]),
-        pattern: WeaponPattern::Bands,
-        pattern_color: Some([0.13, 0.15, 0.15]),
+        pattern: WeaponPattern::Chevron,
+        pattern_color: Some([0.09, 0.095, 0.09]),
+        pattern_alt: Some([0.80, 0.58, 0.10]),
+        edge: Some([0.56, 0.57, 0.56]),
+        hardware: Some([0.13, 0.14, 0.13]),
+        sheen: 0.0,
+        glow: 0.0,
     },
     WeaponSkinDef {
         name: "SANDSTORM",
-        blurb: "Sand and umber digital camouflage",
+        blurb: "Desert tiger stripes in sand and umber",
         weapons: &[],
-        body: Some([0.65, 0.57, 0.42]),
-        furniture: Some([0.33, 0.28, 0.22]),
-        accent: Some([0.80, 0.73, 0.55]),
+        body: Some([0.70, 0.60, 0.43]),
+        furniture: Some([0.40, 0.33, 0.24]),
+        accent: Some([0.86, 0.78, 0.58]),
         detail: Some([0.12, 0.11, 0.095]),
-        pattern: WeaponPattern::Digital,
-        pattern_color: Some([0.43, 0.36, 0.26]),
+        pattern: WeaponPattern::Tiger,
+        pattern_color: Some([0.28, 0.19, 0.12]),
+        pattern_alt: Some([0.50, 0.38, 0.25]),
+        edge: None,
+        hardware: None,
+        sheen: 0.0,
+        glow: 0.0,
     },
     WeaponSkinDef {
         name: "EMBERFALL",
-        blurb: "Furnace red with molten orange bands",
+        blurb: "Cooling basalt split by glowing magma",
         weapons: &[],
-        body: Some([0.42, 0.07, 0.05]),
-        furniture: Some([0.12, 0.1, 0.1]),
+        body: Some([0.11, 0.085, 0.075]),
+        furniture: Some([0.085, 0.07, 0.065]),
         accent: Some([1.0, 0.46, 0.12]),
         detail: Some([0.07, 0.06, 0.06]),
-        pattern: WeaponPattern::Bands,
-        pattern_color: Some([0.93, 0.38, 0.08]),
+        pattern: WeaponPattern::Magma,
+        pattern_color: Some([1.0, 0.40, 0.07]),
+        pattern_alt: Some([0.62, 0.12, 0.03]),
+        edge: None,
+        hardware: Some([0.55, 0.15, 0.06]),
+        sheen: 0.0,
+        glow: 0.8,
     },
     WeaponSkinDef {
         name: "COBALT STEEL",
-        blurb: "Blued steel with bright cobalt bands",
+        blurb: "Blued Damascus steel with cobalt hardware",
         weapons: &[],
-        body: Some([0.16, 0.22, 0.34]),
-        furniture: Some([0.1, 0.11, 0.14]),
+        body: Some([0.17, 0.23, 0.35]),
+        furniture: Some([0.10, 0.17, 0.36]),
         accent: Some([0.2, 0.5, 1.0]),
         detail: Some([0.05, 0.06, 0.09]),
-        pattern: WeaponPattern::Bands,
-        pattern_color: Some([0.16, 0.44, 0.92]),
+        pattern: WeaponPattern::Damascus,
+        pattern_color: Some([0.42, 0.52, 0.66]),
+        pattern_alt: Some([0.07, 0.10, 0.18]),
+        edge: Some([0.66, 0.74, 0.86]),
+        hardware: Some([0.14, 0.40, 0.95]),
+        sheen: 0.7,
+        glow: 0.0,
     },
     WeaponSkinDef {
         name: "CARBON",
-        blurb: "Graphite weave in digital black and grey",
+        blurb: "Carbon fibre twill with red anodised parts",
         weapons: &[],
-        body: Some([0.17, 0.18, 0.19]),
-        furniture: Some([0.07, 0.07, 0.08]),
-        accent: Some([0.55, 0.57, 0.6]),
+        body: Some([0.09, 0.095, 0.10]),
+        furniture: Some([0.06, 0.06, 0.065]),
+        accent: Some([0.82, 0.14, 0.12]),
         detail: Some([0.04, 0.04, 0.05]),
-        pattern: WeaponPattern::Digital,
-        pattern_color: Some([0.34, 0.35, 0.37]),
+        pattern: WeaponPattern::Weave,
+        pattern_color: Some([0.31, 0.32, 0.34]),
+        pattern_alt: Some([0.19, 0.195, 0.21]),
+        edge: None,
+        hardware: Some([0.78, 0.12, 0.10]),
+        sheen: 0.5,
+        glow: 0.0,
     },
     WeaponSkinDef {
         name: "TOXIC",
-        blurb: "Acid green digital camouflage over black",
+        blurb: "Black honeycomb over glowing acid",
         weapons: &[],
-        body: Some([0.1, 0.13, 0.09]),
-        furniture: Some([0.07, 0.08, 0.07]),
+        body: Some([0.07, 0.085, 0.07]),
+        furniture: Some([0.06, 0.065, 0.06]),
         accent: Some([0.62, 0.95, 0.16]),
         detail: Some([0.05, 0.06, 0.05]),
-        pattern: WeaponPattern::Digital,
-        pattern_color: Some([0.45, 0.8, 0.12]),
+        pattern: WeaponPattern::Hex,
+        pattern_color: Some([0.55, 1.0, 0.12]),
+        pattern_alt: Some([0.18, 0.30, 0.08]),
+        edge: None,
+        hardware: None,
+        sheen: 0.0,
+        glow: 0.8,
     },
     WeaponSkinDef {
         name: "ROSE GOLD",
-        blurb: "Brushed rose metal with ivory bands",
+        blurb: "Polished rose gold, engraved, with pearl inlays",
         weapons: &[],
-        body: Some([0.8, 0.52, 0.47]),
-        furniture: Some([0.2, 0.15, 0.15]),
+        body: Some([0.80, 0.50, 0.42]),
+        furniture: Some([0.86, 0.83, 0.78]),
         accent: Some([0.97, 0.8, 0.72]),
         detail: Some([0.14, 0.1, 0.1]),
-        pattern: WeaponPattern::Bands,
-        pattern_color: Some([0.94, 0.88, 0.82]),
+        pattern: WeaponPattern::Inlay,
+        pattern_color: Some([0.36, 0.19, 0.16]),
+        pattern_alt: Some([0.93, 0.91, 0.87]),
+        edge: Some([1.0, 0.82, 0.72]),
+        hardware: Some([0.92, 0.66, 0.56]),
+        sheen: 1.0,
+        glow: 0.0,
     },
     WeaponSkinDef {
         name: "GLACIER",
-        blurb: "Ice blue and white digital camouflage",
+        blurb: "Faceted glacial ice with frosted edges",
         weapons: &[],
-        body: Some([0.5, 0.78, 0.9]),
+        body: Some([0.52, 0.76, 0.88]),
         furniture: Some([0.18, 0.27, 0.34]),
         accent: Some([0.85, 0.96, 1.0]),
         detail: Some([0.08, 0.12, 0.16]),
-        pattern: WeaponPattern::Digital,
-        pattern_color: Some([0.9, 0.96, 0.98]),
+        pattern: WeaponPattern::Shards,
+        pattern_color: Some([0.90, 0.97, 1.0]),
+        pattern_alt: Some([0.24, 0.48, 0.68]),
+        edge: Some([0.94, 0.98, 1.0]),
+        hardware: Some([0.20, 0.42, 0.62]),
+        sheen: 0.6,
+        glow: 0.12,
     },
     WeaponSkinDef {
         name: "GILDED",
-        blurb: "Black lacquer with gold leaf bands",
+        blurb: "Black lacquer with gold scrollwork and gold-plated parts",
         weapons: &[],
-        body: Some([0.06, 0.06, 0.07]),
-        furniture: Some([0.1, 0.08, 0.05]),
+        body: Some([0.05, 0.05, 0.06]),
+        furniture: Some([0.09, 0.06, 0.045]),
         accent: Some([1.0, 0.8, 0.25]),
         detail: Some([0.05, 0.05, 0.05]),
-        pattern: WeaponPattern::Bands,
-        pattern_color: Some([0.92, 0.7, 0.18]),
+        pattern: WeaponPattern::Scroll,
+        pattern_color: Some([1.0, 0.76, 0.24]),
+        pattern_alt: Some([0.72, 0.50, 0.14]),
+        edge: Some([0.95, 0.74, 0.26]),
+        hardware: Some([1.0, 0.78, 0.28]),
+        sheen: 0.8,
+        glow: 0.1,
     },
 ];
 
@@ -1253,14 +1359,33 @@ mod finish_tests {
         }
         let factory = weapon_skin(0);
         assert_eq!(factory.pattern, WeaponPattern::Plain);
-        assert!([factory.body, factory.furniture, factory.accent, factory.detail, factory.pattern_color].iter().all(Option::is_none));
+        assert!([
+            factory.body,
+            factory.furniture,
+            factory.accent,
+            factory.detail,
+            factory.pattern_color,
+            factory.pattern_alt,
+            factory.edge,
+            factory.hardware
+        ]
+        .iter()
+        .all(Option::is_none));
+        assert!(factory.sheen == 0.0 && factory.glow == 0.0, "the factory gun is not polished or glowing");
         for (id, skin) in WEAPON_SKINS.iter().enumerate() {
             assert!(!skin.name.is_empty() && !skin.blurb.is_empty());
             assert!(!WEAPON_SKINS[..id].iter().any(|other| other.name == skin.name), "duplicate finish {}", skin.name);
-            for color in [skin.body, skin.furniture, skin.accent, skin.detail, skin.pattern_color].into_iter().flatten() {
+            let colors =
+                [skin.body, skin.furniture, skin.accent, skin.detail, skin.pattern_color, skin.pattern_alt, skin.edge, skin.hardware];
+            for color in colors.into_iter().flatten() {
                 assert!(color.into_iter().all(|v| v.is_finite() && (0.0..=1.0).contains(&v)), "{} has an invalid colour", skin.name);
             }
             assert_eq!(skin.pattern == WeaponPattern::Plain, skin.pattern_color.is_none(), "{} has incomplete pattern data", skin.name);
+            assert!((0.0..=1.0).contains(&skin.sheen) && (0.0..=1.0).contains(&skin.glow), "{} has an invalid sheen or glow", skin.name);
+            // Each finish reads as its own at a glance: no shared pattern.
+            if skin.pattern != WeaponPattern::Plain {
+                assert!(!WEAPON_SKINS[..id].iter().any(|other| other.pattern == skin.pattern), "{} repeats a pattern", skin.name);
+            }
             if let Some(detail) = skin.detail {
                 assert!(detail.into_iter().all(|v| v <= 0.25), "{} needs dark iron sights and small parts", skin.name);
             }

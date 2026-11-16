@@ -1,7 +1,9 @@
 //! Deterministic visual checks without a server or saved settings.
 //! cargo run -p ferrite --example asset_review -- players target/players.png run
-//! Modes: players, weapons, skins, sights, or a map name.
+//! Modes: players, weapons, skins, sights, finishes, finish, or a map name.
 //! Optional player pose: run/crouch/slide/air/reload/melee/fall; weapons accepts a finish ID.
+//! finishes: every weapon finish on one weapon (third argument: weapon ID).
+//! finish: one finish (third argument: finish ID) on eight weapon types.
 //! Slag Cathedral views: overview / nave / gallery / furnace / approach.
 //! Classic map views: workshop / interior / passage / landmark / breach / walkway.
 //! Ridgeline aircraft views: wreck / cargo / tail.
@@ -74,7 +76,9 @@ async fn main() {
     let weapons = mode == "weapons";
     let skins = mode == "skins";
     let sights = mode == "sights";
-    let gallery = models || weapons || skins || sights;
+    let finishes = mode == "finishes";
+    let finish = mode == "finish";
+    let gallery = models || weapons || skins || sights || finishes || finish;
     let mut stage = if gallery { gfx::Mesh::default() } else { scene::build_world(&w) };
     if models {
         stage.cuboid(vec3(-8.0, -0.2, -4.0), vec3(8.0, -0.08, 4.0), gfx::rgb(0.17, 0.19, 0.23));
@@ -284,6 +288,30 @@ async fn main() {
                     ch - 60.0,
                     0.3,
                 );
+                gpu.overlay(&gun, mq::screen_width(), mq::screen_height());
+            }
+        } else if finishes || finish {
+            // Every finish on one weapon, or one finish across the families.
+            let (cols, rows) = if finishes { (4, 4) } else { (4, 2) };
+            let cw = (mq::screen_width() - 80.0) / cols as f32;
+            let ch = (mq::screen_height() - 150.0) / rows as f32;
+            let arg = pose.parse::<u8>().unwrap_or(0);
+            let cells: Vec<(u8, u8)> = if finishes {
+                (0..sim::WEAPON_SKINS.len() as u8).map(|s| (arg, s)).collect()
+            } else {
+                [0u8, 8, 5, 6, 1, 2, 4, 10].iter().map(|&wid| (wid, arg)).collect()
+            };
+            for (k, &(wid, skin)) in cells.iter().enumerate() {
+                let x = 40.0 + (k % cols) as f32 * cw;
+                let y = 110.0 + (k / cols) as f32 * ch;
+                mq::draw_rectangle(x + 3.0, y + 3.0, cw - 6.0, ch - 6.0, mq::Color::new(0.1, 0.125, 0.17, 1.0));
+                let mut probe = gfx::Mesh::default();
+                scene::gun_model(&mut probe, wid, 1, skin, Mat4::IDENTITY);
+                let title = if finishes { sim::weapon_skin(skin).name } else { sim::weapon_def(wid).name };
+                label(title, x + 14.0, y + 26.0, 20.0, mq::WHITE);
+                label(&format!("{} tris", probe.triangles()), x + cw - 90.0, y + 26.0, 15.0, mq::LIGHTGRAY);
+                let mut gun = gfx::Mesh::default();
+                scene::gun_icon(&mut gun, wid, 1, skin, x + cw * 0.5, mq::screen_height() - y - ch * 0.56, cw - 30.0, ch - 50.0, 0.3);
                 gpu.overlay(&gun, mq::screen_width(), mq::screen_height());
             }
         } else if skins || sights {

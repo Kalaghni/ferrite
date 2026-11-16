@@ -48,6 +48,9 @@ pub struct ViewModel {
     pub preview: Option<Mat4>,
     /// Finish: index into `sim::WEAPON_SKINS`.
     pub skin: u8,
+    /// Paint the finish's pattern; off for distant soldiers, who keep only
+    /// its colours.
+    pub detail: bool,
     /// Melee strike: 1 as it starts, falling to 0 when it is over.
     pub melee: f32,
 }
@@ -65,13 +68,14 @@ pub fn gun_grips(wid: u8) -> (Vec3, Vec3) {
 
 /// A weapon on its own, placed by `g`. Gun space: muzzle toward -Z, +Y up.
 pub fn gun_model(m: &mut Mesh, wid: u8, team: u8, skin: u8, g: Mat4) {
-    gun_model_pose(m, wid, team, skin, g, -1.0, 0.0);
+    gun_model_pose(m, wid, team, skin, g, -1.0, 0.0, true);
 }
 
-/// The same geometry in another soldier's hands, including magazine and action.
+/// The same geometry in another soldier's hands, including magazine and
+/// action. `detail` off leaves out the finish's pattern (far away).
 #[allow(clippy::too_many_arguments)]
-pub fn gun_model_pose(m: &mut Mesh, wid: u8, team: u8, skin: u8, g: Mat4, reload: f32, cycle: f32) {
-    gun_model_state(m, wid, team, skin, sights_for(wid)[0], g, reload, cycle);
+pub fn gun_model_pose(m: &mut Mesh, wid: u8, team: u8, skin: u8, g: Mat4, reload: f32, cycle: f32, detail: bool) {
+    gun_model_state(m, wid, team, skin, sights_for(wid)[0], g, reload, cycle, detail);
 }
 
 /// Review a supported attachment using the same model as first person.
@@ -80,12 +84,12 @@ pub fn gun_model_sighted(m: &mut Mesh, wid: u8, team: u8, skin: u8, sight: u8, g
     if sight == sights_for(wid)[0] {
         gun_model(m, wid, team, skin, g);
     } else {
-        gun_model_state(m, wid, team, skin, sight, g, -1.0, 0.0);
+        gun_model_state(m, wid, team, skin, sight, g, -1.0, 0.0, true);
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn gun_model_state(m: &mut Mesh, wid: u8, team: u8, skin: u8, sight: u8, g: Mat4, reload: f32, cycle: f32) {
+fn gun_model_state(m: &mut Mesh, wid: u8, team: u8, skin: u8, sight: u8, g: Mat4, reload: f32, cycle: f32, detail: bool) {
     let mut add = Mesh::default();
     let v = ViewModel {
         sight,
@@ -111,6 +115,7 @@ fn gun_model_state(m: &mut Mesh, wid: u8, team: u8, skin: u8, sight: u8, g: Mat4
         seq: 0,
         preview: Some(g),
         skin,
+        detail,
         melee: 0.0,
     };
     viewmodel(m, &mut add, &v);
@@ -153,16 +158,28 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
     debug_assert_eq!(v.kit, kit, "viewmodel family must match its weapon");
     // A finish replaces whichever of the weapon's own colours it names.
     let fin = sim::weapon_skin(sim::fix_weapon_skin(v.wid, v.skin));
-    let receiver = |m: &mut Mesh, g: &Mat4, center: Vec3, half: Vec3, col: Col| {
-        finishes::receiver(m, g, center, half, col, fin);
-    };
     let pick = |own: Col, with: Option<[f32; 3]>| with.map_or(own, |c| rgb(c[0], c[1], c[2]));
-    let accent = pick(rgb(tc[0], tc[1], tc[2]), fin.accent);
+    // A glowing finish lights its accent strip and front sight too.
+    let mut accent = pick(rgb(tc[0], tc[1], tc[2]), fin.accent);
+    accent[3] = fin.glow * 0.6;
     let metal = pick(rgb(0.2, 0.2, 0.23), fin.body);
+    // Handles, muzzles, guards and baseplates: plated or anodised.
+    let hw = pick(metal, fin.hardware);
     let dark = pick(rgb(0.11, 0.11, 0.13), fin.detail);
     // The self-loaders wear polymer where the older guns wear wood.
     let wood = pick(if matches!(v.wid, 7 | 9 | 14) { rgb(0.17, 0.18, 0.17) } else { rgb(0.45, 0.3, 0.17) }, fin.furniture);
     let grip_wood = pick(rgb(0.45, 0.3, 0.17), fin.furniture);
+    // A part is metal, furniture or a dark detail by the colour it is given.
+    let receiver = |m: &mut Mesh, g: &Mat4, center: Vec3, half: Vec3, col: Col| {
+        let part = if col == metal {
+            finishes::Part::Body
+        } else if col == wood || col == grip_wood {
+            finishes::Part::Furniture
+        } else {
+            finishes::Part::Detail
+        };
+        finishes::receiver(m, g, center, half, col, part, fin, v.detail);
+    };
     let sleeve = rgb(tc[0] * 0.45, tc[1] * 0.45, tc[2] * 0.48);
     let cuff = rgb(tc[0] * 0.3, tc[1] * 0.3, tc[2] * 0.33);
     let glove = rgb(0.42, 0.34, 0.25);
@@ -250,7 +267,7 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
             receiver(m, &g, vec3(0.0, 0.0, -0.04), vec3(0.038, 0.05, 0.19), metal);
             // One bore above the tube magazine, not two overlapping side-by-side barrels.
             m.tube(&g, vec3(0.0, 0.014, (barrel_end + barrel_back) * 0.5), 0.021, 0.014, (barrel_back - barrel_end) * 0.5, 16, dark);
-            m.tube(&g, vec3(0.0, 0.014, barrel_end + 0.012), 0.023, 0.014, 0.012, 16, metal);
+            m.tube(&g, vec3(0.0, 0.014, barrel_end + 0.012), 0.023, 0.014, 0.012, 16, hw);
             if v.wid != 14 {
                 m.tube(&g, vec3(0.0, -0.038, -0.375), 0.014, 0.0, 0.17, 12, metal);
             }
@@ -266,7 +283,7 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
             m.obox(&g, vec3(0.0, -0.065, 0.06), vec3(0.006, 0.02, 0.05), dark);
             m.obox(&g, vec3(0.0, 0.055, -0.1), vec3(0.036, 0.008, 0.06), accent);
             m.obox(&g, vec3(0.0385, 0.01, -0.02), vec3(0.002, 0.016, 0.045), dark);
-            m.obox(&g, vec3(0.045, 0.008, 0.0 + v.recoil * 0.025), vec3(0.01, 0.006, 0.012), metal);
+            m.obox(&g, vec3(0.045, 0.008, 0.0 + v.recoil * 0.025), vec3(0.01, 0.006, 0.012), hw);
             if iron {
                 front_sight(m, &g, barrel_end + 0.035, 0.034, 0.078, accent, dark);
                 rear_sight(m, &g, 0.1, 0.05, 0.078, 0.012, dark);
@@ -275,7 +292,7 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
                 // Slugger's vented heat shield and protected front post.
                 m.obox(&g, vec3(0.0, 0.04, -0.42), vec3(0.026, 0.005, 0.16), dark);
                 for z in [-0.53f32, -0.47, -0.41, -0.35] {
-                    m.obox(&g, vec3(0.0, 0.046, z), vec3(0.018, 0.001, 0.009), metal);
+                    m.obox(&g, vec3(0.0, 0.046, z), vec3(0.018, 0.001, 0.009), hw);
                 }
             }
             if v.wid == 14 {
@@ -287,8 +304,8 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
             // Shared grip/guard; each action owns its receiver and barrels.
             let grip_col = if matches!(v.wid, 10 | 16) { grip_wood } else { dark };
             receiver(m, &(g * Mat4::from_rotation_x(-0.25)), vec3(0.0, -0.075, 0.0), vec3(0.022, 0.06, 0.031), grip_col);
-            m.obox(&g, vec3(0.0, -0.055, -0.07), vec3(0.008, 0.004, 0.04), metal);
-            m.obox(&g, vec3(0.0, -0.038, -0.108), vec3(0.008, 0.02, 0.004), metal);
+            m.obox(&g, vec3(0.0, -0.055, -0.07), vec3(0.008, 0.004, 0.04), hw);
+            m.obox(&g, vec3(0.0, -0.038, -0.108), vec3(0.008, 0.02, 0.004), hw);
             m.obox(&g, vec3(0.0, -0.033, -0.045), vec3(0.004, 0.014, 0.004), dark);
             match v.wid {
                 10 => {
@@ -378,27 +395,27 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
             if v.wid == 9 {
                 // Ranger: a self-loading action, fixed handguard and charging handle.
                 m.obox(&g, vec3(0.029, 0.024, 0.02), vec3(0.002, 0.013, 0.055), dark);
-                m.obox(&g, vec3(0.038, 0.025, 0.055 + v.recoil * 0.04), vec3(0.014, 0.007, 0.009), metal);
+                m.obox(&g, vec3(0.038, 0.025, 0.055 + v.recoil * 0.04), vec3(0.014, 0.007, 0.009), hw);
                 for z in [-0.35f32, -0.3, -0.25] {
                     m.obox(&g, vec3(0.0, 0.008, z), vec3(0.031, 0.004, 0.008), dark);
                 }
             } else {
                 let bz = 0.07 + bolt * 0.075;
-                m.tube(&g, vec3(0.0, 0.022, bz), 0.011, 0.0, 0.05, 12, shade(metal, 1.3));
+                m.tube(&g, vec3(0.0, 0.022, bz), 0.011, 0.0, 0.05, 12, shade(hw, 1.3));
                 let handle = g * Mat4::from_translation(vec3(0.026, 0.022, bz + 0.03)) * Mat4::from_rotation_z(-0.9 + bolt * 0.9);
-                m.obox(&handle, vec3(0.022, 0.0, 0.0), vec3(0.022, 0.005, 0.005), metal);
+                m.obox(&handle, vec3(0.022, 0.0, 0.0), vec3(0.022, 0.005, 0.005), hw);
                 m.obox(&handle, vec3(0.046, 0.0, 0.0), vec3(0.009, 0.009, 0.009), dark);
             }
             m.obox(&g, vec3(0.0, -0.055, 0.03), vec3(0.006, 0.016, 0.04), dark);
             receiver(m, &g, vec3(0.0, -0.03, 0.25), vec3(0.028, 0.055, 0.1), wood);
             m.obox(&g, vec3(0.0, -0.035, 0.37), vec3(0.03, 0.065, 0.02), dark);
             if heavy {
-                receiver(m, &g, vec3(0.0, 0.015, -0.92), vec3(0.037, 0.022, 0.035), metal);
+                receiver(m, &g, vec3(0.0, 0.015, -0.92), vec3(0.037, 0.022, 0.035), hw);
                 for z in [-0.935f32, -0.905] {
                     m.obox(&g, vec3(0.0, 0.015, z), vec3(0.038, 0.012, 0.006), dark);
                 }
             } else {
-                m.tube(&g, vec3(0.0, 0.015, barrel_end), 0.019, 0.008, 0.018, 16, metal);
+                m.tube(&g, vec3(0.0, 0.015, barrel_end), 0.019, 0.008, 0.018, 16, hw);
             }
             if iron {
                 front_sight(m, &g, barrel_end + 0.02, if heavy { 0.034 } else { 0.028 }, 0.071, accent, dark);
@@ -412,12 +429,12 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
             let handguard = if v.wid == 5 { wood } else { dark };
             receiver(m, &g, vec3(0.0, 0.0, front), vec3(0.029, 0.033, if v.wid == 8 { 0.055 } else { 0.085 }), handguard);
             for z in [front - 0.045, front, front + 0.045] {
-                m.obox(&g, vec3(0.03, 0.01, z), vec3(0.0015, 0.01, 0.009), metal);
+                m.obox(&g, vec3(0.03, 0.01, z), vec3(0.0015, 0.01, 0.009), hw);
             }
             if v.wid == 8 {
                 // Wasp: short receiver and a continuous suppressor around its bore.
                 m.tube(&g, vec3(0.0, 0.012, -0.405), 0.027, 0.007, 0.085, 16, dark);
-                m.tube(&g, vec3(0.0, 0.012, -0.327), 0.029, 0.007, 0.007, 16, metal);
+                m.tube(&g, vec3(0.0, 0.012, -0.327), 0.029, 0.007, 0.007, 16, hw);
             } else {
                 // Separate barrel, gas block and muzzle pieces avoid coincident surfaces.
                 let end = match v.wid {
@@ -434,8 +451,8 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
                     16,
                     dark,
                 );
-                m.tube(&g, vec3(0.0, 0.012, -0.43), 0.022, 0.014, 0.018, 12, metal);
-                m.tube(&g, vec3(0.0, 0.012, end), 0.019, 0.007, 0.012, 16, metal);
+                m.tube(&g, vec3(0.0, 0.012, -0.43), 0.022, 0.014, 0.018, 12, hw);
+                m.tube(&g, vec3(0.0, 0.012, end), 0.019, 0.007, 0.012, 16, hw);
             }
             match v.wid {
                 5 => {
@@ -446,7 +463,7 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
                     // Lancer's ribbed fore-end and angular gas block.
                     m.obox(&g, vec3(0.0, 0.034, -0.37), vec3(0.027, 0.005, 0.075), accent);
                     for z in [-0.41f32, -0.37, -0.33] {
-                        m.obox(&g, vec3(0.0, -0.032, z), vec3(0.03, 0.005, 0.008), metal);
+                        m.obox(&g, vec3(0.0, -0.032, z), vec3(0.03, 0.005, 0.008), hw);
                     }
                 }
                 6 => {
@@ -489,13 +506,13 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
         if v.wid == 14 {
             let drum = g * Mat4::from_translation(mag_c + mag_off) * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2);
             m.tube(&drum, Vec3::ZERO, 0.057, 0.0, 0.035, 16, dark);
-            m.tube(&drum, vec3(0.0, 0.0, 0.036), 0.03, 0.0, 0.002, 12, metal);
+            m.tube(&drum, vec3(0.0, 0.0, 0.036), 0.03, 0.0, 0.002, 12, hw);
         } else {
             receiver(m, &g, mag_c + mag_off, mag_h, dark);
-            m.obox(&g, mag_c + mag_off - vec3(0.0, mag_h.y, 0.0), vec3(mag_h.x * 1.05, 0.005, mag_h.z * 1.02), metal);
+            m.obox(&g, mag_c + mag_off - vec3(0.0, mag_h.y, 0.0), vec3(mag_h.x * 1.05, 0.005, mag_h.z * 1.02), hw);
             if kit == 0 && v.wid != 6 {
                 for x in [-1.0f32, 1.0] {
-                    m.obox(&g, mag_c + mag_off + vec3(x * (mag_h.x + 0.0008), 0.0, 0.0), vec3(0.001, mag_h.y * 0.7, mag_h.z * 0.3), metal);
+                    m.obox(&g, mag_c + mag_off + vec3(x * (mag_h.x + 0.0008), 0.0, 0.0), vec3(0.001, mag_h.y * 0.7, mag_h.z * 0.3), hw);
                 }
             }
         }
@@ -581,7 +598,7 @@ mod tests {
             for skin in sim::weapon_skins_for(wid) {
                 for (reload, cycle) in [(-1.0, 0.0), (-1.0, 0.5), (0.25, 0.0), (0.6, 0.0), (1.0, 0.0)] {
                     let mut mesh = Mesh::default();
-                    gun_model_pose(&mut mesh, wid, 0, skin, Mat4::IDENTITY, reload, cycle);
+                    gun_model_pose(&mut mesh, wid, 0, skin, Mat4::IDENTITY, reload, cycle, true);
                     assert!(!mesh.v.is_empty(), "{} has no model", weapon_def(wid).name);
                     assert!(mesh.chunks.is_empty(), "one weapon exceeded a mesh page");
                     assert!(mesh.i.iter().all(|&i| (i as usize) < mesh.v.len()));
@@ -600,6 +617,36 @@ mod tests {
             }
         }
         eprintln!("largest weapon: {} ({} vertices)", weapon_def(largest.0).name, largest.1);
+    }
+
+    /// Triangles each finish adds over the factory gun, worst weapon first.
+    #[test]
+    fn finishes_stay_within_the_triangle_budget() {
+        let tris = |wid: u8, skin: u8| {
+            let mut mesh = Mesh::default();
+            gun_model(&mut mesh, wid, 0, skin, Mat4::IDENTITY);
+            mesh.triangles()
+        };
+        let mut worst = (0, 0, 0);
+        for skin in 0..sim::WEAPON_SKINS.len() as u8 {
+            let mut row = format!("{:>13}", sim::weapon_skin(skin).name);
+            for wid in carried() {
+                let (base, with) = (tris(wid, 0), tris(wid, skin));
+                row += &format!(" {with:>5}");
+                if with > worst.2 {
+                    worst = (wid, skin, with);
+                }
+                if skin > 0 {
+                    assert!(with <= base + 900, "{} on {}: {with} triangles", sim::weapon_skin(skin).name, weapon_def(wid).name);
+                }
+                // A distant soldier's gun costs the same in every finish.
+                let mut far = Mesh::default();
+                gun_model_pose(&mut far, wid, 0, skin, Mat4::IDENTITY, -1.0, 0.0, false);
+                assert_eq!(far.triangles(), base, "{} adds triangles far away", sim::weapon_skin(skin).name);
+            }
+            eprintln!("{row}");
+        }
+        eprintln!("heaviest: {} in {} ({} triangles)", weapon_def(worst.0).name, sim::weapon_skin(worst.1).name, worst.2);
     }
 
     #[test]
