@@ -43,7 +43,7 @@ fn walk_to(st: &mut PState, w: &World, seq: &mut u32, target: (f32, f32)) -> boo
 
 #[test]
 fn every_tower_stair_is_walked_to_its_deck_without_jumping() {
-    assert!(relay::RISE <= sim::STEP_H);
+    const { assert!(relay::RISE <= sim::STEP_H) };
     for seed in SEEDS {
         let w = world(seed);
         for (x, z, flights, rot, side) in towers() {
@@ -140,7 +140,7 @@ fn towers_are_mirrored_vantage_points_clear_of_objectives_and_spawns() {
             // Sites are levelled: the apron, then the pad, are each one
             // walkable step up from the ground on every side.
             let base = relay::pad_top(&w, x, z);
-            assert!(relay::APRON_DROP <= sim::STEP_H);
+            const { assert!(relay::APRON_DROP <= sim::STEP_H) };
             for (dx, dz) in [(1.0f32, 0.0f32), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
                 for t in [-1.0f32, 0.0, 1.0] {
                     let reach = relay::APRON_HALF + 0.5;

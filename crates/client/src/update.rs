@@ -61,7 +61,7 @@ pub struct Updater {
 /// "v0.7.1" or "0.7.1" -> [0, 7, 1]. `None` if it is not a version.
 pub fn parse_version(s: &str) -> Option<Vec<u32>> {
     let s = s.trim().trim_start_matches('v');
-    let core = s.split(|c| c == '-' || c == '+').next().unwrap_or("");
+    let core = s.split(['-', '+']).next().unwrap_or("");
     let parts: Option<Vec<u32>> = core.split('.').map(|p| p.parse().ok()).collect();
     parts.filter(|p| !p.is_empty() && p.len() <= 4)
 }

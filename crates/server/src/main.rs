@@ -138,7 +138,7 @@ fn main() {
         for _ in 0..n {
             let s = std::time::Instant::now();
             g.tick();
-            if g.tick % 1800 == 0 {
+            if g.tick.is_multiple_of(1800) {
                 let o: String = g.points.iter().map(|p| ['E', 'C', '-'][p.owner as usize]).collect();
                 let alive = |t: u8| g.players.iter().filter(|p| p.team == t && p.alive).count();
                 println!(

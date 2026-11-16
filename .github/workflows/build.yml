@@ -23,6 +23,28 @@ env:
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.ref_name || '') }}
 
 jobs:
+  # Formatting, lints and dependency checks: once, on Linux.
+  lint:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev libudev-dev pkg-config
+      - name: Formatting
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Dependencies (advisories, licences, sources)
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories bans licenses sources
+
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
@@ -138,16 +160,30 @@ jobs:
           path: ${{ steps.installer.outputs.file }}
           if-no-files-found: error
 
-      - name: Attach to release
-        if: env.RELEASE_TAG != ''
+  # A release is published only once every platform has built, passed its
+  # tests and smoke-tested its package, and the lint job has passed. All
+  # files go up together with a SHA256SUMS list the launcher's updater
+  # checks downloads against.
+  release:
+    if: github.event_name != 'pull_request' && (github.event_name == 'workflow_dispatch' && inputs.release_tag != '' || startsWith(github.ref, 'refs/tags/v'))
+    needs: [lint, build]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           if ! gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
-            # Another platform's job may create it at the same moment; that is fine.
-            gh release create "$RELEASE_TAG" --title "FERRITE $RELEASE_TAG" --generate-notes --target "$GITHUB_SHA" || gh release view "$RELEASE_TAG" > /dev/null
+            gh release create "$RELEASE_TAG" --title "FERRITE $RELEASE_TAG" --generate-notes --target "$GITHUB_SHA"
           fi
-          gh release upload "$RELEASE_TAG" "${{ steps.package.outputs.file }}" --clobber
-          if [ -n "${{ steps.installer.outputs.file }}" ]; then
-            gh release upload "$RELEASE_TAG" "${{ steps.installer.outputs.file }}" --clobber
-          fi
+          gh release upload "$RELEASE_TAG" dist/* --clobber

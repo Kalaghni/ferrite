@@ -351,7 +351,7 @@ mod tests {
                 for x in [-0.003, 0.0, 0.003] {
                     for y in [-0.003, 0.0, 0.003] {
                         let origin = axis + vec3(x, y, 1.0);
-                        for tri in mesh.i.chunks_exact(3) {
+                        for tri in mesh.i.as_chunks::<3>().0 {
                             let a = Vec3::from(mesh.v[tri[0] as usize].pos);
                             let b = Vec3::from(mesh.v[tri[1] as usize].pos);
                             let c = Vec3::from(mesh.v[tri[2] as usize].pos);

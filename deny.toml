@@ -1,0 +1,50 @@
+# cargo-deny: run in CI by the lint job (`cargo deny check`).
+
+[graph]
+all-features = false
+
+[advisories]
+# RustSec advisories: vulnerabilities fail the build, as do unmaintained or
+# yanked crates we depend on directly. Add an id to `ignore` only with a
+# comment saying why it does not affect FERRITE.
+version = 2
+yanked = "deny"
+unmaintained = "workspace"
+ignore = [
+    # bincode 1.x is unmaintained. It is FERRITE's wire format; the advisory
+    # reports no vulnerability, and decoding is size-limited (64 KiB) and
+    # returns None on bad input (proto::decode). Moving off it is a
+    # protocol change, tracked separately.
+    { id = "RUSTSEC-2025-0141", reason = "wire format; no vulnerability, bounded decode" },
+    # macroquad's global mutable state makes use-after-free reachable from
+    # safe code that misuses its API. No fixed version exists. FERRITE calls
+    # it from the main thread only and network input never reaches it;
+    # replacing the framework is a renderer rewrite.
+    { id = "RUSTSEC-2025-0035", reason = "no fix upstream; main-thread use only, not network reachable" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+]
+
+[licenses.private]
+# The three workspace crates are not published.
+ignore = true
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

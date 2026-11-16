@@ -277,7 +277,7 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
     let locomotion = p.moving.clamp(0.0, 1.0) * (1.0 - sl) * (1.0 - air) * (1.0 - fall);
     let root = Mat4::from_translation(p.pos + vec3(0.0, 0.19 * fall - p.sink, 0.0))
         * Mat4::from_rotation_y(p.yaw)
-        * Mat4::from_rotation_z((if p.id % 2 == 0 { 0.13 } else { -0.13 }) * fall)
+        * Mat4::from_rotation_z((if p.id.is_multiple_of(2) { 0.13 } else { -0.13 }) * fall)
         * Mat4::from_rotation_x(-fall * 1.5);
     let bulk = if p.kit == 1 {
         1.16

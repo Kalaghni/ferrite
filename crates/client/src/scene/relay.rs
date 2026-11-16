@@ -1031,7 +1031,7 @@ pub fn atmosphere(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, tim
         let mast = deck + layout::MAST_ABOVE;
         if s.exchange() {
             // West calls on even turns; east answers on odd ones.
-            let mine = (turn % 2 == 0) == (s.side > 0.0);
+            let mine = turn.is_multiple_of(2) == (s.side > 0.0);
             let lit = mine && morse(HELLO, into - 0.6);
             for (dx, dz) in [(0.62f32, 0.62f32), (-0.62, -0.62)] {
                 let p = s.at(dx, mast - 0.42, dz);

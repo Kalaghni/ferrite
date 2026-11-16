@@ -283,7 +283,7 @@ fn full_height(x: f32, z: f32, s: u32, map: u8) -> f32 {
     let mut h = shape(x, z, s, map);
     // The original valley settles objectives halfway to sea level; the other
     // maps level them where the ground already is (a pit floor stays a floor).
-    let settle = if map % MAPS.len() as u8 == 0 { 0.5 } else { 1.0 };
+    let settle = if map.is_multiple_of(MAPS.len() as u8) { 0.5 } else { 1.0 };
     let mut flat = |cx: f32, cz: f32, r: f32| {
         let d = ((x - cx).powi(2) + (z - cz).powi(2)).sqrt();
         let w = 1.0 - smooth(r * 0.55, r * 1.4, d);
@@ -1908,7 +1908,7 @@ mod tests {
                 assert!(x.abs() < HALF_X - 15.0 && z.abs() < HALF_Z - 15.0, "{}: ({x}, {z}) is near the edge", def.name);
             }
             // The terrain runs well past the battlefield on every side.
-            assert!(TER_X0 < -HALF_X - 50.0 && TER_Z0 < -HALF_Z - 50.0);
+            const { assert!(TER_X0 < -HALF_X - 50.0 && TER_Z0 < -HALF_Z - 50.0) };
             let _ = id;
         }
     }

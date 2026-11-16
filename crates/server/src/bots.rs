@@ -198,7 +198,7 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
     }
 
     // --- Perception (staggered across bots, ~7 Hz) ---
-    if (t + b.phase) % 8 == 0 {
+    if (t + b.phase).is_multiple_of(8) {
         let fwd = sim::view_dir(b.yaw, b.pitch);
         let maxd = if kit == 2 { 140.0 } else { 90.0 };
         let mut best: Option<(usize, f32, bool)> = None;
@@ -241,7 +241,7 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
             if b.alert == Some(j) {
                 score -= 8.0;
             }
-            if best.map_or(true, |(_, s, _)| score < s) {
+            if best.is_none_or(|(_, s, _)| score < s) {
                 best = Some((j, score, in_view));
             }
         }
@@ -327,10 +327,8 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
             detour = Some(gpos); // the last steps onto our own stand
         } else if own.state == 2 && near(own.pos, 45.0) {
             detour = Some(own.pos); // ours is lying there: take it back
-        } else if enemy.state == 2 && near(enemy.pos, 45.0) {
-            detour = Some(enemy.pos);
-        } else if enemy.state == 0 && near(enemy.pos, 14.0) && !b.defender {
-            detour = Some(enemy.pos);
+        } else if (enemy.state == 2 && near(enemy.pos, 45.0)) || (enemy.state == 0 && near(enemy.pos, 14.0) && !b.defender) {
+            detour = Some(enemy.pos); // theirs, dropped or close by at home
         } else if own.state == 1 && near(own.pos, 40.0) {
             detour = Some(own.pos); // run the carrier down
         }
@@ -408,7 +406,7 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
                 }
             } else if !b.defender && dgoal > 7.0 && d > 14.0 {
                 // Attackers keep pressing toward the objective under fire.
-                mv = mv + right * b.strafe * 0.6;
+                mv += right * b.strafe * 0.6;
             } else if d < ideal * 1.3 || dgoal <= 7.0 {
                 mv = right * b.strafe;
                 if kit == 2 && d > 20.0 {
@@ -575,7 +573,7 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
         }
         cmd.buttons |= btn::SPRINT;
     }
-    if wd.semi && t % 3 != 0 {
+    if wd.semi && !t.is_multiple_of(3) {
         fire = false; // semi-auto: pull the trigger, don't hold it
     }
     if fire {

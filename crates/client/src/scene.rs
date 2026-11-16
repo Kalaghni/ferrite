@@ -456,6 +456,8 @@ pub fn sun_for(map: u8) -> Vec3 {
 pub fn tone_for(map: u8) -> crate::gfx::Tone {
     flora::mood(map).map_or(crate::gfx::TONE, |m| m.tone)
 }
+// The asset_review example compiles this module without the game loop.
+#[allow(unused_imports)]
 pub use flora::ambience;
 pub fn shadow_bounds(map: u8) -> (Vec3, Vec3) {
     (vec3(-HALF_X - 8.0, -12.0, -HALF_Z - 8.0), vec3(HALF_X + 8.0, if map == slag_cathedral::ID { 52.0 } else { 34.0 }, HALF_Z + 8.0))

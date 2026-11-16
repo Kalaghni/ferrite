@@ -195,6 +195,54 @@ pub struct Point {
     pub n: [u8; 2],
 }
 
+/// The kill feed and match events, as clients see them: every entry has an
+/// absolute sequence number (its index since the server started, from 1 on
+/// the wire), but only the newest `FEED_KEEP` are held, so a server that runs
+/// for weeks does not grow without bound. Clients acknowledge by sequence
+/// number; one that has fallen further behind than that simply skips ahead.
+#[derive(Default)]
+pub struct FeedLog {
+    /// Sequence number of the oldest entry held.
+    base: usize,
+    items: std::collections::VecDeque<Feed>,
+}
+
+/// How many feed entries a server keeps (ten go out per snapshot).
+pub const FEED_KEEP: usize = 256;
+
+impl FeedLog {
+    pub fn push(&mut self, f: Feed) {
+        self.items.push_back(f);
+        if self.items.len() > FEED_KEEP {
+            self.items.pop_front();
+            self.base += 1;
+        }
+    }
+    /// Entries ever pushed, including those no longer held.
+    pub fn len(&self) -> usize {
+        self.base + self.items.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    /// Entries still held, oldest first.
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = &Feed> + '_ {
+        self.items.iter()
+    }
+    pub fn last(&self) -> Option<&Feed> {
+        self.items.back()
+    }
+    /// Held entries from absolute index `from` on, with their indices.
+    pub fn since(&self, from: usize) -> impl Iterator<Item = (usize, &Feed)> + '_ {
+        let skip = from.saturating_sub(self.base);
+        self.items.iter().enumerate().skip(skip).map(move |(i, f)| (self.base + i, f))
+    }
+    /// How many entries are held (at most `FEED_KEEP`).
+    pub fn held(&self) -> usize {
+        self.items.len()
+    }
+}
+
 /// A flag in capture the flag. `state`: 0 at home, 1 carried, 2 dropped.
 #[derive(Clone, Copy, Debug)]
 pub struct Flag {
@@ -305,7 +353,7 @@ pub struct Game {
     pub fx_seq: u32,
     /// Map the lobby falls back to when nobody votes.
     lobby_map: u8,
-    pub feed: Vec<Feed>,
+    pub feed: FeedLog,
     pub phase: u8,
     pub winner: u8,
     pub phase_until: u32,
@@ -363,7 +411,7 @@ impl Game {
             fx: Vec::new(),
             fx_seq: 0,
             lobby_map: cfg.map,
-            feed: Vec::new(),
+            feed: FeedLog::default(),
             phase: 0,
             winner: NEUTRAL,
             phase_until: 0,
@@ -919,7 +967,7 @@ impl Game {
             if d > sim::MELEE_REACH || (d > 0.7 && to.dot(dir) / d < 0.5) {
                 continue;
             }
-            if best.map_or(true, |(_, bd, _)| d < bd) && self.world.los(origin, chest, self.dmask) {
+            if best.is_none_or(|(_, bd, _)| d < bd) && self.world.los(origin, chest, self.dmask) {
                 best = Some((j, d, pos));
             }
         }
@@ -1563,7 +1611,7 @@ impl Game {
                 let c = self.world.points[k];
                 let defenders = self.players.iter().filter(|p| p.alive && p.team != team && (p.st.pos - c).length() < 22.0).count();
                 let score = defenders as f32 + self.rng.range(0.0, 2.5);
-                if best.map_or(true, |(_, s)| score < s) {
+                if best.is_none_or(|(_, s)| score < s) {
                     best = Some((k, score));
                 }
             }
@@ -1783,7 +1831,7 @@ impl Game {
         if self.phase == 0 && self.mode != mode::CONQUEST {
             // Stronghold: a point a second to whoever holds the centre.
             let mid = self.points[NUM_POINTS / 2].owner;
-            if self.mode == mode::KOTH && mid < 2 && t % TICK_HZ == 0 {
+            if self.mode == mode::KOTH && mid < 2 && t.is_multiple_of(TICK_HZ) {
                 self.tickets[mid as usize] += 1;
             }
             let reached = self.tickets[0] >= self.goal || self.tickets[1] >= self.goal;
@@ -1802,7 +1850,7 @@ impl Game {
                 self.feed.push(Feed::MatchEnd { winner: self.winner });
             }
         } else if self.phase == 0 {
-            if t % (4 * TICK_HZ) == 0 {
+            if t.is_multiple_of(4 * TICK_HZ) {
                 let diff = self.owned(0) - self.owned(1);
                 let mult = if diff.abs() == NUM_POINTS as i32 { 3 } else { 1 };
                 if diff > 0 {
@@ -1930,7 +1978,7 @@ impl Game {
                 }
             }
         }
-        let feed = self.feed.iter().enumerate().skip(ack_feed as usize).take(10).map(|(i, f)| (i as u32 + 1, *f)).collect();
+        let feed = self.feed.since(ack_feed as usize).take(10).map(|(i, f)| (i as u32 + 1, *f)).collect();
         let (ack_seq, me_state) = match me {
             Some(i) => {
                 let p = &self.players[i];

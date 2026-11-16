@@ -100,7 +100,7 @@ pub fn block(m: &mut Mesh, b: &Block, index: usize) {
         BlockKind::Rock => rgb(0.285 * j, 0.27 * j, 0.29 * j),
         BlockKind::Step => shade(STEEL, 1.12 * j),
         BlockKind::Sandbag => rgb(0.39 * j, 0.35 * j, 0.28 * j),
-        BlockKind::Container => shade(if b.tint % 2 == 0 { RUST } else { STEEL }, j),
+        BlockKind::Container => shade(if b.tint.is_multiple_of(2) { RUST } else { STEEL }, j),
         BlockKind::Metal => shade(STEEL, j * (0.92 + (b.tint % 3) as f32 * 0.06)),
     };
     m.cuboid(b.min, b.max, base);

@@ -277,12 +277,12 @@ impl Controller {
                     }
                     edges |= button_bit(button);
                 }
-                EventType::AxisChanged(axis, value, _) if axis.is_stick() && value.abs() > settings.deadzone.max(0.3) => {
-                    if self.active != Some(event.id) {
-                        self.active = Some(event.id);
-                        self.frame = Frame::default();
-                        edges = 0;
-                    }
+                EventType::AxisChanged(axis, value, _)
+                    if axis.is_stick() && value.abs() > settings.deadzone.max(0.3) && self.active != Some(event.id) =>
+                {
+                    self.active = Some(event.id);
+                    self.frame = Frame::default();
+                    edges = 0;
                 }
                 _ => {}
             }

@@ -1231,7 +1231,7 @@ pub fn ray_player(o: Vec3, d: Vec3, pos: Vec3, crouch: bool) -> Option<(f32, boo
     let disc = b * b - (oc.length_squared() - 0.24 * 0.24);
     if disc >= 0.0 {
         let t = -b - disc.sqrt();
-        if t > 0.0 && best.map_or(true, |(bt, _)| t < bt + 0.3) {
+        if t > 0.0 && best.is_none_or(|(bt, _)| t < bt + 0.3) {
             best = Some((t, true));
         }
     }

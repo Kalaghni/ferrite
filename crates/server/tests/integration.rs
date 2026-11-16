@@ -40,7 +40,7 @@ fn random_cmd(rng: &mut Rng, seq: u32, yaw: &mut f32) -> Cmd {
         mx: rng.below(3) as i8 - 1,
         mz: if rng.chance(0.8) { 1 } else { -1 },
         buttons,
-        more: (seq % 37 == 0) as u8,
+        more: seq.is_multiple_of(37) as u8,
         yaw: *yaw,
         pitch: rng.range(-0.3, 0.3),
         interp: 0.0,
@@ -164,7 +164,7 @@ fn bot_battle_soak_holds_invariants() {
     let mut g = Game::new(cfg(12));
     for _ in 0..(300 * 60) {
         g.tick();
-        if g.tick % 20 == 0 {
+        if g.tick.is_multiple_of(20) {
             let o = g.owners();
             // Territory is contiguous: EMBER prefix, COBALT suffix.
             let first_not0 = o.iter().position(|&x| x != 0).unwrap_or(5);
@@ -625,7 +625,7 @@ fn every_map_is_fair_and_playable() {
         assert_eq!(g.world.map, id);
         for _ in 0..(180 * 60) {
             g.tick();
-            if g.tick % 30 == 0 {
+            if g.tick.is_multiple_of(30) {
                 for p in &g.players {
                     assert!(
                         p.st.pos.is_finite() && p.st.pos.x.abs() <= HALF_X && p.st.pos.z.abs() <= HALF_Z,
@@ -1052,8 +1052,8 @@ fn melee_hits_close_and_kills_from_behind() {
     stage(&mut g, 1.6, std::f32::consts::PI);
     swing(&mut g);
     assert!(!g.players[foe].alive);
-    assert!(g.feed[feed0..].iter().any(
-        |f| matches!(f, Feed::Kill { killer, victim, weapon, .. } if *killer == me as u8 && *victim == foe as u8 && *weapon == MELEE_WEAPON)
+    assert!(g.feed.since(feed0).any(
+        |(_, f)| matches!(f, Feed::Kill { killer, victim, weapon, .. } if *killer == me as u8 && *victim == foe as u8 && *weapon == MELEE_WEAPON)
     ));
     assert_eq!(sim::weapon_def(MELEE_WEAPON).name, "Melee");
     // A swing interrupts a reload.

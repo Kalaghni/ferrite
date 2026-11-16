@@ -249,7 +249,10 @@ fn streaks_are_announced_and_leave_their_reward() {
     let streaks: Vec<u8> = g
         .feed
         .iter()
-        .filter_map(|f| if let Feed::Streak { who, n } = f { Some(*n).filter(|_| *who as usize == me) } else { None })
+        .filter_map(|f| match f {
+            Feed::Streak { who, n } if *who as usize == me => Some(*n),
+            _ => None,
+        })
         .collect();
     assert_eq!(streaks, [3, 5, 7]);
     assert_eq!(g.snapshot(Some(me), 0, 0).me.unwrap().streak, 7);
@@ -477,7 +480,7 @@ fn every_mode_plays_out_between_bots() {
         let mut most_pickups = 0;
         for _ in 0..(260 * 60) {
             g.tick();
-            if g.tick % 20 == 0 {
+            if g.tick.is_multiple_of(20) {
                 for p in &g.players {
                     assert!(p.st.pos.is_finite(), "{} has non-finite position", p.name);
                     assert!(p.st.pos.x.abs() <= HALF_X && p.st.pos.z.abs() <= HALF_Z, "{} left the map", p.name);
@@ -491,7 +494,7 @@ fn every_mode_plays_out_between_bots() {
                 for f in &g.flags {
                     assert!(f.pos.is_finite() && f.state <= 2);
                     if f.state == 1 {
-                        assert!(g.players[f.carrier].alive || m != mode::CTF || g.tick % 20 == 0);
+                        assert!(g.players[f.carrier].alive || m != mode::CTF || g.tick.is_multiple_of(20));
                     }
                 }
                 let snap = g.snapshot(Some(0), g.feed.len() as u32, g.fx_seq);

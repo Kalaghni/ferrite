@@ -610,7 +610,7 @@ impl App {
         self.icons.get(&id).map(|i| &i.1)
     }
     pub fn is_bot(&self, id: u8) -> bool {
-        self.net.roster.iter().find(|r| r.id == id).map_or(true, |r| r.bot)
+        self.net.roster.iter().find(|r| r.id == id).is_none_or(|r| r.bot)
     }
     /// Finish worn by a player's primary, or their sidearm.
     pub fn wskin_of(&self, id: u8, side: bool) -> u8 {
@@ -629,7 +629,7 @@ impl App {
         self.net.roster.iter().find(|r| r.id == id).map_or_else(|| "?".to_string(), |r| r.name.clone())
     }
     pub fn team(&self, id: u8) -> u8 {
-        self.net.roster.iter().find(|r| r.id == id).map_or((id % 2) as u8, |r| r.team)
+        self.net.roster.iter().find(|r| r.id == id).map_or(id % 2, |r| r.team)
     }
     /// Weapon a player is firing: their primary, or their sidearm.
     pub fn wid_of(&self, id: u8, side: bool) -> u8 {
@@ -974,7 +974,7 @@ impl App {
         self.armor = me.armor;
         self.streak = me.streak;
         self.power = me.power;
-        while self.pending.front().map_or(false, |c| c.seq <= s.ack_seq) {
+        while self.pending.front().is_some_and(|c| c.seq <= s.ack_seq) {
             self.pending.pop_front();
         }
         if !me.alive {
@@ -1153,7 +1153,7 @@ impl App {
             if out.slid {
                 self.audio.play(Sfx::Slide, 0.6);
             }
-            if self.st.slide > 0 && self.st.on_ground && self.seq % 4 == 0 {
+            if self.st.slide > 0 && self.st.on_ground && self.seq.is_multiple_of(4) {
                 self.fx.dust(self.st.pos, 0.8);
             }
             if out.swapped {
@@ -2027,8 +2027,10 @@ async fn play(
                     app.handle_fx(f, listener, now, false);
                 }
             }
+            // Entries come in order. Normally each is the next one; after a
+            // long stall the server may have dropped some, so take any newer.
             for (id, f) in &s.feed {
-                if *id == app.net.ack_feed + 1 {
+                if *id > app.net.ack_feed {
                     app.net.ack_feed = *id;
                     app.handle_feed(f, now);
                 }
@@ -2656,7 +2658,7 @@ async fn play(
             ended = Some(format!("Lost connection to {addr}"));
             break;
         }
-        if args.quit_at.map_or(false, |q| t >= q) {
+        if args.quit_at.is_some_and(|q| t >= q) {
             break;
         }
         // Without vsync (some drivers, or a hidden window) do not spin flat out.

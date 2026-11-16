@@ -26,3 +26,11 @@ opt-level = 3
 [profile.release]
 opt-level = 3
 lto = "thin"
+
+# Shared by every crate (`[lints] workspace = true`). CI runs clippy with
+# warnings denied.
+[workspace.lints.clippy]
+# Indexing the two teams or five points by number reads better than zips.
+needless_range_loop = "allow"
+# S2C variants are built, encoded and dropped; boxing would only add noise.
+large_enum_variant = "allow"

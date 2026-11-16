@@ -186,7 +186,7 @@ pub fn owns(w: &World, b: &Block) -> bool {
     [1.0, -1.0].into_iter().any(|k| (c.x - s.x * k).abs() < s.hx + 2.0 && (c.z - s.z * k).abs() < s.hz + 5.0)
 }
 pub fn block(m: &mut Mesh, w: &World, b: &Block) {
-    let stone = if b.tint % 2 == 0 { rgb(0.42, 0.40, 0.34) } else { rgb(0.48, 0.45, 0.39) };
+    let stone = if b.tint.is_multiple_of(2) { rgb(0.42, 0.40, 0.34) } else { rgb(0.48, 0.45, 0.39) };
     m.cuboid(b.min, b.max, stone);
     if w.map == 2 {
         // The ridge's natural fissure has fractured faces and damp moss,
@@ -808,7 +808,7 @@ mod tests {
                     for dx in [-1.15, -0.7, 0.0, 0.7, 1.15] {
                         let o = vec3(f.pos.x + dx, w.height(f.pos.x, f.pos.z) + y, f.pos.z - 1.0);
                         for (vertices, indices) in &chunks {
-                            for tri in indices.chunks_exact(3) {
+                            for tri in indices.as_chunks::<3>().0 {
                                 assert!(
                                     !ray_triangle(
                                         o,

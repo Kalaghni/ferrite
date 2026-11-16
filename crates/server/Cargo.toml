@@ -1,8 +1,13 @@
 [package]
 name = "ferrite-server"
 version.workspace = true
+license.workspace = true
+publish = false
 edition.workspace = true
 
 [dependencies]
 ferrite-shared = { path = "../shared" }
 socket2 = { version = "0.6", features = ["all"] }
+
+[lints]
+workspace = true

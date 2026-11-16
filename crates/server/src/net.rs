@@ -202,7 +202,7 @@ fn serve(mut game: Game, sock: UdpSocket, stop: Arc<AtomicBool>) {
                 }
             }
         }
-        if t % 2 == 0 {
+        if t.is_multiple_of(2) {
             for (addr, c) in conns.iter_mut() {
                 let snap = game.snapshot(c.player, c.ack_feed, c.fx_sent);
                 c.fx_sent = game.fx_seq;
@@ -218,11 +218,11 @@ fn serve(mut game: Game, sock: UdpSocket, stop: Arc<AtomicBool>) {
                 }
             }
         }
-        if t % 30 == 0 && !conns.is_empty() {
+        if t.is_multiple_of(30) && !conns.is_empty() {
             let parts = roster_msgs(&game);
             // Round results and who wears which icon change rarely: once
             // a second is plenty.
-            let slow = (t % 60 == 0).then(|| [encode(&game.rounds_msg()), encode(&game.icons_msg())]);
+            let slow = t.is_multiple_of(60).then(|| [encode(&game.rounds_msg()), encode(&game.icons_msg())]);
             for (addr, c) in conns.iter() {
                 // What the round just finished paid, until the next begins.
                 if let Some((round, credits, won)) = c.player.and_then(|i| game.players[i].award) {
@@ -240,7 +240,7 @@ fn serve(mut game: Game, sock: UdpSocket, stop: Arc<AtomicBool>) {
         work_sum += w;
         work_max = work_max.max(w);
         work_n += 1;
-        if log && t % (10 * TICK_HZ) == 0 {
+        if log && t.is_multiple_of(10 * TICK_HZ) {
             println!(
                 "[{:>7}] humans {} | tickets {}-{} | points {:?} | kills {} caps {} rounds {} | tick avg {:.3} ms max {:.3} ms | out {:.1} kB/s in {} pkt/s | dropped cmds {}",
                 t,

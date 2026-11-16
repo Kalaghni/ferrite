@@ -16,7 +16,10 @@ fn world(seed: u64) -> World {
     World::with_map(seed, id)
 }
 
-fn geometry(w: &World) -> Vec<([u32; 3], [u32; 3], u8, u8, Option<u8>)> {
+/// A block as quantised corners, kind, tint and destruction bit.
+type BlockPrint = ([u32; 3], [u32; 3], u8, u8, Option<u8>);
+
+fn geometry(w: &World) -> Vec<BlockPrint> {
     w.blocks
         .iter()
         .map(|b| (b.min.to_array().map(f32::to_bits), b.max.to_array().map(f32::to_bits), b.kind as u8, b.tint, b.dest))
@@ -199,7 +202,7 @@ fn a_player_physically_walks_from_both_bases_to_the_nave_on_every_lane() {
 #[test]
 fn all_four_stairs_reach_and_cross_the_elevated_galleries_without_jumping() {
     assert!((cathedral::STAIR_START_X - cathedral::STAIR_STEPS as f32 * cathedral::STAIR_TREAD - cathedral::GALLERY_HALF_X).abs() < 0.001);
-    assert!(cathedral::STAIR_RISE <= sim::STEP_H);
+    const { assert!(cathedral::STAIR_RISE <= sim::STEP_H) };
     // Read the renderer/collision anchors rather than assuming screen-space positions.
     for seed in SEEDS {
         let w = world(seed);

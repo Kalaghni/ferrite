@@ -761,14 +761,14 @@ fn draw_pause(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
         );
         pic(&app.art.emblems[t], cx + 10.0 * k, cy + 12.0 * k, 48.0 * k, 48.0 * k);
         draw_text(TEAM_NAMES[t], cx + 70.0 * k, cy + 28.0 * k, sz(17.0), col(tc, 1.0));
-        draw_text(&snap.tickets[t].max(0).to_string(), cx + 70.0 * k, cy + 60.0 * k, sz(36.0), th::WHITE);
+        draw_text(&snap.tickets[t].to_string(), cx + 70.0 * k, cy + 60.0 * k, sz(36.0), th::WHITE);
     }
     let top_t = snap.tickets[0].max(snap.tickets[1]).max(snap.goal.max(1)) as f32;
     for t in 0..2usize {
         let bx = ix + t as f32 * (cw + 12.0 * k);
         let by = py + 208.0 * k;
         draw_rectangle(bx, by, cw, 10.0 * k, col(WHITE, 0.12));
-        draw_rectangle(bx, by, cw * (snap.tickets[t].max(0) as f32 / top_t).min(1.0), 10.0 * k, col(team_col(t as u8), 1.0));
+        draw_rectangle(bx, by, cw * (snap.tickets[t] as f32 / top_t).min(1.0), 10.0 * k, col(team_col(t as u8), 1.0));
     }
     draw_line(ix, py + 236.0 * k, ix + iw, py + 236.0 * k, 1.0, th::STROKE);
     draw_text(if snap.mode == mode::CONQUEST { "THE FRONT LINE" } else { "THE OBJECTIVE" }, ix, py + 264.0 * k, sz(17.0), th::MUTED);

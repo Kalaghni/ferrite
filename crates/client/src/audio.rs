@@ -434,7 +434,7 @@ fn noise(dur: f32, decay: f32, lp: f32, seed: u64) -> Vec<f32> {
 
 /// Light, irregular impacts with inharmonic sheet-metal resonances.
 fn metal_rattle() -> Vec<f32> {
-    let mut rng = Rng::new(0xFA11_EA);
+    let mut rng = Rng::new(0x00FA_11EA);
     let mut filtered = 0.0;
     (0..(1.4 * SR) as usize)
         .map(|i| {

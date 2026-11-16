@@ -194,13 +194,12 @@ impl Net {
                     self.rounds = rounds;
                 }
                 Some(S2C::Reject(why)) => self.rejected = Some(why),
-                Some(S2C::Award { round, credits, won }) => {
+                Some(S2C::Award { round, credits, won })
                     // Resent while the result is up: each round pays once.
-                    if round > self.award_round {
+                    if round > self.award_round => {
                         self.award_round = round;
                         self.awards.push((credits, won));
                     }
-                }
                 _ => {}
             }
         }
