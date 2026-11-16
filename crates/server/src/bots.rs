@@ -350,7 +350,7 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
     }
     if let Some(d) = detour {
         let to = vec2(d.x - pos.x, d.z - pos.z);
-        if to.length() > 0.3 && !g.world.lava(d.x, d.z, 0.3) {
+        if to.length() > 0.3 && !g.world.danger(d, 0.3) {
             mv = to.normalize();
         }
     }
@@ -529,11 +529,14 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
         crouch = false;
     }
 
-    // Never strafe or back-pedal into lava mid-fight. Route-following is
-    // left alone: the flow field already takes the bridges.
-    if engaged && mv.length_squared() > 0.01 && !g.world.lava(pos.x, pos.z, 0.0) {
+    // Never walk, strafe or back-pedal into lava or flood water. The flow
+    // field already takes the bridges over the casting channels; the
+    // runner's lava and the flood come and go, so a bot that meets them
+    // waits on the edge (or, caught in them, keeps going to get out).
+    if mv.length_squared() > 0.01 && !g.world.danger(pos, 0.0) {
         let ahead = vec2(pos.x, pos.z) + mv.normalize() * 1.4;
-        if g.world.lava(ahead.x, ahead.y, 0.3) {
+        let feet = vec3(ahead.x, pos.y.max(g.world.height(ahead.x, ahead.y)), ahead.y);
+        if g.world.danger(feet, 0.3) && (engaged || !g.world.lava_fixed(ahead.x, ahead.y, 0.3)) {
             mv = Vec2::ZERO;
         }
     }

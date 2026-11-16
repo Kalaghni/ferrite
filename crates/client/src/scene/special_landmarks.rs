@@ -1,8 +1,8 @@
 //! Off-field landmarks: the relay's cellular backbone and the foundry's volcano.
 //! Their moving parts are ambient scenery; neither changes collision or damage.
+use super::hash01;
 use super::slag_cathedral::art::{annulus, cross, soft, stencil, wall};
 use super::slag_cathedral::{beam, pipe};
-use super::{hash01, smooth};
 use crate::gfx::{shade, Col, Mesh};
 use ferrite_shared::glam::{vec3, Mat4, Vec3};
 use ferrite_shared::map::World;
@@ -10,7 +10,7 @@ use std::f32::consts::{PI, TAU};
 
 pub(crate) const MAST_XZ: (f32, f32) = (0.0, 126.0);
 pub(crate) const VOLCANO_XZ: (f32, f32) = (0.0, -160.0);
-pub(crate) const ERUPTION_PERIOD: f32 = 96.0;
+pub(crate) use ferrite_shared::events::eruption;
 const STEEL: Col = [0.36, 0.39, 0.42, 0.0];
 const WHITE: Col = [0.84, 0.85, 0.80, 0.0];
 const RED: Col = [0.71, 0.19, 0.13, 0.0];
@@ -24,32 +24,9 @@ pub(crate) fn volcano_origin(w: &World) -> Vec3 {
     vec3(VOLCANO_XZ.0, w.height(VOLCANO_XZ.0, VOLCANO_XZ.1), VOLCANO_XZ.1)
 }
 
-/// Each 96-second ambient window has a 40% chance of an eruption. Smoke
-/// thickens first, then a lava fountain launches bombs, then the plume cools.
-/// Based only on the world seed and the world clock (`ferrite_shared::world_clock`,
-/// the same on every client); it never affects players.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Eruption {
-    pub warning: f32,
-    pub fountain: f32,
-    pub ash: f32,
-    pub age: f32,
-    pub cycle: u32,
-}
-pub(crate) fn eruption(seed: u64, time: f32) -> Eruption {
-    let time = if time.is_finite() { time.max(0.0) } else { 0.0 };
-    let cycle = (time / ERUPTION_PERIOD).floor() as u32;
-    let phase = time.rem_euclid(ERUPTION_PERIOD);
-    let rolled = hash01((seed ^ (seed >> 32)) as u32 ^ cycle.wrapping_mul(0x9E37), 0xCADA);
-    let mut out = Eruption { warning: 0.0, fountain: 0.0, ash: 0.0, age: phase - 26.0, cycle };
-    if rolled >= 0.40 {
-        return out;
-    }
-    out.warning = smooth(16.0, 26.0, phase) * (1.0 - smooth(44.0, 62.0, phase));
-    out.fountain = smooth(26.0, 29.0, phase) * (1.0 - smooth(39.0, 46.0, phase));
-    out.ash = smooth(21.0, 36.0, phase) * (1.0 - smooth(57.0, 82.0, phase));
-    out
-}
+// Eruptions (`ferrite_shared::events::eruption`) run on the world clock, the
+// same on the server and every client; the lava they send down the runner
+// burns (see `World::lava`).
 
 pub fn build(m: &mut Mesh, w: &World) {
     match w.map {
@@ -265,6 +242,7 @@ fn volcano_atmosphere(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ferrite_shared::events::ERUPTION_PERIOD;
 
     fn finite(mesh: &Mesh) {
         for vertices in mesh.chunks.iter().map(|(v, _)| v).chain(std::iter::once(&mesh.v)) {

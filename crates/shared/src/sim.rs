@@ -46,11 +46,15 @@ pub const GRENADE_WEAPON: u8 = 3;
 pub const MELEE_WEAPON: u8 = 17;
 /// Kill-feed id for burning to death in lava. Not an entry in `WEAPONS`.
 pub const LAVA_WEAPON: u8 = 254;
+/// Kill-feed id for being swept away by flood water.
+pub const WATER_WEAPON: u8 = 253;
 
 /// What the kill feed calls a weapon id, including environmental deaths.
 pub fn weapon_name(wid: u8) -> &'static str {
     if wid == LAVA_WEAPON {
         "Lava"
+    } else if wid == WATER_WEAPON {
+        "Flood"
     } else {
         weapon_def(wid).name
     }

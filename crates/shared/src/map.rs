@@ -8,6 +8,7 @@ pub mod fallen_giant;
 pub mod landmarks;
 pub mod relay;
 pub mod slag_cathedral;
+pub mod spillway;
 pub mod tunnels;
 
 use crate::rng::Rng;
@@ -192,6 +193,10 @@ pub struct World {
     pub n_crates: usize,
     /// Underground routes; see `tunnels`.
     pub tunnels: Vec<tunnels::Tunnel>,
+    /// Seconds on the world clock (`crate::world_clock`): when timed hazards
+    /// (`crate::events`) are live. The server sets it every tick and clients
+    /// every frame. Movement never reads it, so prediction is unaffected.
+    pub clock: f32,
 }
 
 fn hash(x: i32, z: i32, seed: u32) -> f32 {
@@ -358,6 +363,7 @@ impl World {
             features: Vec::new(),
             n_crates: 0,
             tunnels,
+            clock: 0.0,
         };
         for (i, (x, z)) in def.points.iter().enumerate() {
             w.points[i] = vec3(*x, w.height(*x, *z), *z);
@@ -403,15 +409,65 @@ impl World {
         vec3(-dx, 2.0 * e, -dz).normalize()
     }
 
-    /// Whether (x, z) is over a lava hazard, grown by `margin`. Only Slag
-    /// Cathedral has any.
-    pub fn lava(&self, x: f32, z: f32, margin: f32) -> bool {
+    /// Whether (x, z) is over lava that is always molten (Slag Cathedral's
+    /// casting channels), grown by `margin`. Navigation and map building use
+    /// this; the runner's lava comes and goes.
+    pub fn lava_fixed(&self, x: f32, z: f32, margin: f32) -> bool {
         self.map == slag_cathedral::MAP_ID && slag_cathedral::in_lava(x, z, margin)
+    }
+
+    /// Whether (x, z) is over molten lava now (see `clock`), grown by `margin`.
+    pub fn lava(&self, x: f32, z: f32, margin: f32) -> bool {
+        self.lava_fixed(x, z, margin)
+            || (self.map == slag_cathedral::MAP_ID
+                && slag_cathedral::in_runner(x, z, margin, crate::events::lava_flow(self.seed, self.clock).front))
     }
 
     /// Whether someone whose feet are at `pos` is standing in lava.
     pub fn burning(&self, pos: Vec3) -> bool {
         self.lava(pos.x, pos.z, 0.0) && pos.y - self.height(pos.x, pos.z) < slag_cathedral::LAVA_REACH
+    }
+
+    /// Height of flood water over (x, z) now, if there is any there.
+    pub fn water(&self, x: f32, z: f32) -> Option<f32> {
+        if self.map != spillway::MAP_ID {
+            return None;
+        }
+        let y = spillway::water_surface(self, x, z, crate::events::flood(self.seed, self.clock))?;
+        (self.height(x, z) < y).then_some(y)
+    }
+
+    /// Whether someone whose feet are at `pos` is in flood water.
+    pub fn drowning(&self, pos: Vec3) -> bool {
+        self.water(pos.x, pos.z).is_some_and(|y| pos.y < y - spillway::WADE)
+    }
+
+    /// What the ground at `pos` is doing to whoever stands there: damage per
+    /// second and the kill-feed id it is reported under.
+    pub fn hazard(&self, pos: Vec3) -> Option<(f32, u8)> {
+        if self.burning(pos) {
+            Some((slag_cathedral::LAVA_DPS, crate::sim::LAVA_WEAPON))
+        } else if self.drowning(pos) {
+            Some((spillway::WATER_DPS, crate::sim::WATER_WEAPON))
+        } else {
+            None
+        }
+    }
+
+    /// Whether feet at `p`, grown by `margin` across the ground, would be
+    /// somewhere a bot should not walk or an item should not lie now: in
+    /// molten lava, or below flood water deeper than a wade (a bridge over
+    /// the flood is fine).
+    pub fn danger(&self, p: Vec3, margin: f32) -> bool {
+        if self.lava(p.x, p.z, margin) {
+            return true;
+        }
+        if self.map != spillway::MAP_ID {
+            return false;
+        }
+        [(0.0, 0.0), (margin, 0.0), (-margin, 0.0), (0.0, margin), (0.0, -margin)]
+            .iter()
+            .any(|&(dx, dz)| self.water(p.x + dx, p.z + dz).is_some_and(|y| p.y < y - spillway::WADE))
     }
 
     #[inline]
@@ -848,7 +904,11 @@ impl World {
             }
             slag_cathedral::MAP_ID => {
                 let end = BASES_XZ[0].0 + BASE_SPAWN_RADIUS;
-                vec![(vec2(end, 0.0), vec2(-slag_cathedral::NAVE_HALF_X, 0.0))]
+                let mut lines = vec![(vec2(end, 0.0), vec2(-slag_cathedral::NAVE_HALF_X, 0.0))];
+                // Keep the lava runner clear (it is mirrored onto the north
+                // side too, which only leaves that strip open as well).
+                lines.extend(slag_cathedral::RUNNER.windows(2).map(|w| (v(w[0]), v(w[1]))));
+                lines
             }
             _ => Vec::new(),
         }
@@ -875,7 +935,7 @@ impl World {
             && !self.near_objective(x, z, 16.0 + r, 12.0 + r)
             && self.lane_distance(x, z) > 6.0 + r
             && self.slope_under(x, z, hx, hz) < 1.3
-            && !self.lava(x, z, r + 2.0)
+            && !self.lava_fixed(x, z, r + 2.0)
             && !self.in_corridor(x, z, r + 3.0)
             && self.rect_free(x, z, hx + pad, hz + pad)
     }
@@ -1565,7 +1625,7 @@ impl Nav {
                 let x = -HALF_X + (cx as f32 + 0.5) * NAV_CELL;
                 let z = -HALF_Z + (cz as f32 + 0.5) * NAV_CELL;
                 ground[cz * w + cx] = world.height(x, z);
-                blocked[cz * w + cx] = world.lava(x, z, 0.9); // bots take the bridges
+                blocked[cz * w + cx] = world.lava_fixed(x, z, 0.9); // bots take the bridges
             }
         }
         // A structural blast rebuilds navigation during a server tick.

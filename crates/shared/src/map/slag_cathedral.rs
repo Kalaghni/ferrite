@@ -94,6 +94,52 @@ pub fn in_lava(x: f32, z: f32, margin: f32) -> bool {
     (z.abs() - LAVA_Z).abs() < LAVA_HALF_W + margin && LAVA_SPANS.iter().any(|&(x0, x1)| x > x0 - margin && x < x1 + margin)
 }
 
+/// The runner: a stone-lined trough that carries lava from the volcano's
+/// flank, through the south yards and the nave's south door, into the
+/// southern casting channel. It lies on the map's centre line, the same
+/// distance from both bases. It is dry and safe to cross until an eruption
+/// (`crate::events::lava_flow`) fills it from the south.
+/// Points run downstream, from beyond the southern fence.
+pub const RUNNER: [(f32, f32); 6] = [(1.5, -112.0), (-2.0, -90.0), (1.5, -66.0), (0.0, -47.0), (0.0, -22.0), (0.0, -LAVA_Z)];
+pub const RUNNER_HALF_W: f32 = 1.9;
+/// Steel gratings carry the paths across the runner: (from, to) along it.
+/// One is under the service passage's roof, one in the south yard.
+pub const RUNNER_CROSSINGS: [(f32, f32); 2] = [(24.0, 28.5), (68.0, 74.0)];
+
+/// Where (x, z) lies along the runner: distance downstream from its source
+/// and distance from its centre line, for the nearest stretch.
+pub fn runner_at(x: f32, z: f32) -> (f32, f32) {
+    let mut best = (0.0, f32::MAX);
+    let mut s0 = 0.0;
+    for w in RUNNER.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        let (dx, dz) = (b.0 - a.0, b.1 - a.1);
+        let len = (dx * dx + dz * dz).sqrt();
+        let t = (((x - a.0) * dx + (z - a.1) * dz) / (len * len)).clamp(0.0, 1.0);
+        let (px, pz) = (a.0 + dx * t, a.1 + dz * t);
+        let d = ((x - px).powi(2) + (z - pz).powi(2)).sqrt();
+        if d < best.1 {
+            best = (s0 + t * len, d);
+        }
+        s0 += len;
+    }
+    best
+}
+
+pub fn runner_length() -> f32 {
+    RUNNER.windows(2).map(|w| ((w[1].0 - w[0].0).powi(2) + (w[1].1 - w[0].1).powi(2)).sqrt()).sum()
+}
+
+/// Whether (x, z), grown by `margin`, lies in the runner where lava has
+/// reached `front` metres down it, other than on a grating.
+pub fn in_runner(x: f32, z: f32, margin: f32, front: f32) -> bool {
+    if front <= 0.0 || z > -LAVA_Z + LAVA_HALF_W + margin {
+        return false;
+    }
+    let (s, d) = runner_at(x, z);
+    d < RUNNER_HALF_W + margin && s < front + margin && !RUNNER_CROSSINGS.iter().any(|&(a, b)| s > a + margin && s < b - margin)
+}
+
 pub(super) fn build(w: &mut World, rng: &mut crate::rng::Rng) {
     use BlockKind::*;
 

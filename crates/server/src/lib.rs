@@ -1262,7 +1262,7 @@ impl Game {
             // Uniform over the ring's area, not bunched at its middle.
             let r = (r0 * r0 + self.rng.f32() * (r1 * r1 - r0 * r0)).sqrt();
             let (x, z) = (anchor.x + a.cos() * r, anchor.z + a.sin() * r);
-            if self.nav.is_blocked(x, z) || self.world.lava(x, z, 1.0) {
+            if self.nav.is_blocked(x, z) || self.world.danger(vec3(x, self.world.height(x, z), z), 1.0) {
                 continue;
             }
             let p = vec3(x, self.world.height(x, z) + 0.05, z);
@@ -1408,9 +1408,9 @@ impl Game {
     }
 
     /// Leave something on the field for `secs` seconds. Nothing is left
-    /// in lava, and the oldest goes when the field is littered.
+    /// in lava or flood water, and the oldest goes when the field is littered.
     fn drop_pickup(&mut self, kind: u8, pos: Vec3, secs: u32) {
-        if !self.cfg.drops || self.world.lava(pos.x, pos.z, 0.5) {
+        if !self.cfg.drops || self.world.danger(pos, 0.5) {
             return;
         }
         self.pickups.push(Pickup { id: self.next_pickup, kind, pos, until: self.tick + secs * TICK_HZ });
@@ -1473,7 +1473,7 @@ impl Game {
                 if !held {
                     // The carrier fell (or left): the flag lies where they were.
                     let pos = self.flags[f].pos;
-                    if self.world.lava(pos.x, pos.z, 0.5) {
+                    if self.world.danger(pos, 0.5) {
                         self.flags[f] = Flag { state: 0, pos: home, carrier: 0, since: t };
                         self.feed.push(Feed::Flag { flag: f as u8, by: SPECTATOR_ID, what: flag_ev::RETURNED });
                     } else {
@@ -1775,6 +1775,9 @@ impl Game {
     pub fn tick(&mut self) {
         self.tick += 1;
         let t = self.tick;
+        // Timed hazards (the lava runner, the flood) follow the world clock
+        // that clients draw them by.
+        self.world.clock = ferrite_shared::world_clock(t as f64);
         for p in self.players.iter_mut() {
             p.credits = (p.credits + 1.0).min(12.0);
             p.st.surge = t < p.surge_until;
@@ -1807,11 +1810,14 @@ impl Game {
                 self.spawn_player(i);
             }
         }
-        // Lava burns whoever stands in it, friend or foe, shielded or not.
+        // Lava burns and flood water batters whoever stands in it, friend or
+        // foe, shielded or not.
         for i in 0..self.players.len() {
-            if self.players[i].alive && self.world.burning(self.players[i].st.pos) {
-                let dps = ferrite_shared::map::slag_cathedral::LAVA_DPS;
-                self.damage(i, None, dps * DT, false, sim::LAVA_WEAPON);
+            if !self.players[i].alive {
+                continue;
+            }
+            if let Some((dps, why)) = self.world.hazard(self.players[i].st.pos) {
+                self.damage(i, None, dps * DT, false, why);
             }
         }
         self.update_grenades();

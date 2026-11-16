@@ -2,6 +2,7 @@
 //! Both the authoritative server and the predicting client link this crate,
 //! so a command stepped on either side produces the same result.
 
+pub mod events;
 pub mod map;
 pub mod proto;
 pub mod rng;

@@ -2245,9 +2245,10 @@ async fn play(
         app.hitmarker = (app.hitmarker - dt).max(0.0);
         app.hit_kill = (app.hit_kill - dt).max(0.0);
         app.dmg_flash = (app.dmg_flash - dt * 1.6).max(0.0);
-        // Lava damage has no attacker, so no hit event arrives for it: hold the
-        // damage overlay up, pulsing, for as long as we stand in the burn.
-        if app.alive && !app.spectator && app.world.burning(app.st.pos) {
+        // Lava and flood damage have no attacker, so no hit event arrives for
+        // them: hold the damage overlay up, pulsing, while we stand in them.
+        app.world.clock = app.net.world_time(now);
+        if app.alive && !app.spectator && app.world.hazard(app.st.pos).is_some() {
             app.dmg_flash = app.dmg_flash.max(0.75 + 0.25 * (now as f32 * 7.0).sin());
         }
         app.shake = (app.shake - dt * 2.5).max(0.0);

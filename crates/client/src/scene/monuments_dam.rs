@@ -42,9 +42,9 @@ const PIER: f32 = 4.0;
 /// Gate sill below the crest, and the hoist bridge above it.
 const SILL: f32 = 18.0;
 const BRIDGE: f32 = 22.0;
-/// One siren window; in about half of them the sirens are tested.
-const SIREN_PERIOD: f32 = 90.0;
-const SIREN: (f32, f32) = (30.0, 44.0);
+// One siren window; in about half of them the sirens are tested, and the
+// outlet gates then release water into Spillway's channel.
+use ferrite_shared::events::{SIREN, SIREN_PERIOD};
 
 fn base(w: &World) -> f32 {
     w.height(0.0, 96.0)
@@ -400,9 +400,7 @@ fn rock_shoulder(m: &mut Mesh, w: &World, side: f32) {
 
 /// Seconds into a siren test, if one is running.
 fn siren(w: &World, time: f32) -> Option<f32> {
-    let cycle = (time / SIREN_PERIOD).floor() as u32;
-    let phase = time.rem_euclid(SIREN_PERIOD);
-    (roll(w, cycle, 0x5124) < 0.5 && phase >= SIREN.0 && phase < SIREN.1).then_some(phase - SIREN.0)
+    ferrite_shared::events::siren(w.seed, time)
 }
 
 pub fn atmosphere(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, time: f32) {
@@ -511,7 +509,7 @@ pub fn atmosphere(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, tim
 
 /// A siren test starts in about half of the 90-second windows.
 pub fn cues(w: &World, from: f32, to: f32, out: &mut Vec<(f32, Cue, Vec3)>) {
-    for t in ticks(from, to, SIREN_PERIOD, SIREN.0, |k| roll(w, k, 0x5124) < 0.5) {
+    for t in ticks(from, to, SIREN_PERIOD, SIREN.0, |k| ferrite_shared::events::siren_tested(w.seed, k)) {
         out.push((t, Cue::Siren, vec3(0.0, crest(w) + 12.0, Z_CREST + 3.0)));
     }
 }
