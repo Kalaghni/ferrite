@@ -2461,7 +2461,7 @@ async fn play(
         // The monuments' creaks, groans and siren tests, on the same clock
         // as their motion. Cosmetic: no network event, no damage.
         if app.kc.is_none() {
-            for (cue, at) in scene::monuments::cues(&app.world, cue_clock, time) {
+            for (cue, at) in scene::monuments::cues(&app.world, cue_clock, world_t) {
                 let (sfx, vol, reach) = match cue {
                     scene::monuments::Cue::Creak => (Sfx::Creak, 0.35, 45.0),
                     scene::monuments::Cue::Groan => (Sfx::Groan, 0.4, 90.0),
@@ -2470,7 +2470,7 @@ async fn play(
                 app.audio.play_at(sfx, at, eye, vol, reach);
             }
         }
-        cue_clock = time;
+        cue_clock = world_t;
         for v in &app.views {
             scene::soldier(&mut opaque, &mut alpha, &app.world, v, time, blob);
         }
