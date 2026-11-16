@@ -45,7 +45,8 @@ fn spawn(w: &World, site: Site, dx: f32, dz: f32) -> PState {
 #[test]
 fn every_mine_cave_culvert_and_container_passage_can_be_walked_both_ways() {
     for seed in SEEDS {
-        for map in 0..4 {
+        // Quarry and Ridgeline have real tunnels instead (tests/tunnels.rs).
+        for map in [0, 3] {
             let w = World::with_map(seed, map);
             for site in [PASSAGES[map as usize], PASSAGES[map as usize].mirrored()] {
                 let mut st = spawn(&w, site, -site.hx - 2.0, 0.0);

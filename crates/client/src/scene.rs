@@ -215,6 +215,10 @@ pub fn build_world(w: &World) -> Mesh {
             for (k, (a, b, c)) in [(p00, p01, p10), (p11, p10, p01)].into_iter().enumerate() {
                 let n = (b - a).cross(c - a).normalize();
                 let cen = (a + b + c) / 3.0;
+                // Cells spanning a tunnel portal give way to its rock collar.
+                if w.tunnel_carves(cen, a.y.min(b.y).min(c.y), a.y.max(b.y).max(c.y)) {
+                    continue;
+                }
                 let j = hash01((ix * 2 + k) as u32, iz as u32 ^ seed);
                 m.tri(a, b, c, ground_col(w, cen, n, j));
             }
@@ -238,10 +242,6 @@ pub fn build_world(w: &World) -> Mesh {
             continue;
         }
         if w.map == relay::ID && relay::owns(b) {
-            continue;
-        }
-        if landmarks::owns(w, b) {
-            landmarks::block(&mut m, w, b);
             continue;
         }
         let j = 0.9 + 0.2 * hash01(g as u32, 91);
@@ -327,6 +327,7 @@ pub fn build_world(w: &World) -> Mesh {
         relay::build(&mut m, w);
     }
     landmarks::build(&mut m, w);
+    tunnels::build(&mut m, w);
     fallen_giant::build(&mut m, w);
     special_landmarks::build(&mut m, w);
     m
@@ -473,6 +474,7 @@ pub fn map_lights(w: &World, eye: Vec3, existing: [crate::gfx::Light; 4]) -> [cr
     match w.map {
         slag_cathedral::ID => slag_cathedral::lights(w, eye, existing),
         relay::ID => relay::lights(w, eye, existing),
+        1 | 2 => tunnels::lights(w, eye, existing),
         _ => existing,
     }
 }
@@ -754,3 +756,5 @@ mod relay;
 mod slag_cathedral;
 #[path = "scene/special_landmarks.rs"]
 mod special_landmarks;
+#[path = "scene/tunnels.rs"]
+mod tunnels;

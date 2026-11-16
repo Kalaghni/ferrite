@@ -959,7 +959,7 @@ fn move_axis(s: &mut PState, w: &World, dmask: u64, axis: usize, was_ground: boo
     if let Some(y) = step_to {
         np.y = np.y.max(y);
     }
-    if blocked_at(w, np, dmask, h) {
+    if blocked_at(w, np, dmask, h) || w.in_rock(np, P_R, h) {
         s.vel[axis] = 0.0;
         return;
     }
@@ -982,8 +982,15 @@ fn move_collide(s: &mut PState, w: &World, dmask: u64, jumped: bool, was_ground:
 
     let mut np = s.pos;
     np.y += s.vel.y * DT;
-    let g = w.height(np.x, np.z);
+    let g = w.ground(np.x, np.z, s.pos.y);
     let mut on_ground = false;
+    // A tunnel roof stops a jump.
+    if let Some(roof) = w.roof(np.x, np.z, s.pos.y) {
+        if np.y + h > roof {
+            np.y = (roof - h).max(g);
+            s.vel.y = s.vel.y.min(0.0);
+        }
+    }
     if was_ground && !jumped && s.vel.y <= 0.0 && np.y - g < 0.4 {
         np.y = g; // stay glued to downhill slopes
     }

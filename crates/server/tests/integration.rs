@@ -622,7 +622,9 @@ fn every_map_is_fair_and_playable() {
                         p.name
                     );
                     if p.alive {
-                        assert!(p.st.pos.y >= g.world.height(p.st.pos.x, p.st.pos.z) - 0.05, "{name}: {} fell through terrain", p.name);
+                        // The ground under a player is the terrain, or a tunnel floor below it.
+                        let (x, y, z) = (p.st.pos.x, p.st.pos.y, p.st.pos.z);
+                        assert!(y >= g.world.ground(x, z, y) - 0.05, "{name}: {} fell through terrain", p.name);
                     }
                 }
             }

@@ -5,7 +5,7 @@ use super::slag_cathedral::art::{soft, stencil, wall};
 use super::slag_cathedral::{beam, girder, pipe};
 use crate::gfx::{rgb, shade, Col, Mesh};
 use ferrite_shared::glam::{vec3, Mat4, Vec3};
-use ferrite_shared::map::{landmarks as layout, Block, BlockKind, FeatureKind, World};
+use ferrite_shared::map::{landmarks as layout, BlockKind, FeatureKind, World};
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
 const STEEL: Col = [0.24, 0.28, 0.29, 0.0];
@@ -50,7 +50,7 @@ fn breach_local(w: &World, g: &Mat4, s: layout::Site) -> Option<(Vec3, Vec3)> {
     Some((lo, hi))
 }
 
-fn sign(m: &mut Mesh, g: &Mat4, p: Vec3, yaw: f32, text: &str, pixel: f32, col: Col) {
+pub(super) fn sign(m: &mut Mesh, g: &Mat4, p: Vec3, yaw: f32, text: &str, pixel: f32, col: Col) {
     let f = *g * wall(p, yaw);
     let width = text.len() as f32 * 6.0 * pixel + 0.35;
     m.obox(&f, vec3(0.0, 0.32, -0.045), vec3(width * 0.5, 0.43, 0.04), DARK);
@@ -60,7 +60,7 @@ fn sign(m: &mut Mesh, g: &Mat4, p: Vec3, yaw: f32, text: &str, pixel: f32, col: 
     }
 }
 
-fn lamp(m: &mut Mesh, g: &Mat4, p: Vec3) {
+pub(super) fn lamp(m: &mut Mesh, g: &Mat4, p: Vec3) {
     box_at(m, g, p + vec3(0.0, 0.10, 0.0), vec3(0.40, 0.10, 0.25), DARK);
     box_at(m, g, p, vec3(0.31, 0.035, 0.17), LAMP);
     for x in [-0.30, 0.0, 0.30] {
@@ -175,73 +175,11 @@ fn workshop(m: &mut Mesh, w: &World, side: f32) {
     }
 }
 
-/// Blasted cave walls and ceilings keep the exact collision silhouette.
-/// The generic small-boulder taper would leave a hollow gap under a rock roof.
-pub fn owns(w: &World, b: &Block) -> bool {
-    if !(1..=2).contains(&w.map) || b.kind != BlockKind::Rock {
-        return false;
-    }
-    let s = layout::PASSAGES[w.map as usize];
-    let c = (b.min + b.max) * 0.5;
-    [1.0, -1.0].into_iter().any(|k| (c.x - s.x * k).abs() < s.hx + 2.0 && (c.z - s.z * k).abs() < s.hz + 5.0)
-}
-pub fn block(m: &mut Mesh, w: &World, b: &Block) {
-    let stone = if b.tint.is_multiple_of(2) { rgb(0.42, 0.40, 0.34) } else { rgb(0.48, 0.45, 0.39) };
-    m.cuboid(b.min, b.max, stone);
-    if w.map == 2 {
-        // The ridge's natural fissure has fractured faces and damp moss,
-        // rather than the quarry's straight, cut sedimentary bands.
-        let nx = ((b.max.x - b.min.x) / 2.6).ceil() as u32;
-        let ny = ((b.max.y - b.min.y) / 1.6).ceil() as u32;
-        for k in [-1.0, 1.0] {
-            let z = if k > 0.0 { b.max.z + 0.015 } else { b.min.z - 0.015 };
-            for ix in 0..nx {
-                for iy in 0..ny {
-                    let seed = ix * 31 + iy * 97 + b.tint as u32;
-                    let dx = (b.max.x - b.min.x) / nx as f32;
-                    let dy = (b.max.y - b.min.y) / ny as f32;
-                    let x = b.min.x + ix as f32 * dx;
-                    let y = b.min.y + iy as f32 * dy;
-                    let c = vec3(
-                        x + dx * (0.3 + hash01(seed, 33) * 0.4),
-                        y + dy * (0.25 + hash01(seed, 34) * 0.5),
-                        z + k * (0.05 + hash01(seed, 35) * 0.10),
-                    );
-                    let mossy = hash01(seed, 36) > 0.60;
-                    let color = if mossy { rgb(0.29, 0.36, 0.24) } else { shade(stone, 0.73 + hash01(seed, 37) * 0.4) };
-                    let corners = [vec3(x, y, z), vec3(x + dx, y, z), vec3(x + dx, y + dy, z), vec3(x, y + dy, z)];
-                    for j in 0..4 {
-                        let (a, b) = if k > 0.0 { (corners[j], corners[(j + 1) % 4]) } else { (corners[(j + 1) % 4], corners[j]) };
-                        m.tri(a, b, c, shade(color, 0.88 + j as f32 * 0.06));
-                    }
-                }
-            }
-        }
-        // Shallow broken plates on the ceiling preserve standing clearance.
-        if b.max.z - b.min.z > 7.0 && b.max.y - b.min.y < 3.0 {
-            for ix in 0..nx {
-                let x = b.min.x + (ix as f32 + 0.5) * (b.max.x - b.min.x) / nx as f32;
-                let z = b.min.z + 1.5 + hash01(ix, 83) * ((b.max.z - b.min.z) - 3.0);
-                let c = vec3(x, b.min.y - 0.15, z);
-                let a = vec3(x - 1.1, b.min.y - 0.01, z - 1.0);
-                let d = vec3(x + 1.1, b.min.y - 0.01, z + 1.0);
-                m.tri(a, vec3(d.x, d.y, a.z), c, shade(stone, 0.73));
-                m.tri(vec3(a.x, a.y, d.z), c, d, shade(stone, 0.85));
-            }
-        }
-        return;
-    }
-    for k in 1..4 {
-        let y = b.min.y + (b.max.y - b.min.y) * k as f32 * 0.25;
-        m.cuboid(vec3(b.min.x - 0.015, y, b.min.z - 0.015), vec3(b.max.x + 0.015, y + 0.035, b.max.z + 0.015), shade(stone, 0.62));
-    }
-}
-
 fn passage(m: &mut Mesh, w: &World, side: f32) {
     let s = layout::PASSAGES[w.map as usize];
     let g = frame(s.x, layout::floor(w, s), s.z, side);
-    let timber = if w.map == 1 || w.map == 2 { TIMBER } else { STEEL };
-    let title = ["SERVICE TUNNEL", "MINE 04", "FOX CAVE", "TRANSIT 07"][w.map as usize];
+    let timber = STEEL;
+    let title = if w.map == 0 { "SERVICE TUNNEL" } else { "TRANSIT 07" };
     for k in [-1.0, 1.0] {
         let x = (s.hx + 0.12) * k;
         for z in [-s.hz + 0.24, s.hz - 0.24] {
@@ -265,30 +203,6 @@ fn passage(m: &mut Mesh, w: &World, side: f32) {
     }
     for z in [-s.hz + 0.12, s.hz - 0.12] {
         rod(m, &g, vec3(-s.hx, s.height - 0.62, z), vec3(s.hx, s.height - 0.62, z), 0.035, DARK);
-    }
-    if w.map == 1 {
-        // Rails and sleepers are painted-height detail, never a movement obstacle.
-        for z in [-0.72, 0.72] {
-            box_at(m, &g, vec3(0.0, 0.045, z), vec3(s.hx + 0.2, 0.025, 0.055), EDGE);
-        }
-        for i in -(s.hx as i32)..=s.hx as i32 {
-            box_at(m, &g, vec3(i as f32, 0.025, 0.0), vec3(0.11, 0.02, 1.0), TIMBER);
-        }
-    }
-    if w.map == 2 {
-        // Bare stone and damp earth beneath the overhang distinguish the
-        // natural ridge fissure from the grassy forest outside it.
-        let nx = (s.hx * 2.0 / 2.5).ceil() as u32;
-        for ix in 0..nx {
-            for iz in 0..4u32 {
-                let (dx, dz) = (s.hx * 2.0 / nx as f32, s.hz * 0.5);
-                let (x, z) = (-s.hx + ix as f32 * dx, -s.hz + iz as f32 * dz);
-                let c = if hash01(ix, iz + 300) > 0.66 { rgb(0.28, 0.32, 0.20) } else { rgb(0.35, 0.32, 0.26) };
-                let p = |a, b| point(&g, vec3(a, 0.022, b));
-                m.tri(p(x, z), p(x, z + dz), p(x + dx, z), shade(c, 0.9 + hash01(ix, iz + 302) * 0.2));
-                m.tri(p(x + dx, z + dz), p(x + dx, z), p(x, z + dz), shade(c, 0.9 + hash01(ix, iz + 304) * 0.2));
-            }
-        }
     }
     if w.map == 3 {
         for i in -(s.hx as i32)..=s.hx as i32 {
@@ -326,8 +240,8 @@ fn foundry(m: &mut Mesh, w: &World, side: f32) {
 }
 
 fn headframe(m: &mut Mesh, w: &World, side: f32) {
-    let s = layout::PASSAGES[1];
-    let g = frame(s.x - 8.0, layout::floor(w, s), s.z + 9.0, side);
+    let site = layout::headframe_site(w);
+    let g = frame(site.x, site.y, site.z, side);
     for k in [-1.0, 1.0] {
         for y in [3.5, 7.5, 11.5, 15.5] {
             bar(m, &g, vec3(-2.2, y - 2.0, k * 2.2), vec3(2.2, y + 2.0, k * 2.2), 0.17, RUST);
@@ -448,7 +362,9 @@ pub fn build(m: &mut Mesh, w: &World) {
     }
     for side in [1.0, -1.0] {
         workshop(m, w, side);
-        passage(m, w, side);
+        if layout::has_passage(w.map) {
+            passage(m, w, side);
+        }
         match w.map {
             0 => foundry(m, w, side),
             1 => headframe(m, w, side),
@@ -494,8 +410,8 @@ fn foundry_motion(m: &mut Mesh, alpha: &mut Mesh, w: &World, time: f32, side: f3
 }
 
 fn quarry_motion(m: &mut Mesh, alpha: &mut Mesh, w: &World, time: f32, side: f32, running: bool) {
-    let s = layout::PASSAGES[1];
-    let g = frame(s.x - 8.0, layout::floor(w, s), s.z + 9.0, side);
+    let site = layout::headframe_site(w);
+    let g = frame(site.x, site.y, site.z, side);
     wheel(m, &g, vec3(0.0, 19.5, 0.0), 1.65, time * 0.42, SAFETY);
     // The ore skip travels within the headframe, always above the walkable apron.
     let hoist = 10.0 + 3.0 * (time * 0.16).sin();
@@ -681,10 +597,12 @@ pub fn atmosphere(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, tim
             _ => {}
         }
         // A tiny warm pool at each passage entrance makes these new routes readable.
-        let s = layout::PASSAGES[w.map as usize];
-        let g = frame(s.x, layout::floor(w, s), s.z, side);
-        for k in [-1.0, 1.0] {
-            soft(add, point(&g, vec3(s.hx * k, s.height - 0.55, 0.0)), 0.44, 0.22, [1.0, 0.77, 0.38, 0.19]);
+        if layout::has_passage(w.map) {
+            let s = layout::PASSAGES[w.map as usize];
+            let g = frame(s.x, layout::floor(w, s), s.z, side);
+            for k in [-1.0, 1.0] {
+                soft(add, point(&g, vec3(s.hx * k, s.height - 0.55, 0.0)), 0.44, 0.22, [1.0, 0.77, 0.38, 0.19]);
+            }
         }
     }
     if w.map == 3 {

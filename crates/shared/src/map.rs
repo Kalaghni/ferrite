@@ -8,6 +8,7 @@ pub mod fallen_giant;
 pub mod landmarks;
 pub mod relay;
 pub mod slag_cathedral;
+pub mod tunnels;
 
 use crate::rng::Rng;
 use glam::{vec2, vec3, Vec2, Vec3};
@@ -189,6 +190,8 @@ pub struct World {
     pub features: Vec<Feature>,
     /// Destruction slots, including both crates and grouped map features.
     pub n_crates: usize,
+    /// Underground routes; see `tunnels`.
+    pub tunnels: Vec<tunnels::Tunnel>,
 }
 
 fn hash(x: i32, z: i32, seed: u32) -> f32 {
@@ -278,7 +281,7 @@ fn shape(x: f32, z: f32, s: u32, map: u8) -> f32 {
 /// Distance along the Ridgeline spine of its two outer passes.
 const RIDGE_PASS: f32 = 44.0;
 
-fn full_height(x: f32, z: f32, s: u32, map: u8) -> f32 {
+fn full_height(x: f32, z: f32, s: u32, map: u8, tunnels: &[tunnels::Tunnel]) -> f32 {
     let def = map_def(map);
     let mut h = shape(x, z, s, map);
     // The original valley settles objectives halfway to sea level; the other
@@ -312,6 +315,7 @@ fn full_height(x: f32, z: f32, s: u32, map: u8) -> f32 {
     if map % MAPS.len() as u8 == fallen_giant::MAP_ID {
         h = fallen_giant::settle(x, z, h, shape(0.0, 0.0, s, map));
     }
+    h = tunnels::sculpt(x, z, h, tunnels);
     // Ridge walls enclosing the playable valley.
     let ex = (x.abs() - (HALF_X + 2.0)).max(0.0);
     let ez = (z.abs() - (HALF_Z + 2.0)).max(0.0);
@@ -333,12 +337,14 @@ impl World {
         let map = map % MAPS.len() as u8;
         let def = map_def(map);
         let s = (seed ^ (seed >> 32)) as u32;
+        // Tunnel floors follow the ground as it would be without them.
+        let tunnels = tunnels::layout(map, |x, z| full_height(x, z, s, map, &[]));
         let mut heights = Vec::with_capacity((TNX + 1) * (TNZ + 1));
         for iz in 0..=TNZ {
             for ix in 0..=TNX {
                 let x = TER_X0 + ix as f32 * CELL;
                 let z = TER_Z0 + iz as f32 * CELL;
-                heights.push(full_height(x, z, s, map));
+                heights.push(full_height(x, z, s, map, &tunnels));
             }
         }
         let mut w = World {
@@ -351,6 +357,7 @@ impl World {
             bases: [Vec3::ZERO; 2],
             features: Vec::new(),
             n_crates: 0,
+            tunnels,
         };
         for (i, (x, z)) in def.points.iter().enumerate() {
             w.points[i] = vec3(*x, w.height(*x, *z), *z);
@@ -433,7 +440,7 @@ impl World {
         // March the heightfield, then bisect the crossing.
         let step = 1.0;
         let mut t0 = 0.0f32;
-        if o.y < self.height(o.x, o.z) {
+        if self.underground(o) {
             return best;
         }
         while t0 < best_t {
@@ -442,19 +449,21 @@ impl World {
             if p.y > 60.0 && d.y >= 0.0 {
                 break;
             }
-            if p.y < self.height(p.x, p.z) {
+            if self.underground(p) {
                 let (mut lo, mut hi) = (t0, t1);
                 for _ in 0..7 {
                     let mid = (lo + hi) * 0.5;
                     let q = o + d * mid;
-                    if q.y < self.height(q.x, q.z) {
+                    if self.underground(q) {
                         hi = mid;
                     } else {
                         lo = mid;
                     }
                 }
                 let q = o + d * lo;
-                return Some(RayHit { t: lo, normal: self.terrain_normal(q.x, q.z), block: None });
+                // Under the surface the hit is a tunnel's wall or roof.
+                let normal = if q.y < self.height(q.x, q.z) - 0.3 { -d } else { self.terrain_normal(q.x, q.z) };
+                return Some(RayHit { t: lo, normal, block: None });
             }
             if t1 >= best_t {
                 break;
@@ -569,6 +578,7 @@ impl World {
     fn footprint_free(&self, cx: f32, cz: f32, r: f32) -> bool {
         !landmarks::reserved(self.map, cx, cz, r, r)
             && !fallen_giant::reserved(self.map, cx, cz, r, r)
+            && !self.tunnel_reserved(cx, cz, r)
             && !self.blocks.iter().any(|b| cx + r > b.min.x && cx - r < b.max.x && cz + r > b.min.z && cz - r < b.max.z)
     }
 
@@ -790,7 +800,7 @@ impl World {
 
     /// Nothing solid within the rectangle, here or at the mirrored spot.
     fn rect_free(&self, cx: f32, cz: f32, hx: f32, hz: f32) -> bool {
-        if landmarks::reserved(self.map, cx, cz, hx, hz) {
+        if landmarks::reserved(self.map, cx, cz, hx, hz) || self.tunnel_reserved(cx, cz, hx.max(hz)) {
             return false;
         }
         if fallen_giant::reserved(self.map, cx, cz, hx, hz) {
@@ -1764,8 +1774,8 @@ mod tests {
     // trees, objectives and crate assignment of every map.
     const FINGERPRINTS_FE221: [u64; 7] = [
         0xe5a9186a98463522,
-        0x8d6a72a4e55cb258,
-        0x99c100d1ea100d86,
+        0x3b49936209c2b08f,
+        0xb095d4e1e84c1c93,
         0x57c62f6f2f7b39da,
         0x9add6dc3e14285f4,
         0xf1134b5f6ab0c68f,
@@ -1773,8 +1783,8 @@ mod tests {
     ];
     const FINGERPRINTS_D091: [u64; 7] = [
         0x56fcf92cda86bcfc,
-        0xc57680dd94415d9c,
-        0x8530e9d166094ead,
+        0x38841009e290d9e0,
+        0x77237995086e2c09,
         0x57246f9b0a5621e4,
         0x4b79a71339bec22c,
         0x378a3fde022bcd47,
@@ -1888,11 +1898,25 @@ mod tests {
 
     #[test]
     fn map_geometry_is_unchanged() {
+        // Report every changed map at once, with its new value.
+        let mut changed = Vec::new();
         for (seed, expected) in [(0xFE221u64, FINGERPRINTS_FE221), (0xD091, FINGERPRINTS_D091)] {
             for (id, hash) in expected.into_iter().enumerate() {
-                assert_eq!(fingerprint(&World::with_map(seed, id as u8)), hash, "{} changed for seed {seed:x}", MAPS[id].name);
+                let now = fingerprint(&World::with_map(seed, id as u8));
+                if now != hash {
+                    changed.push(format!("{} (map {id}) for seed {seed:x}: now {now:#x}", MAPS[id].name));
+                }
             }
         }
+        assert!(
+            changed.is_empty(),
+            "map geometry changed:
+{}",
+            changed.join(
+                "
+"
+            )
+        );
     }
 
     #[test]

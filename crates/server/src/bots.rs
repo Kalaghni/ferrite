@@ -299,7 +299,8 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
     let dgoal = vec2(gpos.x - pos.x, gpos.z - pos.z).length();
     let mut mv = Vec2::ZERO;
     if dgoal > 7.0 {
-        mv = g.nav.dir(b.goal, b.lane, pos.x, pos.z);
+        // Underground, the flow field (a surface map) is turned along the tunnel.
+        mv = g.world.tunnel_steer(pos, g.nav.dir(b.goal, b.lane, pos.x, pos.z));
     } else {
         let to = vec2(b.wander.x - pos.x, b.wander.z - pos.z);
         if b.wander_timer == 0 || to.length() < 1.0 {
@@ -523,7 +524,7 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
     }
     if !fleeing && engaged && b.cautious && me.hp < sim::kit(me.st.kit).hp * 0.35 {
         // Badly hurt: give ground toward friendly territory, still shooting.
-        let back = g.nav.dir(5 + me.team as usize, b.lane, pos.x, pos.z);
+        let back = g.world.tunnel_steer(pos, g.nav.dir(5 + me.team as usize, b.lane, pos.x, pos.z));
         mv = back + vec2(-b.yaw.cos(), b.yaw.sin()) * b.strafe * 0.5;
         crouch = false;
     }

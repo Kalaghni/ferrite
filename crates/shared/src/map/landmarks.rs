@@ -41,6 +41,27 @@ pub const CRANE_HALF_X: f32 = 26.0;
 pub const CRANE_HALF_Z: f32 = 25.0;
 pub const CRANE_HEIGHT: f32 = 27.0;
 
+/// Quarry and Ridgeline have real tunnels (see `tunnels`) instead of a
+/// covered passage on the surface.
+pub fn has_passage(map: u8) -> bool {
+    map == 0 || map == 3
+}
+
+/// The sites levelled and kept clear on a map.
+fn sites(map: u8) -> Vec<Site> {
+    let mut v = vec![WORKSHOPS[map as usize], walkway_site(map)];
+    if has_passage(map) {
+        v.push(PASSAGES[map as usize]);
+    }
+    v
+}
+
+/// Foot of Quarry's headframe, beside the mine's upper exit.
+pub fn headframe_site(w: &World) -> Vec3 {
+    let (x, z) = (PASSAGES[1].x - 8.0, PASSAGES[1].z + 9.0);
+    vec3(x, w.height(x, z), z)
+}
+
 pub fn floor(w: &World, site: Site) -> f32 {
     w.height(site.x, site.z)
 }
@@ -56,7 +77,7 @@ pub(super) fn settle(x: f32, z: f32, map: u8, mut h: f32, target: impl Fn(f32, f
     if map > 3 {
         return h;
     }
-    for s in [WORKSHOPS[map as usize], PASSAGES[map as usize], walkway_site(map)] {
+    for s in sites(map) {
         for s in [s, s.mirrored()] {
             let d = ((x - s.x).abs() - s.hx).max((z - s.z).abs() - s.hz).max(0.0);
             let w = 1.0 - smooth(5.0, 11.0, d);
@@ -73,9 +94,7 @@ pub(super) fn reserved(map: u8, x: f32, z: f32, hx: f32, hz: f32) -> bool {
     if map > 3 {
         return false;
     }
-    [WORKSHOPS[map as usize], PASSAGES[map as usize], walkway_site(map)]
-        .iter()
-        .any(|&s| [s, s.mirrored()].iter().any(|s| (x - s.x).abs() < s.hx + hx + 5.0 && (z - s.z).abs() < s.hz + hz + 5.0))
+    sites(map).iter().any(|&s| [s, s.mirrored()].iter().any(|s| (x - s.x).abs() < s.hx + hx + 5.0 && (z - s.z).abs() < s.hz + hz + 5.0))
 }
 
 pub(super) fn build(w: &mut World) {
@@ -83,7 +102,9 @@ pub(super) fn build(w: &mut World) {
         return;
     }
     workshop(w, WORKSHOPS[w.map as usize]);
-    passage(w, PASSAGES[w.map as usize]);
+    if has_passage(w.map) {
+        passage(w, PASSAGES[w.map as usize]);
+    }
     match w.map {
         0 => foundry(w),
         1 => headframe(w),
@@ -247,9 +268,7 @@ fn foundry(w: &mut World) {
 
 fn headframe(w: &mut World) {
     use BlockKind::*;
-    let s = PASSAGES[1];
-    let g = floor(w, s);
-    let (x, z) = (s.x - 8.0, s.z + 9.0);
+    let Vec3 { x, y: g, z } = headframe_site(w);
     for dx in [-2.4, 2.4] {
         for dz in [-2.0, 2.0] {
             w.sym_abs(x + dx, z + dz, 0.34, 0.34, w.height(x + dx, z + dz) - 0.8, g + 18.0, Metal, 0);
@@ -308,7 +327,11 @@ mod tests {
                     assert!(w.blocks.iter().any(|b| b.dest == Some(f.bit)), "feature has no grouped collision");
                 }
                 let nav = Nav::build(&w);
-                for s in [WORKSHOPS[map as usize], PASSAGES[map as usize]] {
+                let mut destinations = vec![WORKSHOPS[map as usize]];
+                if has_passage(map) {
+                    destinations.push(PASSAGES[map as usize]);
+                }
+                for s in destinations {
                     for s in [s, s.mirrored()] {
                         let g = floor(&w, s);
                         for i in -20..=20 {

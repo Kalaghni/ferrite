@@ -182,6 +182,28 @@ async fn main() {
                 "tail" => (vec3(-62.0, w.height(-62.0, -35.0) + 9.0, -35.0), vec3(-26.0, g + 14.0, 0.0)),
                 _ => (vec3(75.0, w.height(75.0, -78.0) + 35.0, -78.0), vec3(0.0, g + 8.0, 0.0)),
             }
+        } else if !gallery && matches!(map, 1 | 2) && matches!(pose, "passage" | "tunnel" | "portal" | "exit") {
+            // Quarry's mine and Ridgeline's cave run underground.
+            let t = &w.tunnels[0];
+            let [a, b] = t.portals;
+            let lift = |p: Vec3, dy: f32| p + Vec3::Y * dy;
+            match pose {
+                "portal" => {
+                    let (from, _) = t.at(0.0);
+                    let (to, _) = t.at(a);
+                    (vec3(from.x, w.height(from.x, from.z) + 2.6, from.z) + (from - to).normalize() * 4.0, lift(to, 1.6))
+                }
+                "exit" => {
+                    let (from, _) = t.at(t.length());
+                    let (to, _) = t.at(b);
+                    (vec3(from.x, w.height(from.x, from.z) + 2.6, from.z) + (from - to).normalize() * 4.0, lift(to, 1.6))
+                }
+                _ => {
+                    let (eye, _) = t.at(a + 6.0);
+                    let (to, _) = t.at(a + 18.0);
+                    (lift(eye, 1.7), lift(to, 1.4))
+                }
+            }
         } else if !gallery && map < 4 && matches!(pose, "workshop" | "interior" | "passage" | "landmark" | "breach" | "walkway") {
             use ferrite_shared::map::landmarks::{floor, walkway_site, PASSAGES, WORKSHOPS};
             let site = match pose {

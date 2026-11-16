@@ -23,7 +23,7 @@ v0.7 adds text chat, a melee strike, a killcam, player icons, callsigns backed b
 
 ## v0.11
 
-- **Landmarks.** The four oldest battlefields gain authored destinations: boiler workshops and a service culvert in Foundry Valley, mine adits under a working headframe in the Quarry, ranger lodges, rock passages and wind turbines on Ridgeline, and container passages and warehouses under a 52-metre gantry in the Depot. Relay gains a giant cellular mast; a distant volcano beyond Slag Cathedral can erupt.
+- **Landmarks.** The four oldest battlefields gain authored destinations: boiler workshops and a service culvert in Foundry Valley, an underground mine under a working headframe in the Quarry, ranger lodges, a cave through the ridge and wind turbines on Ridgeline, and container passages and warehouses under a 52-metre gantry in the Depot. Relay gains a giant cellular mast; a distant volcano beyond Slag Cathedral can erupt.
 - **The Fallen Giant.** A crashed cargo aircraft lies across Ridgeline's saddle with C on the floor of its walkable hold, open at both broken ends and through three tears in each side. See the [Fallen Giant guide](docs/maps/fallen-giant.md).
 - **Explosive changes.** Marked wall panels, walkways and machine controls break, collapse or shut down when a grenade goes off beside them. The server confirms each, updates collision and bot navigation, and a new round restores them. See the [expanded map guide](docs/maps/landmarks.md).
 - **Soldiers.** Rebuilt to match the launcher art: faceted pale armour over a dark suit, a domed helmet with a glowing visor, big shoulder plates and a team-coloured pack lid.
@@ -124,7 +124,7 @@ Seven maps ship with the game, including Slag Cathedral. The host picks one on t
 | Map | Character |
 |---|---|
 | Foundry Valley | Autumn steelworks, twin-stack boiler workshops and covered service culverts |
-| Quarry | A terraced pit with mine passages, winding headframes and site workshops |
+| Quarry | A terraced pit with an underground mine, winding headframes and site workshops |
 | Ridgeline | Pine passes, ranger lodges and the huge Fallen Giant aircraft wreck across the saddle |
 | Depot | Container passages and dispatch warehouses under a giant working gantry |
 | Spillway | Drained waterworks: a sunken channel, pump halls, floodgate and outer service lanes |
