@@ -470,6 +470,7 @@ impl Field<'_> {
             && self.w.terrain_normal(x, z).y >= flat
             && self.objective(x, z) > clear
             && !self.w.lava(x, z, 1.5)
+            && !(self.w.map == super::fallen_giant::ID && super::fallen_giant::bare(x, z))
     }
 
     fn at(&self, x: f32, z: f32) -> Vec3 {
