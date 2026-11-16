@@ -1,4 +1,4 @@
-# FERRITE 0.11.0
+# FERRITE 0.12.0
 
 ![The FERRITE launcher: host, join or change settings](docs/launcher.png)
 
@@ -21,9 +21,21 @@ v0.6 adds a new launcher and lobby look (key art, palette and typeface from the 
 
 v0.7 adds text chat, a melee strike, a killcam, player icons, callsigns backed by a player id (your record follows you when you rename), a kill feed that puts people ahead of bots, the plumbing for weapon finishes, a Windows installer, and updates from inside the launcher.
 
+## v0.12
+
+- **Underground.** Quarry's mine and Ridgeline's cave now run under the ground. The mine opens from the first terrace into a timbered drift with rails and lamps, passes under the headframe and climbs an incline back to daylight; the cave bends through the ridge under several metres of rock. See the [expanded map guide](docs/maps/landmarks.md#underground-tunnels).
+- **The Fallen Giant, crashed.** The aircraft is broken in three, with torn skin, exposed frames, burnt-out engines and a furrow of debris. Buckled frames inside the hold break the long sightline through C, pallets give C cover, and every part at walking height is solid. See the [Fallen Giant guide](docs/maps/fallen-giant.md).
+- **Monuments.** A broken railway viaduct with a locomotive hanging over the gap above Foundry Valley, a walking excavator whose boom reaches over the Quarry, and a hydroelectric dam that tests its sirens beyond Spillway. All are scenery beyond reach.
+- **Weapon finishes.** Every finish has its own pattern, material and detailing - digital camo, tiger stripes, hazard chevrons, Damascus steel, carbon weave, glowing magma and honeycomb, an engraved gold scroll.
+- **Cinematic camera.** Fly a free camera with adjustable field of view and real depth of field, hide the HUD, and save screenshots at up to four times screen size (see [Cinematic camera](#cinematic-camera)). The launcher and lobby backgrounds are now shots staged in the game with it.
+- **Safer online play.** A new session handshake stops spoofed addresses taking slots or impersonating players, and the server limits how much work any one address can cause. Map events (the volcano, machinery, wind) now run on the server's clock, so every player - including late joiners - sees them at the same moment.
+- **Safer updates.** The launcher checks each download against the release's published SHA-256 sums, keeps the previous version and puts it back by itself if the new one fails to start; SETTINGS > VIDEO > ROLL BACK goes back by hand.
+
+The network protocol changed (19), so everyone in a match needs v0.12.0, including the dedicated server. See the [v0.12.0 release notes](docs/release-notes/v0.12.0.md), [SECURITY.md](SECURITY.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## v0.11
 
-- **Landmarks.** The four oldest battlefields gain authored destinations: boiler workshops and a service culvert in Foundry Valley, an underground mine under a working headframe in the Quarry, ranger lodges, a cave through the ridge and wind turbines on Ridgeline, and container passages and warehouses under a 52-metre gantry in the Depot. Relay gains a giant cellular mast; a distant volcano beyond Slag Cathedral can erupt.
+- **Landmarks.** The four oldest battlefields gain authored destinations: boiler workshops and a service culvert in Foundry Valley, mine adits under a working headframe in the Quarry, ranger lodges, rock passages and wind turbines on Ridgeline, and container passages and warehouses under a 52-metre gantry in the Depot. Relay gains a giant cellular mast; a distant volcano beyond Slag Cathedral can erupt.
 - **The Fallen Giant.** A crashed cargo aircraft lies across Ridgeline's saddle with C on the floor of its walkable hold, open at both broken ends and through three tears in each side. See the [Fallen Giant guide](docs/maps/fallen-giant.md).
 - **Explosive changes.** Marked wall panels, walkways and machine controls break, collapse or shut down when a grenade goes off beside them. The server confirms each, updates collision and bot navigation, and a new round restores them. See the [expanded map guide](docs/maps/landmarks.md).
 - **Soldiers.** Rebuilt to match the launcher art: faceted pale armour over a dark suit, a domed helmet with a glowing visor, big shoulder plates and a team-coloured pack lid.
@@ -93,8 +105,8 @@ Either way the game keeps itself current: the launcher checks this repository's 
 **macOS:** the build is not signed with an Apple Developer ID, so a copy downloaded in a browser is blocked by Gatekeeper. The simplest way round it is to download from Terminal, which does not get flagged:
 
 ```sh
-curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.11.0/ferrite-v0.11.0-macos-universal.tar.gz | tar xz
-./ferrite-v0.11.0-macos-universal/ferrite
+curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.12.0/ferrite-v0.12.0-macos-universal.tar.gz | tar xz
+./ferrite-v0.12.0-macos-universal/ferrite
 ```
 
 If you already downloaded it in a browser, run `xattr -dr com.apple.quarantine .` in the unpacked folder once.

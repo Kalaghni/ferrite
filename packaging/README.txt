@@ -1,6 +1,20 @@
 FERRITE - 12v12 front-line conquest
 https://github.com/Kalaghni/ferrite
 
+NEW IN v0.12
+  Quarry's mine and Ridgeline's cave run underground: in at one end,
+  under the hill and out at the other.
+  The Fallen Giant really crashed: broken hull, buckled frames that block
+  the long shot through C, cover at C, and wreckage you can hide behind.
+  Monuments over Foundry Valley, the Quarry and Spillway.
+  Every weapon finish has its own pattern, material and detail.
+  Cinematic camera: P to fly, F1 hides the HUD, F12 saves a screenshot.
+  Safer online play (session handshake, server limits) and map events in
+  step for everyone.
+  Updates are checked against published SHA-256 sums; a version that
+  fails to start is rolled back by itself (SETTINGS > VIDEO > ROLL BACK).
+  Everyone in a match needs v0.12.0, including the dedicated server.
+
 NEW IN v0.11
   Landmarks on every map: workshops, mine adits, ranger lodges, container
   passages and tunnels on the original four, giant machinery overhead, a
