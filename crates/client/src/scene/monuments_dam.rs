@@ -42,6 +42,9 @@ const PIER: f32 = 4.0;
 /// Gate sill below the crest, and the hoist bridge above it.
 const SILL: f32 = 18.0;
 const BRIDGE: f32 = 22.0;
+/// The middle bay's gate releases the floods, lifting this far.
+const RELEASE: usize = BAYS / 2;
+const GATE_LIFT: f32 = 9.0;
 // One siren window; in about half of them the sirens are tested, and the
 // outlet gates then release water into Spillway's channel.
 use ferrite_shared::events::{SIREN, SIREN_PERIOD};
@@ -272,29 +275,10 @@ fn spillway(m: &mut Mesh, w: &World) {
     }
     for k in 0..BAYS {
         let x = bay_x(k);
-        let g = Mat4::from_translation(vec3(x, h - SILL, Z_CREST + 2.0));
-        let hw = BAY * 0.5 + 0.2;
-        block(m, &g, vec3(-hw, 0.0, -0.5), vec3(hw, SILL - 0.6, 0.5), jit(GATE, k as u32));
-        for j in 0..6 {
-            let y = 1.2 + j as f32 * 3.0;
-            block(m, &g, vec3(-hw + 0.3, y, -0.95), vec3(hw - 0.3, y + 0.7, -0.5), shade(GATE, 0.8));
+        // The middle gate lifts to release floods; it is drawn with them.
+        if k != RELEASE {
+            floodgate(m, k, Mat4::from_translation(vec3(x, h - SILL, Z_CREST + 2.0)));
         }
-        for xs in [-4.5f32, 0.0, 4.5] {
-            block(m, &g, vec3(xs - 0.25, 0.4, -0.9), vec3(xs + 0.25, SILL - 1.0, -0.5), shade(GATE, 0.85));
-        }
-        // Rust weeping from the bolted seams.
-        for j in 0..3u32 {
-            let xs = -5.5 + 5.5 * j as f32 + (hash01(k as u32, j) - 0.5) * 2.0;
-            let top = 4.0 + 10.0 * hash01(k as u32 + 3, j);
-            block(m, &g, vec3(xs - 0.35, top - 6.0, -0.98), vec3(xs + 0.35, top, -0.93), GATE_RUST);
-        }
-        stencil(
-            m,
-            &(g * Mat4::from_translation(vec3(0.0, SILL - 3.6, -0.99)) * Mat4::from_rotation_y(PI)),
-            &format!("GATE {}", BAYS - k),
-            0.22,
-            YELLOW,
-        );
         // The road deck behind the gates.
         m.cuboid(vec3(x - BAY * 0.5, h - 0.8, Z_CREST + 5.5), vec3(x + BAY * 0.5, h, Z_UP), CONCRETE_DARK);
     }
@@ -322,6 +306,96 @@ fn spillway(m: &mut Mesh, w: &World) {
     let sign = wall(vec3(0.0, top - 2.2, Z_CREST + 0.38), PI);
     m.obox(&sign, vec3(0.0, 0.75, -0.05), vec3(8.0, 1.2, 0.05), DARK);
     stencil(m, &sign, "SPILLWAY NO 2", 0.22, shade(CONCRETE, 1.2));
+}
+
+/// One of the five floodgates, in the frame of its sill.
+fn floodgate(m: &mut Mesh, k: usize, g: Mat4) {
+    let hw = BAY * 0.5 + 0.2;
+    block(m, &g, vec3(-hw, 0.0, -0.5), vec3(hw, SILL - 0.6, 0.5), jit(GATE, k as u32));
+    for j in 0..6 {
+        let y = 1.2 + j as f32 * 3.0;
+        block(m, &g, vec3(-hw + 0.3, y, -0.95), vec3(hw - 0.3, y + 0.7, -0.5), shade(GATE, 0.8));
+    }
+    for xs in [-4.5f32, 0.0, 4.5] {
+        block(m, &g, vec3(xs - 0.25, 0.4, -0.9), vec3(xs + 0.25, SILL - 1.0, -0.5), shade(GATE, 0.85));
+    }
+    // Rust weeping from the bolted seams.
+    for j in 0..3u32 {
+        let xs = -5.5 + 5.5 * j as f32 + (hash01(k as u32, j) - 0.5) * 2.0;
+        let top = 4.0 + 10.0 * hash01(k as u32 + 3, j);
+        block(m, &g, vec3(xs - 0.35, top - 6.0, -0.98), vec3(xs + 0.35, top, -0.93), GATE_RUST);
+    }
+    stencil(
+        m,
+        &(g * Mat4::from_translation(vec3(0.0, SILL - 3.6, -0.99)) * Mat4::from_rotation_y(PI)),
+        &format!("GATE {}", BAYS - k),
+        0.22,
+        YELLOW,
+    );
+}
+
+/// The release: the middle gate lifts clear as Spillway's outlet gates
+/// open, and the reservoir thunders down its bay of the chute into the
+/// stilling basin until they close.
+fn release(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, time: f32) {
+    let (h, b) = (crest(w), base(w));
+    let f = ferrite_shared::events::flood(w.seed, time);
+    let x = bay_x(RELEASE);
+    floodgate(m, RELEASE, Mat4::from_translation(vec3(x, h - SILL + f.gates * GATE_LIFT, Z_CREST + 2.0)));
+    if f.gates <= 0.02 {
+        return;
+    }
+    let profile = chute(w);
+    let hw = BAY * 0.5 - 0.3;
+    // The sheet of water: deeper and whiter as the gate rises, bands of
+    // foam racing down it.
+    let depth = 0.4 + 1.6 * f.gates;
+    let mut along = 0.0;
+    for (i, pair) in profile.windows(2).enumerate() {
+        let ((za, ya), (zb, yb)) = (pair[0], pair[1]);
+        let len = ((zb - za).powi(2) + (yb - ya).powi(2)).sqrt();
+        let band = |d: f32| 0.62 + 0.25 * (d * 0.22 - time * 9.0).sin().max(-0.4) + 0.1 * (d * 0.9 - time * 13.0).sin();
+        let a = |d: f32| [0.84, 0.9, 0.92, band(d).min(0.95) * (0.4 + 0.6 * f.gates)];
+        // The upper reach is clear green-grey; it breaks up white below.
+        let tint = |d: f32, c: Col| if d < 12.0 { [0.42, 0.52, 0.5, c[3]] } else { c };
+        let (ca, cb) = (tint(along, a(along)), tint(along + len, a(along + len)));
+        for s in 0..3 {
+            let (x0, x1) = (x - hw + 2.0 * hw * s as f32 / 3.0, x - hw + 2.0 * hw * (s + 1) as f32 / 3.0);
+            alpha.quad_c(
+                vec3(x1, ya + depth, za - 0.2),
+                vec3(x0, ya + depth, za - 0.2),
+                vec3(x0, yb + depth, zb - 0.2),
+                vec3(x1, yb + depth, zb - 0.2),
+                [ca, ca, cb, cb],
+            );
+        }
+        // Spray thrown off the training walls.
+        if i % 2 == 1 {
+            for side in [-1.0f32, 1.0] {
+                let p = vec3(x + side * (hw - 0.5), (ya + yb) * 0.5 + depth + 1.0, (za + zb) * 0.5 - 0.6);
+                soft(alpha, p, 1.6, 1.4, [0.9, 0.93, 0.95, 0.22 * f.gates]);
+            }
+        }
+        along += len;
+    }
+    // Where it leaves the flip bucket: a white plume into the basin, and
+    // mist rolling off it.
+    let seed = (w.seed ^ (w.seed >> 32)) as u32;
+    // (Sprites spread as far across as they are deep: kept clear of the fence.)
+    for k in 0..14u32 {
+        let age = (time * 0.35 + hash01(k, seed ^ 0xB1)).fract();
+        let p = vec3(x + (hash01(k, 0xB2) - 0.5) * BAY, b + 3.5 + age * 16.0, Z_TOE - 3.0 - age * 1.5);
+        soft(alpha, p, 2.5 + age * 2.0, 2.5 + age * 6.0, [0.88, 0.91, 0.93, 0.32 * (1.0 - age) * f.gates]);
+    }
+    soft(add, vec3(x, b + 7.0, Z_TOE - 2.0), 7.0, 8.0, [0.45, 0.5, 0.52, 0.15 * f.gates]);
+    // The basin churns white.
+    alpha.quad(
+        vec3(x + BAY, b + 1.75, 104.4),
+        vec3(x - BAY, b + 1.75, 104.4),
+        vec3(x - BAY, b + 1.75, Z_TOE - 1.0),
+        vec3(x + BAY, b + 1.75, Z_TOE - 1.0),
+        [0.86, 0.9, 0.9, 0.45 * f.gates],
+    );
 }
 
 fn powerhouse(m: &mut Mesh, w: &World, side: f32) {
@@ -405,6 +479,7 @@ fn siren(w: &World, time: f32) -> Option<f32> {
 
 pub fn atmosphere(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, time: f32) {
     let (h, b) = (crest(w), base(w));
+    release(m, alpha, add, w, time);
     let profile = chute(w);
     // Water weeping from the bottom seals of every gate runs down the chute
     // in thin, pulsing threads, and spits from the side seals.

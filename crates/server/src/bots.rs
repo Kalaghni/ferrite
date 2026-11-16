@@ -2,6 +2,7 @@
 //! and goes through the same validation and simulation path.
 
 use crate::Game;
+use ferrite_shared::map::spillway;
 use ferrite_shared::proto::pickup;
 use ferrite_shared::proto::{btn, btn2, Cmd};
 use ferrite_shared::rng::Rng;
@@ -113,6 +114,13 @@ impl Bot {
         self.unstuck = 0;
         self.lane = self.rng.below(3) as usize;
     }
+}
+
+/// The way to walk from `pos` toward goal `goal`: the flow field (round the
+/// water while Spillway floods), turned along a tunnel underground or out
+/// from under Spillway's gate deck, which the field describes from above.
+fn way(g: &Game, goal: usize, lane: usize, pos: Vec3) -> Vec2 {
+    g.world.walk_steer(pos, g.nav.dir_in(g.world.flooding(), goal, lane, pos.x, pos.z))
 }
 
 fn choose_goal(g: &Game, team: u8, pos: Vec3, b: &mut Bot) -> usize {
@@ -298,9 +306,9 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
     let gpos = g.world.points[b.goal];
     let dgoal = vec2(gpos.x - pos.x, gpos.z - pos.z).length();
     let mut mv = Vec2::ZERO;
-    if dgoal > 7.0 {
-        // Underground, the flow field (a surface map) is turned along the tunnel.
-        mv = g.world.tunnel_steer(pos, g.nav.dir(b.goal, b.lane, pos.x, pos.z));
+    // Under Spillway's gate deck is not on it, however close to C.
+    if dgoal > 7.0 || spillway::under(&g.world, pos) {
+        mv = way(g, b.goal, b.lane, pos);
     } else {
         let to = vec2(b.wander.x - pos.x, b.wander.z - pos.z);
         if b.wander_timer == 0 || to.length() < 1.0 {
@@ -524,9 +532,19 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
     }
     if !fleeing && engaged && b.cautious && me.hp < sim::kit(me.st.kit).hp * 0.35 {
         // Badly hurt: give ground toward friendly territory, still shooting.
-        let back = g.world.tunnel_steer(pos, g.nav.dir(5 + me.team as usize, b.lane, pos.x, pos.z));
+        let back = way(g, 5 + me.team as usize, b.lane, pos);
         mv = back + vec2(-b.yaw.cos(), b.yaw.sin()) * b.strafe * 0.5;
         crouch = false;
+    }
+
+    // Caught in flood water: nothing matters but getting out. The flood
+    // routes lead out of it by the shortest way.
+    if g.world.flooding() && g.world.danger(pos, 0.0) {
+        mv = way(g, b.goal, b.lane, pos);
+        fleeing = true;
+        crouch = false;
+        fire = false;
+        ads = false;
     }
 
     // Never walk, strafe or back-pedal into lava or flood water. The flow

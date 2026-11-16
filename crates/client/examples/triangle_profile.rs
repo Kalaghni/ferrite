@@ -68,8 +68,12 @@ fn main() {
         statics.push(prof);
         // Peak per module over the sampled clock.
         let mut peak = scene::Profile::new();
-        for k in 0..480 {
-            let time = k as f32 * 0.25;
+        // The first two minutes, then a whole siren window in which the dam is
+        // tested, so Spillway's flood is counted.
+        let tested = (0..64).find(|&c| ferrite_shared::events::siren_tested(seed, c)).unwrap_or(0) as f32;
+        let window = tested * ferrite_shared::events::SIREN_PERIOD;
+        for k in 0..480 + 360 {
+            let time = if k < 480 { k as f32 * 0.25 } else { window + (k - 480) as f32 * 0.25 };
             let (mut m, mut alpha, mut add) = (gfx::Mesh::default(), gfx::Mesh::default(), gfx::Mesh::default());
             let mut p = scene::Profile::new();
             scene::beacons_profiled(&mut m, &mut alpha, &mut add, &w, &owners, time, 0, &mut p);

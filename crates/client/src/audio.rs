@@ -324,6 +324,11 @@ pub enum Sfx {
     Groan,
     /// The Great Dam's warning sirens under test, far off.
     Siren,
+    /// Spillway's sluice-gate gear taking the load as the gates move.
+    Clank,
+    /// Flood water roaring out of the culverts and down the channel; a few
+    /// seconds long, cued again before it ends while the water runs.
+    Rush,
     Count,
 }
 
@@ -537,6 +542,51 @@ fn siren() -> Vec<f32> {
     (0..n).map(|i| dry[i] + if i >= delay { dry[i - delay] * 0.3 } else { 0.0 }).collect()
 }
 
+/// Heavy gate gear engaging: a deep iron knock, a ring of inharmonic
+/// partials as the load comes on, and a rattle of chain as it settles.
+fn clank() -> Vec<f32> {
+    let dur = 2.2;
+    let mut rng = Rng::new(0xC1A4);
+    let mut grit = 0.0f32;
+    (0..(dur * SR) as usize)
+        .map(|i| {
+            let t = i as f32 / SR;
+            grit += (rng.range(-1.0, 1.0) - grit) * 0.3;
+            let tau = std::f32::consts::TAU;
+            let knock = (t * 58.0 * tau).sin() * (-t / 0.09).exp() * 0.9 + grit * (-t / 0.012).exp() * 0.8;
+            let ring = (t * 173.0 * tau).sin() * 0.5 + (t * 391.0 * tau).sin() * 0.3 + (t * 822.0 * tau).sin() * 0.15;
+            let ring = ring * (-t / 0.55).exp() * (t * 900.0).min(1.0);
+            // Chain links knocking, thinning out over a second.
+            let link = (t * 23.0).fract();
+            let chain = if t > 0.25 && t < 1.6 { grit * (-link / 0.01).exp() * 0.35 * (1.0 - (t - 0.25) / 1.35) } else { 0.0 };
+            let env = (t / 0.02).min(1.0).powi(2) * (1.0 - ((t - dur + 0.4) / 0.4).clamp(0.0, 1.0)).powi(2);
+            ((knock + ring + chain) * env * 0.9).tanh() * 0.85
+        })
+        .collect()
+}
+
+/// Water in spate: low roar and hiss with slow surges, faded in and out so
+/// overlapping copies cued every two seconds join into one steady sound.
+fn rush() -> Vec<f32> {
+    let dur = 3.2;
+    let mut rng = Rng::new(0x2054);
+    let (mut lo, mut lo2, mut hi, mut hi_lp) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    (0..(dur * SR) as usize)
+        .map(|i| {
+            let t = i as f32 / SR;
+            let n = rng.range(-1.0, 1.0);
+            lo += (n - lo) * 0.02;
+            lo2 += (lo - lo2) * 0.05;
+            hi_lp += (n - hi_lp) * 0.35;
+            hi += ((n - hi_lp) - hi) * 0.5;
+            let surge = 0.75 + 0.25 * (t * 2.3).sin() * (t * 0.9 + 1.0).sin();
+            let fade = (t / 0.8).min(1.0) * (1.0 - ((t - dur + 0.9) / 0.9).clamp(0.0, 1.0));
+            let s = fade * fade * (3.0 - 2.0 * fade);
+            (lo2 * 5.0 + hi * 0.35 * surge) * surge * s * 0.8
+        })
+        .collect()
+}
+
 /// A boot on dirt: a dull thud with a little grit, nothing sharp.
 fn footstep() -> Vec<f32> {
     let mut rng = Rng::new(6);
@@ -603,6 +653,8 @@ impl Audio {
             (Sfx::Creak, creak()),
             (Sfx::Groan, groan()),
             (Sfx::Siren, siren()),
+            (Sfx::Clank, clank()),
+            (Sfx::Rush, rush()),
         ];
         // Reload: two metallic clicks.
         let mut reload = vec![0.0; (0.5 * SR) as usize];
@@ -631,6 +683,8 @@ impl Audio {
             Sfx::Creak,
             Sfx::Groan,
             Sfx::Siren,
+            Sfx::Clank,
+            Sfx::Rush,
         ];
         for (id, samples) in defs {
             for (k, gain) in PANS.iter().enumerate() {
@@ -697,7 +751,9 @@ mod music_tests {
 
     #[test]
     fn monument_sounds_are_finite_audible_and_fade_out() {
-        for (name, pcm, secs) in [("creak", creak(), 1.6), ("groan", groan(), 2.6), ("siren", siren(), 8.0)] {
+        for (name, pcm, secs) in
+            [("creak", creak(), 1.6), ("groan", groan(), 2.6), ("siren", siren(), 8.0), ("clank", clank(), 2.2), ("rush", rush(), 3.2)]
+        {
             assert_eq!(pcm.len(), (SR * secs) as usize, "{name} length");
             assert!(pcm.iter().all(|s| s.is_finite() && s.abs() <= 1.0), "{name} clips or is not finite");
             let loud = pcm.iter().fold(0.0f32, |m, s| m.max(s.abs()));
