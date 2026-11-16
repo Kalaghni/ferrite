@@ -1,6 +1,17 @@
 FERRITE - 12v12 front-line conquest
 https://github.com/Kalaghni/ferrite
 
+NEW IN v0.13
+  Slag Cathedral: eruptions send lava down a runner across the south of
+  the map for half a minute. Cross on the gratings or go round.
+  Spillway: C stands on a raised gate deck, and after each siren test
+  the channel below floods. Stay out of the water.
+  Relay: climb the ladders of BACKBONE, the great mast, to a platform at
+  20 m and a top deck at 36.75 m.
+  Tunnel portals are one rock face, with no floating plate or open
+  corners.
+  Everyone in a match needs v0.13.0, including the dedicated server.
+
 NEW IN v0.12
   Quarry's mine and Ridgeline's cave run underground: in at one end,
   under the hill and out at the other.
