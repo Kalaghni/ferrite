@@ -969,12 +969,17 @@ pub fn grow(m: &mut Mesh, w: &World) {
         let pine = far.chance(b.pine);
         for (px, pz) in [(x, z), (-x, -z)] {
             let t = Tree { base: vec3(px, w.height(px, pz), pz), height, radius, tint, pine };
-            super::tree(m, &t, 100_000 + k * 2);
+            // Monuments stand on these slopes; nothing grows through them.
+            if !super::monuments::hides_tree(w, &t) {
+                super::tree(m, &t, 100_000 + k * 2);
+            }
         }
         // Brush between the trunks.
         if k % 3 == 0 {
             for (px, pz) in [(x + 2.5, z + 1.5), (-x - 2.5, -z - 1.5)] {
-                bush(m, vec3(px, w.height(px, pz), pz), &mut rng_for(10, k), &b.bush, 1.5);
+                if !super::monuments::hides(w, px, pz, 1.5) {
+                    bush(m, vec3(px, w.height(px, pz), pz), &mut rng_for(10, k), &b.bush, 1.5);
+                }
             }
         }
     }

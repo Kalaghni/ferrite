@@ -1627,6 +1627,8 @@ async fn play(
     let mut listener = Vec3::ZERO;
     let mut shot_done = false;
     let mut peak_tris = 0usize;
+    // The visual clock as of the last frame, for monument sound cues.
+    let mut cue_clock = f32::NAN;
     let (mut frames, began) = (0u32, mq::get_time());
     let mut grabbed = false;
     let mut lobby_sent = 0.0f64;
@@ -2456,6 +2458,19 @@ async fn play(
                 app.audio.play_at(Sfx::MetalRattle, panel, eye, 0.22, 12.0);
             }
         }
+        // The monuments' creaks, groans and siren tests, on the same clock
+        // as their motion. Cosmetic: no network event, no damage.
+        if app.kc.is_none() {
+            for (cue, at) in scene::monuments::cues(&app.world, cue_clock, time) {
+                let (sfx, vol, reach) = match cue {
+                    scene::monuments::Cue::Creak => (Sfx::Creak, 0.35, 45.0),
+                    scene::monuments::Cue::Groan => (Sfx::Groan, 0.4, 90.0),
+                    scene::monuments::Cue::Siren => (Sfx::Siren, 0.5, 160.0),
+                };
+                app.audio.play_at(sfx, at, eye, vol, reach);
+            }
+        }
+        cue_clock = time;
         for v in &app.views {
             scene::soldier(&mut opaque, &mut alpha, &app.world, v, time, blob);
         }
