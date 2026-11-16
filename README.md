@@ -262,4 +262,8 @@ License: MIT.
 
 ## Licence
 
-The source code is under the MIT licence (`LICENSE`). The music and artwork in `crates/client/assets/` (and the icon made from it, `packaging/ferrite.ico`) are **not**: they are all rights reserved and may only be used as part of FERRITE. See `crates/client/assets/LICENSE.md`.
+The source code is under the MIT licence ([`LICENSE`](LICENSE)). The music and artwork in `crates/client/assets/` (and the icon made from it, `packaging/ferrite.ico`) are **not**: they are all rights reserved and may only be used as part of FERRITE. The Quantico typeface is under the SIL Open Font License. [`crates/client/assets/LICENSE.md`](crates/client/assets/LICENSE.md) lists every asset with its owner and licence, including the screenshots in `docs/`. The vendored `miniquad` and `quad-snd` keep their MIT / Apache-2.0 licences ([`vendor/README.md`](vendor/README.md)).
+
+## Contributing and security
+
+Building, the checks CI runs, the protocol and map rules, and the release steps: [CONTRIBUTING.md](CONTRIBUTING.md). To report a vulnerability privately, and for what the server does and does not defend against: [SECURITY.md](SECURITY.md).
