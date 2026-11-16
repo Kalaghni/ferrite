@@ -3,7 +3,7 @@
 //! on arrival of each command, the client runs it for prediction and again
 //! when replaying unacknowledged commands after a snapshot.
 
-use crate::map::{Block, World, HALF_X, HALF_Z};
+use crate::map::{Block, Ladder, World, HALF_X, HALF_Z};
 use crate::proto::{btn, btn2, Cmd};
 use crate::rng::Rng;
 use crate::DT;
@@ -39,6 +39,24 @@ pub const STEP_H: f32 = 0.5;
 /// How far above your feet a ledge can be and still be climbed.
 pub const MANTLE_REACH: f32 = 1.05;
 pub const MANTLE_V: f32 = 4.6;
+/// Ladders: climbing and descending speed, and the speed of a slide down
+/// with crouch held.
+pub const CLIMB_SPEED: f32 = 3.0;
+pub const CLIMB_SLIDE: f32 = 8.0;
+/// A climber's centre may be this far either side of a ladder's middle,
+/// and this far out from its rungs, and still take hold.
+pub const LADDER_GRIP: f32 = 0.45;
+pub const LADDER_REACH: f32 = 0.9;
+/// To take hold you must be looking within about 70 degrees of the rungs.
+pub const LADDER_LOOK: f32 = 0.35;
+/// A climber is drawn onto the ladder's centre line, just off the rungs,
+/// at up to this speed.
+const CLIMB_PULL: f32 = 3.0;
+const CLIMB_HOLD: f32 = P_R + 0.02;
+/// Over the top, a climber steps this far past the rungs onto the deck.
+const CLIMB_STEP: f32 = 0.1;
+/// Letting go (jump) pushes you gently back off the rungs.
+const LET_GO: f32 = 1.2;
 pub const SLIDE_TICKS: u8 = 42;
 pub const HEAT_MAX: u8 = 100;
 pub const GRENADE_WEAPON: u8 = 3;
@@ -941,6 +959,8 @@ pub struct PState {
     pub burst: u8,
     /// Ticks left of a melee swing; no shooting or reloading until 0.
     pub melee: u8,
+    /// On a ladder: hands on the rungs, so no gravity and no shooting.
+    pub climbing: bool,
 }
 
 impl PState {
@@ -974,6 +994,7 @@ impl PState {
             heat: 0,
             burst: 0,
             melee: 0,
+            climbing: false,
         }
     }
 }
@@ -1126,6 +1147,51 @@ fn move_collide(s: &mut PState, w: &World, dmask: u64, jumped: bool, was_ground:
     s.on_ground = on_ground;
 }
 
+/// The ladder a player at `p` is in front of, close enough to hold: within
+/// reach of the rungs, between its foot and the deck it arrives at.
+pub fn ladder_at(w: &World, p: Vec3) -> Option<Ladder> {
+    w.ladders.iter().copied().find(|l| {
+        let (rx, rz) = (p.x - l.at.x, p.z - l.at.z);
+        let depth = -(rx * l.face.x + rz * l.face.z);
+        let side = rx * l.face.z - rz * l.face.x;
+        (-0.05..=LADDER_REACH).contains(&depth) && side.abs() <= LADDER_GRIP && p.y >= l.at.y - 0.5 && p.y < l.top
+    })
+}
+
+/// One tick on a ladder: no gravity, forward climbs, back descends and
+/// crouch slides down. Reaching the ground or a deck below lets go; at the
+/// top the climber steps forward off the rungs onto the deck.
+fn climb(s: &mut PState, l: &Ladder, mz: f32, slide: bool, w: &World, dmask: u64) {
+    let across = vec3(l.face.z, 0.0, -l.face.x);
+    let (rx, rz) = (s.pos.x - l.at.x, s.pos.z - l.at.z);
+    let depth = -(rx * l.face.x + rz * l.face.z);
+    let side = rx * across.x + rz * across.z;
+    // Settle onto the centre line just off the rungs, through collision.
+    let mut pull = l.face * (depth - CLIMB_HOLD) - across * side;
+    let most = CLIMB_PULL * DT;
+    if pull.length() > most {
+        pull *= most / pull.length();
+    }
+    s.vel = pull / DT;
+    s.vel.y = if slide { -CLIMB_SLIDE } else { mz * CLIMB_SPEED };
+    if s.vel.y > 0.0 && s.pos.y + s.vel.y * DT >= l.top {
+        let off = vec3(s.pos.x, l.top + 0.001, s.pos.z) + l.face * (depth + CLIMB_STEP);
+        if !blocked_at(w, off, dmask, height_of(s.crouch)) {
+            s.pos = off;
+            s.vel = l.face * (CLIMB_SPEED * 0.5);
+            s.on_ground = true;
+            s.climbing = false;
+            return;
+        }
+        // Something stands on the hatch: wait just below it.
+        s.vel.y = ((l.top - 0.002 - s.pos.y) / DT).max(0.0);
+    }
+    move_collide(s, w, dmask, false, false);
+    if s.on_ground {
+        s.climbing = false;
+    }
+}
+
 /// Advance one player by one command (one 60 Hz tick).
 pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
     let kd = kit(s.kit);
@@ -1186,8 +1252,25 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
         speed *= 1.18;
     }
     let was_ground = s.on_ground;
+    let jump_btn = c.buttons & btn::JUMP != 0;
+    // Ladders: look at the rungs and push forward to take hold (or back,
+    // dropping onto one from above). Jump lets go.
+    let ladder = ladder_at(w, s.pos);
+    match ladder {
+        None => s.climbing = false,
+        Some(l) if s.climbing && jump_btn => {
+            s.climbing = false;
+            s.vel = -l.face * LET_GO;
+        }
+        Some(l) if !s.climbing && !jump_btn && !sliding && fwd.dot(l.face) > LADDER_LOOK => {
+            s.climbing = (mz > 0.0 && !crouch_btn) || (mz < 0.0 && !was_ground);
+        }
+        _ => {}
+    }
     let hv = vec3(s.vel.x, 0.0, s.vel.z);
-    if sliding {
+    if s.climbing {
+        // Hands on the rungs; `climb` moves the player.
+    } else if sliding {
         // Friction only, plus a little steering.
         let dv = wish * 2.0 * DT - hv.normalize_or_zero() * (if was_ground { 5.5 } else { 0.5 }) * DT;
         s.vel.x += dv.x;
@@ -1207,7 +1290,6 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
         s.vel.x += dv.x;
         s.vel.z += dv.z;
     }
-    let jump_btn = c.buttons & btn::JUMP != 0;
     if was_ground && jump_btn {
         s.vel.y = JUMP_V;
         s.slide = 0;
@@ -1218,10 +1300,14 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
         s.vel.y = MANTLE_V + GRAVITY * DT;
         out.mantle = true;
     }
-    s.vel.y -= GRAVITY * DT;
-    let fall = s.vel.y;
-    move_collide(s, w, dmask, out.jumped, was_ground);
-    out.landed = s.on_ground && !was_ground && fall < -5.0;
+    if let (true, Some(l)) = (s.climbing, ladder) {
+        climb(s, &l, mz, crouch_btn, w, dmask);
+    } else {
+        s.vel.y -= GRAVITY * DT;
+        let fall = s.vel.y;
+        move_collide(s, w, dmask, out.jumped, was_ground);
+        out.landed = s.on_ground && !was_ground && fall < -5.0;
+    }
 
     // Weapon timing.
     s.cooldown = s.cooldown.saturating_sub(1);
@@ -1245,7 +1331,7 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
     // Melee: a quick strike with the weapon in hand. It interrupts a
     // reload, and nothing else can be done until the swing is over.
     s.melee = s.melee.saturating_sub(1);
-    if c.more & btn2::MELEE != 0 && s.melee == 0 && s.swap == 0 {
+    if c.more & btn2::MELEE != 0 && s.melee == 0 && s.swap == 0 && !s.climbing {
         s.melee = MELEE_TICKS;
         s.reload = 0;
         s.burst = 0;
@@ -1262,12 +1348,12 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
         s.reload = if s.surge { wd.reload / 2 } else { wd.reload };
         out.reload_started = true;
     }
-    if s.reload > 0 || s.ammo == 0 {
+    if s.reload > 0 || s.ammo == 0 || s.climbing {
         s.burst = 0;
     }
     // A burst, once started, finishes on its own.
     let pull = (fire_btn && (!wd.semi || !s.trig)) || s.burst > 0;
-    if pull && s.reload == 0 && s.cooldown == 0 && s.swap == 0 && s.melee == 0 && s.ammo > 0 {
+    if pull && s.reload == 0 && s.cooldown == 0 && s.swap == 0 && s.melee == 0 && s.ammo > 0 && !s.climbing {
         s.ammo -= 1;
         s.cooldown = wd.interval;
         if wd.burst > 0 {
@@ -1281,7 +1367,7 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
         s.heat = (s.heat + wd.heat).min(HEAT_MAX);
     }
     s.trig = fire_btn;
-    if c.buttons & btn::GRENADE != 0 && s.grenades > 0 && s.gren_cd == 0 {
+    if c.buttons & btn::GRENADE != 0 && s.grenades > 0 && s.gren_cd == 0 && !s.climbing {
         s.grenades -= 1;
         s.gren_cd = 50;
         out.threw = true;

@@ -171,6 +171,18 @@ pub enum FeatureKind {
     Machinery,
 }
 
+/// A climbable ladder. A player facing it who stands in front of the rungs
+/// and pushes forward climbs; see `sim::step` for the rest.
+#[derive(Clone, Copy, Debug)]
+pub struct Ladder {
+    /// Middle of the rung plane at the ladder's foot.
+    pub at: Vec3,
+    /// Horizontal unit direction a climber faces, into the rungs.
+    pub face: Vec3,
+    /// Height of the deck the ladder arrives at.
+    pub top: f32,
+}
+
 #[derive(Clone, Debug)]
 pub struct Feature {
     pub kind: FeatureKind,
@@ -192,6 +204,8 @@ pub struct World {
     pub n_crates: usize,
     /// Underground routes; see `tunnels`.
     pub tunnels: Vec<tunnels::Tunnel>,
+    /// Ladders a player can climb (Relay's mast).
+    pub ladders: Vec<Ladder>,
 }
 
 fn hash(x: i32, z: i32, seed: u32) -> f32 {
@@ -310,6 +324,7 @@ fn full_height(x: f32, z: f32, s: u32, map: u8, tunnels: &[tunnels::Tunnel]) -> 
         let (dx, dz) = relay::DISH;
         flat(dx, dz, 6.0);
         flat(-dx, -dz, 6.0);
+        h = relay::settle(x, z, h, |cx, cz| shape(cx, cz, s, map));
     }
     h = landmarks::settle(x, z, map % MAPS.len() as u8, h, |cx, cz| shape(cx, cz, s, map));
     if map % MAPS.len() as u8 == fallen_giant::MAP_ID {
@@ -358,6 +373,7 @@ impl World {
             features: Vec::new(),
             n_crates: 0,
             tunnels,
+            ladders: Vec::new(),
         };
         for (i, (x, z)) in def.points.iter().enumerate() {
             w.points[i] = vec3(*x, w.height(*x, *z), *z);
@@ -578,6 +594,7 @@ impl World {
     fn footprint_free(&self, cx: f32, cz: f32, r: f32) -> bool {
         !landmarks::reserved(self.map, cx, cz, r, r)
             && !fallen_giant::reserved(self.map, cx, cz, r, r)
+            && !relay::reserved(self.map, cx, cz, r, r)
             && !self.tunnel_reserved(cx, cz, r)
             && !self.blocks.iter().any(|b| cx + r > b.min.x && cx - r < b.max.x && cz + r > b.min.z && cz - r < b.max.z)
     }
@@ -803,7 +820,7 @@ impl World {
         if landmarks::reserved(self.map, cx, cz, hx, hz) || self.tunnel_reserved(cx, cz, hx.max(hz)) {
             return false;
         }
-        if fallen_giant::reserved(self.map, cx, cz, hx, hz) {
+        if fallen_giant::reserved(self.map, cx, cz, hx, hz) || relay::reserved(self.map, cx, cz, hx, hz) {
             return false;
         }
         let free =
@@ -1413,6 +1430,10 @@ impl World {
         let (dx, dz) = relay::DISH;
         self.sym(dx, dz, relay::DISH_PEDESTAL_HALF, relay::DISH_PEDESTAL_HALF, 0.0, relay::DISH_PEDESTAL_H, Concrete, 3);
 
+        // BACKBONE, the great cellular mast, stands on the north flank and
+        // is climbed by ladder to a caged rest platform and a top deck.
+        relay::mast(self);
+
         // Cable gantries run from the exchange to the ridge-side cabins.
         // The two five-metre service arches can be walked underneath.
         for (x, z) in relay::GANTRIES {
@@ -1779,7 +1800,7 @@ mod tests {
         0x3445e849b5f38255,
         0x57c62f6f2f7b39da,
         0x9add6dc3e14285f4,
-        0xf1134b5f6ab0c68f,
+        0xa5240978f9ddea9d,
         0xa4522d55ba21aae2,
     ];
     const FINGERPRINTS_D091: [u64; 7] = [
@@ -1788,7 +1809,7 @@ mod tests {
         0xe88f753d78825fa3,
         0x57246f9b0a5621e4,
         0x4b79a71339bec22c,
-        0x378a3fde022bcd47,
+        0xea78cb32cce6e12b,
         0xa89dded116c53bbc,
     ];
 
@@ -2004,11 +2025,16 @@ mod tests {
                 assert_eq!(fingerprint(&w), fingerprint(&World::with_map(seed, id)), "{name} is not deterministic");
                 for b in &w.blocks {
                     assert!(b.min.is_finite() && b.max.is_finite() && b.min.cmplt(b.max).all(), "{name}: invalid block");
+                    // Relay's single great mast stands on x = 0, as far from
+                    // one base as the other: it is mirrored across that line
+                    // (which swaps the bases) rather than by the half turn.
+                    let mast = id == relay::MAP_ID && relay::mast_owns(b);
                     let mirrored = |q: &Block| {
+                        let (min_z, max_z) = if mast { (b.min.z, b.max.z) } else { (-b.max.z, -b.min.z) };
                         (q.min.x + b.max.x).abs() < 0.002
                             && (q.max.x + b.min.x).abs() < 0.002
-                            && (q.min.z + b.max.z).abs() < 0.002
-                            && (q.max.z + b.min.z).abs() < 0.002
+                            && (q.min.z - min_z).abs() < 0.002
+                            && (q.max.z - max_z).abs() < 0.002
                             && (q.min.y - b.min.y).abs() < 0.05
                             && (q.max.y - b.max.y).abs() < 0.05
                             && q.kind == b.kind
@@ -2016,6 +2042,11 @@ mod tests {
                             && q.dest.is_some() == b.dest.is_some()
                     };
                     assert!(w.blocks.iter().any(mirrored), "{name}: unmatched {:?} at {:?}", b.kind, b.min);
+                }
+                if id == relay::MAP_ID {
+                    // On the centre line, so equidistant from both bases.
+                    const { assert!(relay::BACKBONE.0 == 0.0) };
+                    assert!(w.blocks.iter().filter(|b| relay::mast_owns(b)).count() > 100, "{name}: the mast has no collision");
                 }
                 let nav = Nav::build(&w);
                 for goal in 0..NAV_GOALS {

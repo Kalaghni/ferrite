@@ -212,11 +212,19 @@ pub fn ground_tint(w: &World, mut col: [f32; 3], c: Vec3, n: Vec3) -> [f32; 3] {
     for s in [1.0f32, -1.0] {
         pad = pad.min(((c.x - dx * s).powi(2) + (c.z - dz * s).powi(2)).sqrt());
     }
+    // The mast's yard, swept from the legs back to the hut.
+    let (mx, mz) = layout::BACKBONE;
+    let yard = ((c.x - mx).abs() - 5.5).max((c.z - mz - 3.5).abs() - 9.5);
+    pad = pad.min(yard + 3.2);
     mix3(col, [0.60, 0.55, 0.48], (1.0 - smooth(3.2, 6.2, pad)) * 0.85)
 }
 
 /// Collision this module draws itself: the towers and the dish pedestals.
+/// The mast's collision is drawn by `special_landmarks`.
 pub fn owns(b: &Block) -> bool {
+    if layout::mast_owns(b) {
+        return true;
+    }
     let c = (b.min + b.max) * 0.5;
     let near = |x: f32, z: f32, r: f32| (c.x - x).abs() < r && (c.z - z).abs() < r;
     let (dx, dz) = layout::DISH;
