@@ -234,6 +234,8 @@ async fn main() {
             sky_vp: projection * Mat4::look_to_rh(Vec3::ZERO, (target - eye).normalize(), Vec3::Y),
             cam: eye,
             sun: scene::sun_for(map).normalize(),
+            tone: scene::tone_for(map),
+            time: 0.0,
             fog: if gallery {
                 [0.055, 0.07, 0.1, 0.0]
             } else {

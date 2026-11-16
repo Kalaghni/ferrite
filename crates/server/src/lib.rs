@@ -10,7 +10,7 @@ use ferrite_shared::map::{self, Nav, World};
 use ferrite_shared::proto::*;
 use ferrite_shared::rng::Rng;
 use ferrite_shared::sim::{self, PState, GRENADE_WEAPON};
-use ferrite_shared::{eligible, vec3, Vec3, DT, NEUTRAL, NUM_POINTS, POINT_RADIUS, TICK_HZ};
+use ferrite_shared::{eligible, mode, vec3, Vec3, DT, FLAG_POINT, NEUTRAL, NUM_POINTS, POINT_RADIUS, TICK_HZ};
 
 pub use net::{run, spawn, ServerHandle};
 
@@ -40,6 +40,17 @@ pub struct Config {
     /// Where the players' records are kept between runs. `None` keeps
     /// them in memory only.
     pub stats_file: Option<std::path::PathBuf>,
+    /// Game mode of the first round: index into `ferrite_shared::MODES`.
+    pub mode: u8,
+    /// Modes played in turn, one per round. Fewer than two entries means
+    /// the mode only changes when the lobby votes for another.
+    pub mode_rotation: Vec<u8>,
+    /// Score that wins a round outside conquest (0 = the mode's own), and
+    /// the length of its clock in seconds (0 = the mode's own).
+    pub score_limit: u32,
+    pub time_limit: u32,
+    /// Kills leave health, ammunition and streak rewards on the field.
+    pub drops: bool,
 }
 
 /// Bot difficulty presets: a name and the skill it stands for. Skill
@@ -52,7 +63,7 @@ pub fn difficulty_by_name(s: &str) -> Option<f32> {
 
 impl Default for Config {
     fn default() -> Self {
-        Config { port: DEFAULT_PORT, per_team: 12, max_bots: 64, seed: 0xFE221, map: 0, rotation: Vec::new(), lobby_secs: 0, tickets: 250, bot_skill: 1.0, log: false, name: host_name(), discover: true, stats_file: None }
+        Config { port: DEFAULT_PORT, per_team: 12, max_bots: 64, seed: 0xFE221, map: 0, rotation: Vec::new(), lobby_secs: 0, tickets: 250, bot_skill: 1.0, log: false, name: host_name(), discover: true, stats_file: None, mode: 0, mode_rotation: Vec::new(), score_limit: 0, time_limit: 0, drops: true }
     }
 }
 
@@ -81,6 +92,18 @@ pub struct Player {
     /// Lobby: map voted for (255 = none) and ready flag.
     pub vote: u8,
     pub ready: bool,
+    /// Lobby: game mode voted for (255 = none).
+    pub mode_vote: u8,
+    /// Armour picked up (0..=100): soaks most of each hit until it is gone.
+    pub armor: f32,
+    /// Kills since the last death.
+    pub streak: u16,
+    /// Overcharged until this tick: damage dealt is half again as much.
+    pub power_until: u32,
+    /// Ticks of the round in progress spent in it as a person.
+    pub played: u32,
+    /// Credits earned in the round just finished: (round, credits, won).
+    pub award: Option<(u32, u32, bool)>,
     pub st: PState,
     pub yaw: f32,
     pub pitch: f32,
@@ -147,6 +170,53 @@ pub struct Point {
     /// -1 = fully team 0, +1 = fully team 1.
     pub progress: f32,
     pub n: [u8; 2],
+}
+
+/// A flag in capture the flag. `state`: 0 at home, 1 carried, 2 dropped.
+#[derive(Clone, Copy, Debug)]
+pub struct Flag {
+    pub state: u8,
+    pub pos: Vec3,
+    pub carrier: usize,
+    /// Tick it was dropped at.
+    pub since: u32,
+}
+
+/// Something lying on the field: `kind` is one of `pickup::*`.
+#[derive(Clone, Copy, Debug)]
+pub struct Pickup {
+    pub id: u16,
+    pub kind: u8,
+    pub pos: Vec3,
+    pub until: u32,
+}
+
+/// Streaks that are announced and rewarded.
+pub fn streak_reward(n: u16) -> Option<u8> {
+    match n {
+        3 => Some(pickup::ARMOR),
+        5 => Some(pickup::OVERDRIVE),
+        7 => Some(pickup::OVERCHARGE),
+        n if n >= 10 && n % 5 == 0 => Some(pickup::OVERCHARGE),
+        _ => None,
+    }
+}
+
+/// Credits for a finished round: a win pays far more than a loss, a good
+/// score adds to either, and both scale with how much of the round the
+/// player was there for and with rounds shorter than three minutes.
+pub fn round_credits(won: bool, score: u32, played: f32, secs: f32) -> u32 {
+    let base = if won { 120.0 } else { 45.0 };
+    let bonus = (score as f32 / 20.0).min(120.0);
+    ((base + bonus) * played.clamp(0.0, 1.0) * (secs / 180.0).clamp(0.0, 1.0)).round() as u32
+}
+
+fn wants(p: &Player, kind: u8) -> bool {
+    match kind {
+        pickup::HEALTH => p.hp < sim::kit(p.st.kit).hp,
+        pickup::ARMOR => p.armor < 100.0,
+        _ => true,
+    }
 }
 
 pub struct Grenade {
@@ -229,13 +299,26 @@ pub struct Game {
     pub chat_seq: u32,
     /// Each team's current push target (bots mostly follow it).
     pub orders: [usize; 2],
+    /// Game mode of this round, and the one the lobby falls back to.
+    pub mode: u8,
+    lobby_mode: u8,
+    /// Rounds started so far; score that wins this one; tick its clock
+    /// runs out at (0 = no clock).
+    pub round_no: u32,
+    pub goal: i32,
+    pub round_end: u32,
+    pub flags: [Flag; 2],
+    pub pickups: Vec<Pickup>,
+    next_pickup: u16,
     rng: Rng,
 }
 
-fn initial_points() -> [Point; NUM_POINTS] {
+fn initial_points(m: u8) -> [Point; NUM_POINTS] {
     let mut p = [Point { owner: NEUTRAL, progress: 0.0, n: [0; 2] }; NUM_POINTS];
-    p[0] = Point { owner: 0, progress: -1.0, n: [0; 2] };
-    p[NUM_POINTS - 1] = Point { owner: 1, progress: 1.0, n: [0; 2] };
+    if m == mode::CONQUEST {
+        p[0] = Point { owner: 0, progress: -1.0, n: [0; 2] };
+        p[NUM_POINTS - 1] = Point { owner: 1, progress: 1.0, n: [0; 2] };
+    }
     p
 }
 
@@ -248,7 +331,7 @@ impl Game {
             nav,
             tick: 0,
             players: Vec::new(),
-            points: initial_points(),
+            points: initial_points(cfg.mode % ferrite_shared::MODES.len() as u8),
             tickets: [cfg.tickets; 2],
             dmask: 0,
             crate_hp: Vec::new(),
@@ -269,9 +352,18 @@ impl Game {
             chat: Vec::new(),
             chat_seq: 0,
             orders: [1, 3],
+            mode: cfg.mode % ferrite_shared::MODES.len() as u8,
+            lobby_mode: cfg.mode % ferrite_shared::MODES.len() as u8,
+            round_no: 1,
+            goal: cfg.tickets,
+            round_end: 0,
+            flags: [Flag { state: 0, pos: Vec3::ZERO, carrier: 0, since: 0 }; 2],
+            pickups: Vec::new(),
+            next_pickup: 0,
             rng: Rng::new(cfg.seed ^ 0x5EED),
             cfg,
         };
+        g.reset_field();
         g.crate_hp = vec![110.0; g.world.n_crates];
         let n = (g.cfg.per_team * 2).min(64);
         for i in 0..n {
@@ -292,6 +384,50 @@ impl Game {
         g
     }
 
+    /// The score a round of the current mode is played to.
+    pub fn mode_goal(&self) -> i32 {
+        if self.mode == mode::CONQUEST {
+            return self.cfg.tickets;
+        }
+        if self.cfg.score_limit > 0 {
+            return self.cfg.score_limit.min(60000) as i32;
+        }
+        match self.mode {
+            mode::TDM => (self.cfg.per_team as i32 * 8).max(20),
+            mode::CTF => 3,
+            _ => 180,
+        }
+    }
+
+    /// Length of the current mode's clock in seconds; 0 = none.
+    pub fn mode_secs(&self) -> u32 {
+        if self.mode == mode::CONQUEST {
+            return 0;
+        }
+        if self.cfg.time_limit > 0 {
+            return self.cfg.time_limit.min(3600);
+        }
+        match self.mode {
+            mode::CTF => 720,
+            _ => 480,
+        }
+    }
+
+    /// Objectives, scores, flags and the clock as a round of the current
+    /// mode begins.
+    fn reset_field(&mut self) {
+        self.points = initial_points(self.mode);
+        self.goal = self.mode_goal();
+        self.tickets = if self.mode == mode::CONQUEST { [self.cfg.tickets; 2] } else { [0; 2] };
+        for f in 0..2 {
+            self.flags[f] = Flag { state: 0, pos: self.world.points[FLAG_POINT[f]], carrier: 0, since: 0 };
+        }
+        self.pickups.clear();
+        let secs = self.mode_secs();
+        self.round_end = if secs > 0 { self.tick + secs * TICK_HZ } else { 0 };
+        self.orders = if self.mode == mode::CONQUEST { [1, 3] } else { [2, 2] };
+    }
+
     fn make_bot(&mut self, p: &mut Player) {
         let i = p.id as usize;
         p.name = BOT_NAMES[i % BOT_NAMES.len()].to_string();
@@ -302,6 +438,12 @@ impl Game {
         p.next_side = if self.rng.below(2) == 0 { sim::SIDEARM_ID } else { sim::SIDEARMS[self.rng.below(sim::SIDEARMS.len() as u32) as usize] };
         p.vote = 255;
         p.ready = false;
+        p.mode_vote = 255;
+        p.armor = 0.0;
+        p.streak = 0;
+        p.power_until = 0;
+        p.played = 0;
+        p.award = None;
         // Bots turn out in a mix of looks, and of finishes where a weapon
         // has more than one.
         p.skin = self.rng.below(sim::SKINS.len() as u32) as u8;
@@ -418,6 +560,12 @@ impl Game {
         p.next_side = sim::SIDEARM_ID;
         p.vote = 255;
         p.ready = false;
+        p.mode_vote = 255;
+        p.armor = 0.0;
+        p.streak = 0;
+        p.power_until = 0;
+        p.played = 0;
+        p.award = None;
         p.alive = false;
         p.benched = false;
         p.skin = 0;
@@ -530,9 +678,17 @@ impl Game {
                 rec.totals.wins += 1;
             }
         }
+        // Pay the people who played: a win is worth far more than a loss.
+        let len = (self.tick - self.round_start).max(1) as f32;
+        let round = self.round_no;
+        for p in self.players.iter_mut().filter(|p| p.bot.is_none() && !p.name.is_empty()) {
+            let won = p.team == w;
+            p.award = Some((round, round_credits(won, p.score, p.played as f32 / len, len / TICK_HZ as f32), won));
+        }
         let mvp = self.players.iter().max_by_key(|p| p.score);
         self.history.push(RoundResult {
             map: self.world.map,
+            mode: self.mode,
             winner: w,
             tickets: [self.tickets[0].max(0) as u16, self.tickets[1].max(0) as u16],
             secs: ((self.tick - self.round_start) / TICK_HZ).min(u16::MAX as u32) as u16,
@@ -831,7 +987,16 @@ impl Game {
         if !self.players[j].alive {
             return;
         }
+        let mut dmg = dmg;
+        if attacker.is_some_and(|a| a != j && t < self.players[a].power_until) {
+            dmg *= 1.5;
+        }
         let p = &mut self.players[j];
+        if p.armor > 0.0 && weapon != sim::LAVA_WEAPON {
+            let soak = (dmg * 0.6).min(p.armor);
+            p.armor -= soak;
+            dmg -= soak;
+        }
         p.hp -= dmg;
         p.last_dmg_tick = t;
         if let Some(a) = attacker.filter(|&a| a != j) {
@@ -877,13 +1042,31 @@ impl Game {
         let phase = if team == 1 { period / 2 } else { 0 };
         let earliest = t + 2 * TICK_HZ + period - 1;
         let wave = (earliest - phase.min(earliest)) / period * period + phase;
+        let m = self.mode;
         let p = &mut self.players[j];
         p.alive = false;
         p.hp = 0.0;
         p.deaths += 1;
-        p.respawn_at = wave.max(t + 2 * TICK_HZ);
+        // Outside conquest everyone is back after a fixed, short wait.
+        p.respawn_at = match m {
+            mode::TDM => t + 3 * TICK_HZ,
+            mode::KOTH => t + 5 * TICK_HZ,
+            // Flag runs need a gap to run through: each side comes back
+            // together, every twelve seconds.
+            mode::CTF => {
+                let period = 12 * TICK_HZ;
+                let phase = if team == 1 { period / 2 } else { 0 };
+                let earliest = t + 3 * TICK_HZ + period - 1;
+                (earliest - phase) / period * period + phase
+            }
+            _ => wave.max(t + 2 * TICK_HZ),
+        };
         p.killer = attacker.map_or(SPECTATOR_ID, |a| a as u8);
         let hits = std::mem::take(&mut p.hits);
+        let ended = std::mem::take(&mut p.streak);
+        p.armor = 0.0;
+        p.power_until = 0;
+        let at = p.st.pos;
         let mut killer_id = j as u8;
         if let Some(a) = attacker {
             if a != j {
@@ -891,6 +1074,33 @@ impl Game {
                 self.players[a].heads += head as u16;
                 self.players[a].score += if head { 125 } else { 100 };
                 killer_id = a as u8;
+                if m == mode::TDM && self.phase == 0 {
+                    self.tickets[self.players[a].team as usize % 2] += 1;
+                }
+                if ended >= 5 {
+                    self.players[a].score += 100;
+                    self.feed.push(Feed::Shutdown { by: a as u8, victim: j as u8, n: ended.min(255) as u8 });
+                }
+                // A streak is announced at its milestones, and the one
+                // who fell leaves its reward where they lay. Any other
+                // kill may leave a health pack or ammunition.
+                self.players[a].streak += 1;
+                let n = self.players[a].streak;
+                match streak_reward(n) {
+                    Some(kind) => {
+                        self.feed.push(Feed::Streak { who: a as u8, n: n.min(255) as u8 });
+                        self.drop_pickup(kind, at, 40);
+                        if n >= 10 {
+                            self.drop_pickup(pickup::ARMOR, at + vec3(1.2, 0.0, 0.0), 40);
+                        }
+                    }
+                    None => {
+                        if self.cfg.drops && self.rng.chance(0.22) {
+                            let kind = if self.rng.chance(0.6) { pickup::HEALTH } else { pickup::AMMO };
+                            self.drop_pickup(kind, at, 30);
+                        }
+                    }
+                }
             }
         }
         // Assist: whoever else did the most real damage in the last ten seconds.
@@ -907,7 +1117,7 @@ impl Game {
             self.players[assist as usize].score += 50;
         }
         self.stats.kills += 1;
-        if self.phase == 0 {
+        if self.phase == 0 && m == mode::CONQUEST {
             self.tickets[team as usize] -= 1;
         }
         self.feed.push(Feed::Kill { killer: killer_id, victim: j as u8, weapon, head, assist });
@@ -921,7 +1131,23 @@ impl Game {
         let team = self.players[i].team;
         let mut anchor = self.world.bases[team as usize];
         let mut at_base = true;
-        let order: Vec<usize> = if team == 0 { (0..NUM_POINTS).rev().collect() } else { (0..NUM_POINTS).collect() };
+        let order: Vec<usize> = if self.mode != mode::CONQUEST {
+            Vec::new()
+        } else if team == 0 {
+            (0..NUM_POINTS).rev().collect()
+        } else {
+            (0..NUM_POINTS).collect()
+        };
+        if matches!(self.mode, mode::TDM | mode::KOTH) {
+            // Forward spawns keep the fight close: B for EMBER, D for
+            // COBALT, unless the enemy is standing on it.
+            let c = self.world.points[if team == 0 { 1 } else { NUM_POINTS - 2 }];
+            let overrun = self.players.iter().filter(|p| p.alive && p.team != team && (p.st.pos - c).length() < 18.0).count() >= 2;
+            if !overrun {
+                anchor = c;
+                at_base = false;
+            }
+        }
         for k in order {
             if self.points[k].owner != team {
                 continue;
@@ -969,7 +1195,11 @@ impl Game {
                 break;
             }
         }
-        let front = self.world.points[self.orders[team as usize].min(NUM_POINTS - 1)];
+        let front = match self.mode {
+            mode::CONQUEST => self.world.points[self.orders[team as usize].min(NUM_POINTS - 1)],
+            mode::CTF => self.world.points[FLAG_POINT[1 - team as usize % 2]],
+            _ => self.world.points[NUM_POINTS / 2],
+        };
         let p = &mut self.players[i];
         p.st = PState::spawn_with(pos, p.next_kit, p.next_prim, p.next_side);
         p.wskin = [sim::fix_weapon_skin(p.st.prim, p.next_wskin[0]), sim::fix_weapon_skin(p.st.side, p.next_wskin[1])];
@@ -977,6 +1207,8 @@ impl Game {
         p.alive = true;
         p.protect_until = t + 2 * TICK_HZ;
         p.marked_until = 0;
+        p.armor = 0.0;
+        p.power_until = 0;
         p.spawn_count = p.spawn_count.wrapping_add(1);
         p.hits.clear();
         // Face the fight: toward the point the team is pushing.
@@ -1053,9 +1285,131 @@ impl Game {
         }
     }
 
+    /// Leave something on the field for `secs` seconds. Nothing is left
+    /// in lava, and the oldest goes when the field is littered.
+    fn drop_pickup(&mut self, kind: u8, pos: Vec3, secs: u32) {
+        if !self.cfg.drops || self.world.lava(pos.x, pos.z, 0.5) {
+            return;
+        }
+        self.pickups.push(Pickup { id: self.next_pickup, kind, pos, until: self.tick + secs * TICK_HZ });
+        self.next_pickup = self.next_pickup.wrapping_add(1);
+        if self.pickups.len() > 14 {
+            self.pickups.remove(0);
+        }
+    }
+
+    /// Whoever walks over a pickup they have a use for takes it.
+    fn update_pickups(&mut self) {
+        let t = self.tick;
+        self.pickups.retain(|p| p.until > t);
+        let mut k = 0;
+        while k < self.pickups.len() {
+            let Pickup { kind, pos, .. } = self.pickups[k];
+            let taker = self.players.iter().position(|p| {
+                let d = p.st.pos - pos;
+                p.alive && d.x * d.x + d.z * d.z < 1.5 * 1.5 && d.y.abs() < 2.2 && wants(p, kind)
+            });
+            let Some(i) = taker else {
+                k += 1;
+                continue;
+            };
+            let p = &mut self.players[i];
+            match kind {
+                pickup::HEALTH => p.hp = (p.hp + 60.0).min(sim::kit(p.st.kit).hp),
+                pickup::ARMOR => p.armor = (p.armor + 50.0).min(100.0),
+                pickup::AMMO => {
+                    let (hand, other) = if p.st.slot == 1 { (p.st.side, p.st.prim) } else { (p.st.prim, p.st.side) };
+                    p.st.ammo = sim::weapon_def(hand).mag;
+                    p.st.ammo_alt = sim::weapon_def(other).mag;
+                    p.st.reload = 0;
+                    p.st.grenades = sim::kit(p.st.kit).grenades;
+                }
+                pickup::OVERDRIVE => p.surge_until = t + 12 * TICK_HZ,
+                _ => p.power_until = t + 10 * TICK_HZ,
+            }
+            p.score += 10;
+            self.pickups.remove(k);
+            self.push_fx(Fx::Pickup { who: i as u8, kind, pos: pos.to_array() });
+        }
+    }
+
+    /// Capture the flag: carry theirs to where yours stands.
+    fn update_flags(&mut self) {
+        let t = self.tick;
+        for f in 0..2usize {
+            let enemy = 1 - f as u8;
+            let home = self.world.points[FLAG_POINT[f]];
+            let near = |g: &Game, team: u8, at: Vec3| {
+                g.players.iter().position(|p| {
+                    let d = p.st.pos - at;
+                    p.alive && p.team == team && d.x * d.x + d.z * d.z < 1.8 * 1.8 && d.y.abs() < 2.5
+                })
+            };
+            if self.flags[f].state == 1 {
+                let c = self.flags[f].carrier;
+                let held = c < self.players.len() && self.players[c].alive && self.players[c].team == enemy;
+                if !held {
+                    // The carrier fell (or left): the flag lies where they were.
+                    let pos = self.flags[f].pos;
+                    if self.world.lava(pos.x, pos.z, 0.5) {
+                        self.flags[f] = Flag { state: 0, pos: home, carrier: 0, since: t };
+                        self.feed.push(Feed::Flag { flag: f as u8, by: SPECTATOR_ID, what: flag_ev::RETURNED });
+                    } else {
+                        self.flags[f].state = 2;
+                        self.flags[f].since = t;
+                        self.feed.push(Feed::Flag { flag: f as u8, by: c.min(254) as u8, what: flag_ev::DROPPED });
+                    }
+                    continue;
+                }
+                let pos = self.players[c].st.pos;
+                self.flags[f].pos = pos;
+                let d = pos - self.world.points[FLAG_POINT[1 - f]];
+                if d.x * d.x + d.z * d.z < 2.6 * 2.6 && d.y.abs() < 4.0 {
+                    self.flags[f] = Flag { state: 0, pos: home, carrier: 0, since: t };
+                    self.players[c].score += 400;
+                    self.stats.captures += 1;
+                    if self.phase == 0 {
+                        self.tickets[enemy as usize] += 1;
+                    }
+                    self.feed.push(Feed::Flag { flag: f as u8, by: c as u8, what: flag_ev::CAPTURED });
+                    for p in self.players.iter_mut().filter(|p| p.team == enemy && p.alive) {
+                        p.surge_until = t + 8 * TICK_HZ;
+                    }
+                }
+                continue;
+            }
+            if self.flags[f].state == 2 {
+                // Its own side touches it and it is home; left alone it
+                // goes back by itself.
+                let by = near(self, f as u8, self.flags[f].pos);
+                if by.is_some() || t - self.flags[f].since > 25 * TICK_HZ {
+                    self.flags[f] = Flag { state: 0, pos: home, carrier: 0, since: t };
+                    if let Some(i) = by {
+                        self.players[i].score += 100;
+                    }
+                    self.feed.push(Feed::Flag { flag: f as u8, by: by.map_or(SPECTATOR_ID, |i| i as u8), what: flag_ev::RETURNED });
+                    continue;
+                }
+            }
+            if let Some(i) = near(self, enemy, self.flags[f].pos) {
+                self.flags[f].state = 1;
+                self.flags[f].carrier = i;
+                self.players[i].protect_until = 0;
+                self.feed.push(Feed::Flag { flag: f as u8, by: i as u8, what: flag_ev::TAKEN });
+            }
+        }
+    }
+
     fn update_points(&mut self) {
         let t = self.tick;
-        for k in 0..NUM_POINTS {
+        // Stronghold has the one point, open to both sides at all times.
+        let free = self.mode == mode::KOTH;
+        let live = match self.mode {
+            mode::CONQUEST => 0..NUM_POINTS,
+            mode::KOTH => NUM_POINTS / 2..NUM_POINTS / 2 + 1,
+            _ => 0..0,
+        };
+        for k in live {
             let c = self.world.points[k];
             let mut n = [0u8; 2];
             for p in self.players.iter().filter(|p| p.alive) {
@@ -1071,7 +1425,7 @@ impl Game {
             if diff != 0 {
                 let team = if diff > 0 { 1u8 } else { 0 };
                 let dir = if team == 1 { 1.0 } else { -1.0 };
-                if pt.owner == team || eligible(&owners, team, k) {
+                if free || pt.owner == team || eligible(&owners, team, k) {
                     let rate = CAP_RATE * (diff.abs().min(3) as f32);
                     pt.progress = (pt.progress + dir * rate * DT).clamp(-1.0, 1.0);
                 }
@@ -1121,6 +1475,10 @@ impl Game {
     /// Pick one point per team to mass on: a capturable point, preferring
     /// the one the enemy is defending most thinly.
     fn update_orders(&mut self) {
+        if self.mode != mode::CONQUEST {
+            self.orders = [NUM_POINTS / 2; 2];
+            return;
+        }
         let owners = self.owners();
         for team in 0..2u8 {
             let mut best: Option<(usize, f32)> = None;
@@ -1179,17 +1537,53 @@ impl Game {
         v.iter().position(|&n| n == best).unwrap_or(0) as u8
     }
 
+    /// The mode the next round will be played in.
+    pub fn next_mode(&self) -> u8 {
+        let r = &self.cfg.mode_rotation;
+        if r.len() < 2 {
+            return self.mode;
+        }
+        match r.iter().position(|&m| m == self.mode) {
+            Some(k) => r[(k + 1) % r.len()],
+            None => r[0],
+        }
+    }
+
+    /// Votes per game mode from the players in the lobby.
+    pub fn mode_votes(&self) -> [u8; 4] {
+        let mut v = [0u8; 4];
+        for p in self.players.iter().filter(|p| p.bot.is_none()) {
+            if (p.mode_vote as usize) < v.len() {
+                v[p.mode_vote as usize] += 1;
+            }
+        }
+        v
+    }
+
+    /// The mode the lobby will start: most votes, the rotation's choice
+    /// when nobody voted or the vote is tied with it.
+    pub fn lobby_mode_choice(&self) -> u8 {
+        let v = self.mode_votes();
+        let best = *v.iter().max().unwrap_or(&0);
+        if best == 0 || v[self.lobby_mode as usize % 4] == best {
+            return self.lobby_mode;
+        }
+        v.iter().position(|&n| n == best).unwrap_or(0) as u8
+    }
+
     fn enter_lobby(&mut self) {
         self.lobby_map = if self.stats.rounds == 0 { self.world.map } else { self.next_map() };
+        self.lobby_mode = if self.stats.rounds == 0 { self.mode } else { self.next_mode() };
         self.phase = 2;
         self.phase_until = 0;
         self.winner = NEUTRAL;
         self.grenades.clear();
-        self.points = initial_points();
-        self.tickets = [self.cfg.tickets; 2];
+        self.reset_field();
+        self.round_end = 0;
         for p in self.players.iter_mut() {
             p.alive = false;
             p.vote = 255;
+            p.mode_vote = 255;
             p.ready = false;
         }
     }
@@ -1210,17 +1604,19 @@ impl Game {
             self.phase_until = t + 3 * TICK_HZ;
         }
         if t >= self.phase_until {
-            let map = self.lobby_choice();
-            self.start_round(map);
+            let (map, mode) = (self.lobby_choice(), self.lobby_mode_choice());
+            self.start_round(map, mode);
         }
     }
 
     fn reset_round(&mut self) {
-        let next = self.next_map();
-        self.start_round(next);
+        let (next, mode) = (self.next_map(), self.next_mode());
+        self.start_round(next, mode);
     }
 
-    fn start_round(&mut self, next: u8) {
+    fn start_round(&mut self, next: u8, mode: u8) {
+        self.mode = mode % ferrite_shared::MODES.len() as u8;
+        self.round_no += 1;
         if next != self.world.map {
             self.world = World::with_map(self.cfg.seed, next);
             self.nav = Nav::build(&self.world);
@@ -1230,9 +1626,7 @@ impl Game {
                 p.marked_until = 0;
             }
         }
-        self.orders = [1, 3];
-        self.points = initial_points();
-        self.tickets = [self.cfg.tickets; 2];
+        self.reset_field();
         self.dmask = 0;
         self.crate_hp = vec![110.0; self.world.n_crates];
         self.grenades.clear();
@@ -1241,7 +1635,11 @@ impl Game {
         self.round_start = self.tick;
         for i in 0..self.players.len() {
             self.bank(i);
-            self.players[i].surge_until = 0;
+            let p = &mut self.players[i];
+            p.surge_until = 0;
+            p.streak = 0;
+            p.played = 0;
+            p.award = None;
         }
         for i in 0..self.players.len() {
             self.spawn_player(i);
@@ -1293,11 +1691,41 @@ impl Game {
             }
         }
         self.update_grenades();
+        self.update_pickups();
         self.update_points();
+        if self.mode == mode::CTF {
+            self.update_flags();
+        }
         if t % (12 * TICK_HZ) == 1 {
             self.update_orders();
         }
         if self.phase == 0 {
+            for p in self.players.iter_mut().filter(|p| p.bot.is_none()) {
+                p.played += 1;
+            }
+        }
+        if self.phase == 0 && self.mode != mode::CONQUEST {
+            // Stronghold: a point a second to whoever holds the centre.
+            let mid = self.points[NUM_POINTS / 2].owner;
+            if self.mode == mode::KOTH && mid < 2 && t % TICK_HZ == 0 {
+                self.tickets[mid as usize] += 1;
+            }
+            let reached = self.tickets[0] >= self.goal || self.tickets[1] >= self.goal;
+            if reached || (self.round_end > 0 && t >= self.round_end) {
+                // Level on the clock: the side that scored more points
+                // between them takes it.
+                let total = |g: &Game, team: u8| g.players.iter().filter(|p| p.team == team).map(|p| p.score).sum::<u32>();
+                self.winner = if self.tickets[0] != self.tickets[1] {
+                    (self.tickets[1] > self.tickets[0]) as u8
+                } else {
+                    (total(self, 1) > total(self, 0)) as u8
+                };
+                self.phase = 1;
+                self.phase_until = t + 10 * TICK_HZ;
+                self.close_round();
+                self.feed.push(Feed::MatchEnd { winner: self.winner });
+            }
+        } else if self.phase == 0 {
             if t % (4 * TICK_HZ) == 0 {
                 let diff = self.owned(0) - self.owned(1);
                 let mult = if diff.abs() == NUM_POINTS as i32 { 3 } else { 1 };
@@ -1382,6 +1810,15 @@ impl Game {
                 if p.st.melee > 0 {
                     flags2 |= flag2::MELEE;
                 }
+                if self.flags.iter().any(|f| f.state == 1 && f.carrier == p.id as usize) {
+                    flags2 |= flag2::CARRIER;
+                }
+                if p.armor > 0.0 {
+                    flags2 |= flag2::ARMOR;
+                }
+                if t < p.power_until {
+                    flags2 |= flag2::POWER;
+                }
                 NetPlayer {
                     id: p.id,
                     pos: p.st.pos.to_array(),
@@ -1438,6 +1875,9 @@ impl Game {
                         spawn_count: p.spawn_count,
                         spawn_yaw: p.spawn_yaw,
                         killer: p.killer,
+                        armor: p.armor.clamp(0.0, 100.0).ceil() as u8,
+                        streak: p.streak.min(255) as u8,
+                        power: (p.power_until.saturating_sub(t) as f32 / TICK_HZ as f32).ceil().min(255.0) as u8,
                     }),
                 )
             }
@@ -1449,7 +1889,7 @@ impl Game {
             me: me_state,
             players,
             points,
-            tickets: [self.tickets[0].max(0) as u16, self.tickets[1].max(0) as u16],
+            tickets: [self.tickets[0].clamp(0, 65535) as u16, self.tickets[1].clamp(0, 65535) as u16],
             dmask: self.dmask,
             grenades: self.grenades.iter().map(|g| NetGrenade { id: g.id, pos: g.pos.to_array(), team: g.team }).collect(),
             fx,
@@ -1460,6 +1900,16 @@ impl Game {
             map: self.world.map,
             next_map: if self.phase == 2 { self.lobby_choice() } else { self.next_map() },
             votes: self.votes(),
+            mode: self.mode,
+            next_mode: if self.phase == 2 { self.lobby_mode_choice() } else { self.next_mode() },
+            mode_votes: self.mode_votes(),
+            goal: self.goal.clamp(0, 65535) as u16,
+            secs_left: if self.phase == 0 && self.round_end > 0 { (self.round_end.saturating_sub(t) / TICK_HZ).min(65535) as u16 } else { 0 },
+            flags: [0, 1].map(|f| {
+                let fl = &self.flags[f];
+                FlagNet { state: fl.state, carrier: fl.carrier.min(255) as u8, pos: fl.pos.to_array() }
+            }),
+            pickups: self.pickups.iter().map(|p| NetPickup { id: p.id, kind: p.kind, pos: NetPickup::enc(p.pos.to_array()) }).collect(),
         }
     }
 
@@ -1523,8 +1973,14 @@ fn dummy() -> Player {
         next_kit: 0,
         next_prim: 0,
         next_side: sim::SIDEARM_ID,
-                vote: 255,
-                ready: false,
+        vote: 255,
+        ready: false,
+        mode_vote: 255,
+        armor: 0.0,
+        streak: 0,
+        power_until: 0,
+        played: 0,
+        award: None,
         st: PState::spawn(Vec3::ZERO, 0),
         yaw: 0.0,
         pitch: 0.0,

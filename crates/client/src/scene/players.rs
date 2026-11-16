@@ -156,6 +156,29 @@ fn segment(m: &mut Mesh, g: &Mat4, a: Vec3, b: Vec3, radius: f32, col: Col) {
     );
 }
 
+/// Scale of a gun in another soldier's hands.
+const GUN_SCALE: f32 = 0.72;
+/// How far in front of the chest plate's face (negative: sunk into it) the
+/// butt of a shouldered gun rests.
+const BUTT_SEAT: f32 = -0.03;
+
+/// Where the front of the chest plate is, in body space.
+fn chest_front(bulk: f32) -> f32 {
+    0.138 * bulk + 0.055
+}
+
+/// How far forward of the spine a gun's origin is held. Pistols are held
+/// out at arm's length; anything with a stock is held so that the stock
+/// ends at the chest plate and not inside it.
+fn gun_reach(wid: u8, bulk: f32) -> f32 {
+    let arch = ferrite_shared::sim::weapon_def(wid).arch;
+    if arch == 4 {
+        return 0.28;
+    }
+    let butt = if arch == 2 { 0.39 } else { 0.36 } * GUN_SCALE;
+    (chest_front(bulk) + BUTT_SEAT + butt).max(0.28)
+}
+
 /// Two-bone solve with a stable bend pole. A small amount of reach stretch
 /// accommodates extreme aim poses without detaching hands from the gun.
 fn joint(a: Vec3, b: Vec3, upper: f32, lower: f32, pole: Vec3) -> Vec3 {
@@ -197,14 +220,27 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
         1 => [0.34, 0.36, 0.34],
         _ => [0.25, 0.27, 0.28],
     };
-    let dark = tint(fatigues, glow * 0.2);
-    let armor = tint([0.43, 0.45, 0.46], 0.0);
+    // Cloth, plate, leather, warning paint and markings. The armory looks
+    // (ids 6 and up) are the same six shapes in rarer colours.
+    let mut pal = (fatigues, [0.43, 0.45, 0.46], [0.34, 0.25, 0.16], [0.95, 0.72, 0.13], [0.86, 0.9, 0.9]);
+    if p.skin as usize % ferrite_shared::sim::SKINS.len() >= 6 {
+        pal = match look {
+            0 => ([0.055, 0.058, 0.066], [0.105, 0.11, 0.12], [0.09, 0.09, 0.10], [0.92, 0.94, 0.96], [0.96, 0.97, 0.98]),
+            1 => ([0.58, 0.47, 0.31], [0.47, 0.25, 0.14], [0.30, 0.19, 0.11], [0.86, 0.50, 0.22], [0.93, 0.86, 0.70]),
+            2 => ([0.15, 0.16, 0.18], [0.30, 0.33, 0.38], [0.20, 0.17, 0.10], [0.96, 0.76, 0.22], [0.98, 0.82, 0.30]),
+            3 => ([0.80, 0.78, 0.72], [0.56, 0.56, 0.54], [0.38, 0.36, 0.33], [0.70, 0.72, 0.74], [0.20, 0.21, 0.23]),
+            4 => ([0.43, 0.07, 0.08], [0.63, 0.49, 0.20], [0.21, 0.12, 0.07], [0.85, 0.66, 0.24], [0.95, 0.83, 0.48]),
+            _ => ([0.07, 0.09, 0.07], [0.12, 0.14, 0.12], [0.10, 0.12, 0.09], [0.46, 0.96, 0.16], [0.62, 1.0, 0.30]),
+        };
+    }
+    let dark = tint(pal.0, glow * 0.2);
+    let armor = tint(pal.1, 0.0);
     let metal = tint([0.13, 0.15, 0.18], 0.0);
     let skin = tint([0.78, 0.65, 0.51], 0.0);
     let glove = tint([0.15, 0.16, 0.17], 0.0);
-    let leather = tint([0.34, 0.25, 0.16], 0.0);
-    let hazard = tint([0.95, 0.72, 0.13], 0.0);
-    let markings = tint([0.86, 0.9, 0.9], 0.0);
+    let leather = tint(pal.2, 0.0);
+    let hazard = tint(pal.3, 0.0);
+    let markings = tint(pal.4, 0.0);
 
     let sl = p.slide.clamp(0.0, 1.0);
     let c = p.crouch.clamp(0.0, 1.0).max(sl);
@@ -728,10 +764,14 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
         * Mat4::from_rotation_y(
             0.38 * sprint * (1.0 - p.fire) * (1.0 - p.melee) + 0.2 * p.reload + 0.55 * p.melee,
         );
+    // A long gun is held out far enough that its butt sits against the
+    // front of the chest plate, at the shoulder, and not inside it.
+    let long = ferrite_shared::sim::weapon_def(p.wid).arch != 4;
+    let reach = gun_reach(p.wid, bulk);
     let gun = arms
-        * Mat4::from_translation(vec3(-0.12, -0.06, 0.28))
+        * Mat4::from_translation(vec3(if long { -0.135 } else { -0.12 }, -0.06, reach))
         * Mat4::from_rotation_y(std::f32::consts::PI)
-        * Mat4::from_scale(Vec3::splat(0.72));
+        * Mat4::from_scale(Vec3::splat(GUN_SCALE));
     gun_model_pose(
         m,
         p.wid,
@@ -742,6 +782,11 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
         p.cycle,
     );
     let (mut grip, mut support) = gun_grips(p.wid);
+    if long {
+        // With the gun that far forward the off hand holds nearer the
+        // receiver, where the arm can reach it.
+        support.z = support.z.max(-0.25);
+    }
     // Hands follow the moving fore-end and bolt as well as the weapon root.
     let action = if p.reload_phase < 0.0 {
         (smooth(0.22, 0.72, 1.0 - p.cycle) * std::f32::consts::PI).sin()
@@ -767,7 +812,8 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
         left_hand = left_hand.lerp(mag, reach);
     }
     for (sign, hand) in [(-1.0f32, right_hand), (1.0, left_hand)] {
-        let shoulder = vec3(sign * 0.285 * bulk, 1.34, 0.0);
+        // The off shoulder rolls forward into a long gun.
+        let shoulder = vec3(sign * 0.285 * bulk, 1.34, if long && sign > 0.0 { 0.07 } else { 0.0 });
         let elbow = joint(shoulder, hand, 0.29, 0.32, vec3(sign * 0.7, -1.0, 0.1));
         segment(m, &body, shoulder, elbow, 0.078 * bulk, dark);
         segment(
@@ -821,6 +867,24 @@ fn smooth(a: f32, b: f32, t: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn no_stock_is_buried_in_the_chest() {
+        for wid in 0..ferrite_shared::sim::WEAPONS.len() as u8 {
+            if ferrite_shared::sim::weapon_def(wid).arch == 4 {
+                continue;
+            }
+            let mut m = Mesh::default();
+            super::super::weapons::gun_model(&mut m, wid, 0, 0, Mat4::IDENTITY);
+            let back = m.finish().iter().flat_map(|(v, _)| v.iter().map(|p| p.pos[2])).fold(f32::MIN, f32::max);
+            for bulk in [0.9f32, 1.0, 1.1, 1.2] {
+                // The gun faces forward, so its +Z end is nearest the body.
+                let butt = gun_reach(wid, bulk) - back * GUN_SCALE;
+                let sunk = chest_front(bulk) - butt;
+                assert!((-0.04..=0.05).contains(&sunk), "weapon {wid}, bulk {bulk}: butt {sunk:.3} m into the chest");
+            }
+        }
+    }
 
     #[test]
     fn soldier_equipment_and_extreme_poses_have_valid_geometry() {
@@ -899,3 +963,4 @@ mod tests {
         }
     }
 }
+

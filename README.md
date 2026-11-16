@@ -1,10 +1,10 @@
-# FERRITE 0.9.2
+# FERRITE 0.10.0
 
 ![The FERRITE launcher: host, join or change settings](docs/launcher.png)
 
 ![COBALT squadmates pushing toward point C in Foundry Valley](docs/screenshot.png)
 
-An original low-poly multiplayer FPS in Rust. Two teams of twelve, EMBER and COBALT, fight over five control points strung across a valley. Only the front line can be contested, so the battle has a shape: it masses, breaks, and moves.
+An original low-poly multiplayer FPS in Rust. Two teams of twelve, EMBER and COBALT, fight over five control points strung across a valley. Only the front line can be contested, so the battle has a shape: it masses, breaks, and moves. That is Conquest; Team Deathmatch, Capture the Flag and Stronghold play faster or slower on the same maps.
 
 v0.3 was a from-scratch rewrite (nothing from the v0.2 prototype is reused; it remains in git history). v0.4 built on it:
 
@@ -20,6 +20,17 @@ v0.5 adds a lobby before every round (map vote, loadouts, ready-up countdown), t
 v0.6 adds a new launcher and lobby look (key art, palette and typeface from the FERRITE UI kit), launcher and lobby music, a pause overlay, 3D models of every gun in the loadout picker, a bot difficulty selector, and a camera that follows whoever eliminated you while you wait to redeploy.
 
 v0.7 adds text chat, a melee strike, a killcam, player icons, callsigns backed by a player id (your record follows you when you rename), a kill feed that puts people ahead of bots, the plumbing for weapon finishes, a Windows installer, and updates from inside the launcher.
+
+## v0.10
+
+- **Game modes.** Conquest (long), Team Deathmatch (fast: forward spawns, three-second redeploys, first to the kill target), Capture the Flag (slow: flags on B and D, three captures) and Stronghold (medium: hold C, a point a second). The host picks one or MIXED on HOST & PLAY; the lobby can vote for another before each round. Bots play all four.
+- **Kill streaks and pickups.** Three kills without dying and your target drops armour; five, overdrive; seven, overcharge. Other kills may leave a health pack or a resupply. Anything on the ground can be taken by anyone.
+- **Credits and the armory.** A round pays 120 to 240 credits for a win and 45 to 165 for a loss. ARMORY on the home screen sells seven new weapon finishes and six new soldier looks, previewed on a soldier standing on the map. Everything from before v0.10 stays free.
+- **Getting started.** A first launch walks through callsign and icon, the modes, the controls and credits, then offers a practice match and 400 credits to start with.
+- **Foliage and atmosphere.** The five classic maps each have their own hour and weather now: a gold autumn afternoon in Foundry Valley, white dusty noon in the Quarry, cold morning mist on Ridgeline, sunset over the Depot, grey overcast at the Spillway. Bushes, tall grass, flowers, ferns, reeds, ivy, moss, deadwood and saplings grow on the field, the forest thickens beyond the fence, and grass and leaves move in the wind. Leaves fall, motes drift in the light, mist lies in low ground, dust blows and birds circle. Relay gains heather and highland grass. None of it collides, and cover-sized plants are mirrored so both sides get the same.
+- **Touch controls.** An on-screen stick, drag-to-look and buttons, multi-touch. `--touch` (or SETTINGS > CONTROLS > MOUSE) tries them on a desktop with the mouse as one finger. No phone build yet.
+
+The network protocol changed (16), so everyone in a match needs v0.10.0, including the dedicated server. See the [v0.10.0 release notes](docs/release-notes/v0.10.0.md).
 
 ## v0.9.2
 
@@ -71,8 +82,8 @@ Either way the game keeps itself current: the launcher checks this repository's 
 **macOS:** the build is not signed with an Apple Developer ID, so a copy downloaded in a browser is blocked by Gatekeeper. The simplest way round it is to download from Terminal, which does not get flagged:
 
 ```sh
-curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.9.2/ferrite-v0.9.2-macos-universal.tar.gz | tar xz
-./ferrite-v0.9.2-macos-universal/ferrite
+curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.10.0/ferrite-v0.10.0-macos-universal.tar.gz | tar xz
+./ferrite-v0.10.0-macos-universal/ferrite
 ```
 
 If you already downloaded it in a browser, run `xattr -dr com.apple.quarantine .` in the unpacked folder once.
@@ -94,6 +105,7 @@ cargo run --release -p ferrite -- --host                      # host straight aw
 cargo run --release -p ferrite -- --connect 192.168.1.20      # join a host (UDP 27500)
 cargo run --release -p ferrite-server                         # dedicated server
 cargo run --release -p ferrite-server -- --map depot          # ...on another map
+cargo run --release -p ferrite-server -- --mode tdm           # ...or in another mode
 ```
 
 Seven maps ship with the game, including Slag Cathedral. The host picks one on the home screen (or with `--map NAME`); a dedicated server takes `--map quarry`, and `--maps` lists them. Maps rotate each round by default: `--rotation quarry,depot` plays just those, `--rotation off` (or `--no-rotate` when hosting from the client) stays on one. Clients are told the map when they join.
@@ -126,10 +138,17 @@ Each human replaces a bot. Pick EMBER, COBALT or AUTO on the home screen (AUTO j
 
 Crouch while sprinting to slide. Hold Space while pushing into a ledge to climb it.
 
-Useful flags: `--name`, `--team ember|cobalt|auto`, `--bots N` (players per team), `--difficulty recruit|regular|veteran|elite` (bots; `--skill 0.6` for a value in between), `--no-music`, `--tickets N`, `--seed N` (different valley), `--fullscreen`, `--volume 0..1`, `--shadows high|low|off`, `--spectate` (watch the bots fight).
+Game modes: `--mode conquest|tdm|ctf|stronghold` when hosting from the command line or on a dedicated server, which also takes `--mode-rotation all|off|a,b,c` (a mode per round), `--score N` and `--time SECS` (the target and the clock outside conquest), `--no-drops` (no pickups) and `--modes` (the list).
+
+Useful flags: `--touch` (on-screen controls), `--name`, `--team ember|cobalt|auto`, `--bots N` (players per team), `--difficulty recruit|regular|veteran|elite` (bots; `--skill 0.6` for a value in between), `--no-music`, `--tickets N`, `--seed N` (different valley), `--fullscreen`, `--volume 0..1`, `--shadows high|low|off`, `--spectate` (watch the bots fight).
 
 ## The game
 
+- **Modes.** *Team Deathmatch*: no objectives; both sides deploy round B and D and redeploy in three seconds; first to eight kills per player a side (96 at 12 v 12), or the lead after eight minutes. *Capture the Flag*: each flag stands on B or D; walk onto theirs, carry it to your stand; three captures or the lead after twelve minutes. A dropped flag is returned by its own side's touch, or goes home after 25 seconds. Sides redeploy together every twelve seconds. *Stronghold*: C alone, open to both sides; a point for every second held, 180 to win. *Conquest* is everything below. HOST & PLAY chooses one or MIXED, and the lobby votes.
+- **Streaks and pickups.** Kills without dying count up beside your health. At 3, 5 and 7 (then 10 and every five) the enemy you just killed drops armour, overdrive or overcharge; any other kill has a one in five chance of leaving a health pack (+60) or a resupply (magazines and frags). Armour (up to 100) soaks six parts in ten of each hit. Overdrive is twelve seconds of surge; overcharge ten seconds of half again the damage. Pickups show on the minimap and anyone can take them. Ending a streak of five or more pays the killer 100.
+- **Credits.** A finished round pays 120 (win) or 45 (loss) plus up to 120 for your score, scaled by how much of the round you played and by rounds under three minutes. The balance, what it has bought, and your win and loss count live in `ferrite-client.txt`.
+- **Armory.** Seven finishes and six looks at 350 to 1500 credits, shown on a soldier and a turning gun before you buy. A finish goes on one gun or all of them. In a match the loadout panel only cycles through what you own. It is taken on trust like the player id: a server pays credits but does not check what a client wears.
+- **Touch.** A floating stick on the left (full push sprints), drag-look on the right, FIRE that aims while held, tap-to-toggle AIM and CROUCH. Fingers are tracked individually. The mouse stands in for one finger where there is no touch screen.
 - **Chat.** ENTER (or Y) opens a line to everyone, U to your own side; TAB switches between the two while you type, ENTER sends, ESC cancels. It works in the lobby, in a match, while you wait to redeploy and on the pause overlay. The server keeps messages to 120 characters and one every second and a half (four in a burst), and announces who joins and leaves. In the lobby R is now the ready key.
 - **Melee.** V (or the middle mouse button) strikes with the weapon in hand: 75 damage to whoever is within arm's reach in front of you, and a kill outright from behind. It takes about half a second, during which you cannot fire, and it interrupts a reload. It makes no gunshot, so it does not put you on the enemy's minimap. Bots use it when you get close enough.
 - **Killcam.** A moment after you go down, the three seconds before it are replayed through the eyes of whoever got you - their weapon, their sight picture, you marked YOU - rebuilt from the snapshots your client already had, so it costs the server nothing. SPACE or a click skips it; then the camera follows them live as before.
@@ -184,7 +203,8 @@ crates/client   window, renderer, prediction, effects, synthesised audio, HUD, l
 ## Verification
 
 ```sh
-cargo test --workspace                                            # gameplay, controls, networking and updater regression tests
+cargo test --workspace                                            # gameplay, modes, controls, networking and updater regression tests
+cargo run --release -p ferrite-server -- --bench 900 --mode ctf   # ...the same bot war in another mode
 cargo run --release -p ferrite-server -- --bench 900              # headless 15-minute bot war + timing
 cargo run --release -p ferrite -- --spectate                      # watch a match
 cargo run --release -p ferrite -- --auto --quit-at 30             # scripted client, prints session stats
@@ -193,6 +213,8 @@ cargo run --release -p ferrite -- --auto --quit-at 30             # scripted cli
 The tests cover: prediction equals server state exactly over 900 random commands; replay after delayed delivery converges; command-flood rate limiting; NaN/out-of-range/replayed input and malformed packets; a five-minute 12v12 soak asserting territory stays contiguous, nobody leaves the map or falls through terrain, and snapshots stay under 1400 bytes; a real UDP join / drive / acknowledge / leave round trip; and the newer mechanics - crouch, sidearm, team switching, slide, climbing (a 1.9 m ledge yes, a 3.2 m wall no), spread bloom, assists, loadout validation, map rotation, burst fire, the lobby, and delivery of effects raised between ticks (the bug that used to eat hit markers). New in v0.7: chat reaching only the people it should, in packet-sized pieces; melee reach, facing, the kill from behind and the lock-out while swinging; records following a player id through a rename, a name clash and a server restart; and, over real UDP, the roster arriving in parts, a chat line said three times and heard once, and an icon going up with the hello and coming back on request.
 
 New in v0.8: complete geometry fingerprints for the original maps; seeded navigation and symmetry checks for Spillway and Relay; soldier pose and weapon-action bounds; all seven finish ids, live cosmetic changes without redeployment, safe handling of pending loadouts, roster and real UDP replication, and valid bot finishes; paint confined to weapon surfaces; clear optic apertures; and dynamic meshes spanning multiple pages. The discovery test also works while another local game is running.
+
+New in v0.10: deathmatch scoring, forward spawns and the clock; a flag taken, carried, dropped, returned by touch and by time, and captured; Stronghold scoring only while the centre is held; streak rewards at 3, 5 and 7 and the shutdown bonus; every pickup's effect, armour's share of a hit and its loss on death; credits for winners, losers, latecomers and too-short rounds; mode rotation and the lobby vote; a four-minute bot war in each mode with snapshots under 1400 bytes; a mode vote and a round's credits over real UDP; the armory's prices and purchases; and the touch layout fitting screens from a phone to 1440p without overlapping.
 
 Scripted-run aids added for these: `--seek` (the scripted player walks to the front line, so it gets shot), `--shot-killcam`, `--say TEXT`, `--icon N`, `--vm-melee 0.75`, and `--update --pretend-version 0.5.0` to exercise the updater against a real release.
 

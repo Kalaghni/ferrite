@@ -771,7 +771,7 @@ fn burst_rifle_fires_three_rounds_per_pull() {
 
 #[test]
 fn servers_answer_discovery_queries() {
-    let info = ServerInfo { proto: PROTO, id: 7, port: 4242, name: "box".into(), map: 3, humans: 2, slots: 24, phase: 2 };
+    let info = ServerInfo { proto: PROTO, id: 7, port: 4242, name: "box".into(), map: 3, humans: 2, slots: 24, phase: 2, mode: 0 };
     assert_eq!(decode_info(&encode_info(&info)), Some(info));
     assert_eq!(decode_info(b"FERRITE!"), None);
     assert_eq!(decode_info(b"nonsense"), None);
@@ -1023,7 +1023,7 @@ fn weapon_finishes_are_validated_and_replicated() {
     // Finish ids are stored in settings and sent over the network. Factory
     // remains id zero; every existing gun offers all six new finishes.
     let names: Vec<_> = WEAPON_SKINS.iter().map(|s| s.name).collect();
-    assert_eq!(names, ["FACTORY", "OXIDE", "ARCTIC", "WOODLAND", "MIDNIGHT", "HAZARD", "SANDSTORM"]);
+    assert_eq!(names[..7], ["FACTORY", "OXIDE", "ARCTIC", "WOODLAND", "MIDNIGHT", "HAZARD", "SANDSTORM"]);
     for wid in 0..WEAPONS.len() as u8 {
         let fits = weapon_skins_for(wid);
         assert_eq!(fits, (0..WEAPON_SKINS.len() as u8).collect::<Vec<_>>());

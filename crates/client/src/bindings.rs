@@ -425,6 +425,14 @@ impl Bindings {
     pub fn down(&self, action: Action) -> bool {
         self.slots[action as usize].iter().any(|i| i.down())
     }
+    /// As `down` and `pressed`, keys only: with touch controls on, a
+    /// finger on the glass is not the mouse button an action is bound to.
+    pub fn down_keys(&self, action: Action) -> bool {
+        self.slots[action as usize].iter().any(|i| matches!(i, Input::Key(_)) && i.down())
+    }
+    pub fn pressed_keys(&self, action: Action) -> bool {
+        self.slots[action as usize].iter().any(|i| matches!(i, Input::Key(_)) && i.pressed())
+    }
     pub fn pressed(&self, action: Action) -> bool {
         self.slots[action as usize].iter().any(|i| i.pressed())
     }

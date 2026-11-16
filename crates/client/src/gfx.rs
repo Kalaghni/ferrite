@@ -26,6 +26,12 @@ pub fn shade(c: Col, k: f32) -> Col {
 }
 
 const MAX_V: usize = 65000;
+/// Normals longer than this carry a wind-sway weight (see `Mesh::tri_w`).
+pub const SWAY_BASE: f32 = 2.0;
+
+/// Colour of the light: direct sun, sky ambient, ground ambient.
+pub type Tone = [[f32; 3]; 3];
+pub const TONE: Tone = [[1.12, 0.98, 0.76], [0.46, 0.57, 0.74], [0.30, 0.27, 0.34]];
 
 #[derive(Default)]
 pub struct Mesh {
@@ -68,6 +74,18 @@ impl Mesh {
         let base = self.reserve(3);
         for p in [a, b, c] {
             self.v.push(Vertex { pos: p.to_array(), nrm: n.to_array(), col });
+        }
+        self.i.extend_from_slice(&[base, base + 1, base + 2]);
+    }
+
+    /// Triangle that moves in the wind: `w` is how far, in metres at a
+    /// strong gust, each corner sways (0 = rooted). Carried in the length
+    /// of the normal, which the vertex shader reads back.
+    pub fn tri_w(&mut self, p: [Vec3; 3], n: Vec3, w: [f32; 3], col: Col) {
+        let base = self.reserve(3);
+        for k in 0..3 {
+            let nn = if w[k] > 0.0 { n * (SWAY_BASE + w[k].min(4.0)) } else { n };
+            self.v.push(Vertex { pos: p[k].to_array(), nrm: nn.to_array(), col });
         }
         self.i.extend_from_slice(&[base, base + 1, base + 2]);
     }
@@ -171,6 +189,7 @@ struct Uniforms {
     lights: [[f32; 4]; 4],
     lcols: [[f32; 4]; 4],
     sh: [f32; 4],
+    tone: [[f32; 4]; 3],
 }
 
 const VS: &str = r#"#version 100
@@ -178,19 +197,32 @@ attribute vec3 in_pos;
 attribute vec3 in_nrm;
 attribute vec4 in_col;
 uniform mat4 u_vp;
+uniform vec4 u_params;
 varying vec4 v_col;
 varying vec3 v_nrm;
 varying vec3 v_pos;
 void main() {
     v_col = in_col;
     v_nrm = in_nrm;
-    v_pos = in_pos;
-    gl_Position = u_vp * vec4(in_pos, 1.0);
+    vec3 p = in_pos;
+    // Foliage: a normal longer than 2 carries how far the vertex sways.
+    float w = max(length(in_nrm) - 2.0, 0.0);
+    if (w > 0.0 && u_params.w > 0.0) {
+        float t = u_params.w;
+        float gust = 0.55 + 0.45 * sin(t * 0.31 + p.x * 0.021 + p.z * 0.017);
+        float a = sin(t * 1.9 + p.x * 0.37 + p.z * 0.29) * 0.6 + sin(t * 0.83 + p.x * 0.11 - p.z * 0.07) * 0.4;
+        float b = sin(t * 1.3 + p.z * 0.41 - p.x * 0.13);
+        p.x += (0.35 + a) * gust * w * 0.26;
+        p.z += b * gust * w * 0.12;
+    }
+    v_pos = p;
+    gl_Position = u_vp * vec4(p, 1.0);
 }"#;
 
 // u_params.x: 0 = lit opaque (alpha channel = emissive), 1 = alpha blended,
 // 2 = additive. u_params.y scales fog density, .z scales direct sunlight
-// (the first-person weapon dims when you stand in shade).
+// (the first-person weapon dims when you stand in shade), .w is the wind
+// clock (0 = still air). u_tone: sun colour, sky ambient, ground ambient.
 // u_sh: x = shadow texel size, y = shadows on, z = depth bias, w = grain on.
 const FS: &str = r#"#version 100
 precision highp float;
@@ -205,6 +237,7 @@ uniform mat4 u_light;
 uniform vec4 u_lights[4];
 uniform vec4 u_lcols[4];
 uniform vec4 u_sh;
+uniform vec4 u_tone[3];
 uniform sampler2D u_shadow;
 
 float unpack(vec4 c) {
@@ -257,7 +290,7 @@ void main() {
         }
         d *= u_params.z;
         float hemi = n.y * 0.5 + 0.5;
-        vec3 amb = mix(vec3(0.30, 0.27, 0.34), vec3(0.46, 0.57, 0.74), hemi);
+        vec3 amb = mix(u_tone[2].rgb, u_tone[1].rgb, hemi);
         // Bounce: faces turned away from the sun pick up warm ground light.
         amb += vec3(0.10, 0.08, 0.05) * max(-ndl, 0.0) * (1.0 - hemi * 0.6);
         // Surface grain so a large face is not one flat colour.
@@ -266,7 +299,7 @@ void main() {
         float grain = (vnoise(gp * 0.9) - 0.5) * 0.10 + (vnoise(gp * 5.3) - 0.5) * 0.07;
         grain *= clamp(1.0 - dist / 70.0, 0.0, 1.0) * u_sh.w;
         vec3 base = v_col.rgb * (1.0 + grain);
-        vec3 light = amb + vec3(1.12, 0.98, 0.76) * d;
+        vec3 light = amb + u_tone[0].rgb * d;
         for (int i = 0; i < 4; i++) {
             vec3 lv = u_lights[i].xyz - v_pos;
             float r = u_lights[i].w;
@@ -403,6 +436,10 @@ impl DynBuf {
 /// miniquad disables depth testing entirely for pipelines that do not
 /// write depth, so blended pipelines are created depth-writing and the
 /// write mask is switched off by hand around their draws.
+fn tone4(t: &Tone) -> [[f32; 4]; 3] {
+    [[t[0][0], t[0][1], t[0][2], 0.0], [t[1][0], t[1][1], t[1][2], 0.0], [t[2][0], t[2][1], t[2][2], 0.0]]
+}
+
 fn depth_mask(on: bool) {
     unsafe { macroquad::miniquad::gl::glDepthMask(on as _) }
 }
@@ -422,6 +459,9 @@ pub struct Frame<'a> {
     pub cam: Vec3,
     pub sun: Vec3,
     pub fog: [f32; 4],
+    pub tone: Tone,
+    /// Wind clock in seconds; foliage sways with it.
+    pub time: f32,
     pub lights: [Light; 4],
     pub opaque: &'a Mesh,
     pub alpha: &'a Mesh,
@@ -488,6 +528,7 @@ fn uniform_meta(images: Vec<String>) -> ShaderMeta {
                 UniformDesc::new("u_lights", UniformType::Float4).array(4),
                 UniformDesc::new("u_lcols", UniformType::Float4).array(4),
                 UniformDesc::new("u_sh", UniformType::Float4),
+                UniformDesc::new("u_tone", UniformType::Float4).array(3),
             ],
         },
     }
@@ -647,6 +688,7 @@ impl Gpu {
             lights: [[0.0, 0.0, 0.0, 0.01]; 4],
             lcols: [[0.0; 4]; 4],
             sh: [0.0; 4],
+            tone: tone4(&TONE),
         };
         ctx.begin_default_pass(PassAction::Clear { color: None, depth: Some(1.0), stencil: None });
         ctx.apply_pipeline(&self.opaque);
@@ -685,7 +727,8 @@ impl Gpu {
             cam: cam.to_array(),
             sun: sun.to_array(),
             fog: f.fog,
-            params: [mode, fog_k, lit, 0.0],
+            params: [mode, fog_k, lit, if world { f.time.max(0.001) } else { 0.0 }],
+            tone: tone4(&f.tone),
             light: light_vp.to_cols_array(),
             lights: if world { lights } else { [[0.0, 0.0, 0.0, 0.01]; 4] },
             lcols: if world { lcols } else { [[0.0; 4]; 4] },

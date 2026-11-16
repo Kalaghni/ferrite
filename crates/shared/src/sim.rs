@@ -101,14 +101,38 @@ pub struct KitDef {
 
 /// Looks a soldier can wear: name and a line about it. Purely cosmetic;
 /// the team colour always stays on the torso.
-pub static SKINS: [(&str, &str); 6] = [
+pub static SKINS: [(&str, &str); 12] = [
     ("REGULAR", "Standard issue helmet and plate"),
     ("SCOUT", "Soft cap, goggles and a light rig"),
     ("HEAVY", "Full-face helmet, shoulder plates"),
     ("GHOST", "Hood and mask, dark fatigues"),
     ("VETERAN", "Beret, rolled sleeves, bandolier"),
     ("HAZARD", "Hard hat and striped work gear"),
+    // Armory looks: the six shapes above in rarer colours.
+    ("BLACKOUT", "Regular plate in matt black with white marks"),
+    ("PATHFINDER", "Scout rig in desert tan and rust"),
+    ("JUGGERNAUT", "Heavy plate in polished gunmetal and gold"),
+    ("WRAITH", "Ghost hood in bone white and ash"),
+    ("WARLORD", "Veteran's beret, crimson cloth, brass plate"),
+    ("MELTDOWN", "Hazard gear in reactor green and black"),
 ];
+
+/// What each look costs in the armory. 0 = standard issue, owned by all.
+pub static SKIN_PRICES: [u32; 12] = [0, 0, 0, 0, 0, 0, 700, 700, 1100, 1100, 1500, 1500];
+
+/// What each weapon finish costs in the armory, by finish id.
+pub static WEAPON_SKIN_PRICES: [u32; 14] = [0, 0, 0, 0, 0, 0, 0, 350, 350, 550, 550, 850, 850, 1400];
+
+/// Credits a new player starts with.
+pub const WELCOME_CREDITS: u32 = 400;
+
+pub fn skin_price(id: u8) -> u32 {
+    SKIN_PRICES[id as usize % SKIN_PRICES.len()]
+}
+
+pub fn weapon_skin_price(id: u8) -> u32 {
+    WEAPON_SKIN_PRICES[id as usize % WEAPON_SKIN_PRICES.len()]
+}
 
 pub static KITS: [KitDef; 3] = [
     KitDef { name: "VANGUARD", blurb: "100 HP - 2 frags - line fighter", prims: &[0, 12, 8, 6], hp: 100.0, grenades: 2, speed: 1.0 },
@@ -149,7 +173,7 @@ pub struct WeaponSkinDef {
 /// Every finish. Index 0 is the gun as it comes and fits everything; add
 /// more below it and they appear in the loadout panel for the weapons
 /// they list. Ids travel over the wire, so only ever append.
-pub static WEAPON_SKINS: [WeaponSkinDef; 7] = [
+pub static WEAPON_SKINS: [WeaponSkinDef; 14] = [
     WeaponSkinDef {
         name: "FACTORY",
         blurb: "As issued",
@@ -226,6 +250,82 @@ pub static WEAPON_SKINS: [WeaponSkinDef; 7] = [
         detail: Some([0.12, 0.11, 0.095]),
         pattern: WeaponPattern::Digital,
         pattern_color: Some([0.43, 0.36, 0.26]),
+    },    WeaponSkinDef {
+        name: "EMBERFALL",
+        blurb: "Furnace red with molten orange bands",
+        weapons: &[],
+        body: Some([0.42, 0.07, 0.05]),
+        furniture: Some([0.12, 0.1, 0.1]),
+        accent: Some([1.0, 0.46, 0.12]),
+        detail: Some([0.07, 0.06, 0.06]),
+        pattern: WeaponPattern::Bands,
+        pattern_color: Some([0.93, 0.38, 0.08]),
+    },
+    WeaponSkinDef {
+        name: "COBALT STEEL",
+        blurb: "Blued steel with bright cobalt bands",
+        weapons: &[],
+        body: Some([0.16, 0.22, 0.34]),
+        furniture: Some([0.1, 0.11, 0.14]),
+        accent: Some([0.2, 0.5, 1.0]),
+        detail: Some([0.05, 0.06, 0.09]),
+        pattern: WeaponPattern::Bands,
+        pattern_color: Some([0.16, 0.44, 0.92]),
+    },
+    WeaponSkinDef {
+        name: "CARBON",
+        blurb: "Graphite weave in digital black and grey",
+        weapons: &[],
+        body: Some([0.17, 0.18, 0.19]),
+        furniture: Some([0.07, 0.07, 0.08]),
+        accent: Some([0.55, 0.57, 0.6]),
+        detail: Some([0.04, 0.04, 0.05]),
+        pattern: WeaponPattern::Digital,
+        pattern_color: Some([0.34, 0.35, 0.37]),
+    },
+    WeaponSkinDef {
+        name: "TOXIC",
+        blurb: "Acid green digital camouflage over black",
+        weapons: &[],
+        body: Some([0.1, 0.13, 0.09]),
+        furniture: Some([0.07, 0.08, 0.07]),
+        accent: Some([0.62, 0.95, 0.16]),
+        detail: Some([0.05, 0.06, 0.05]),
+        pattern: WeaponPattern::Digital,
+        pattern_color: Some([0.45, 0.8, 0.12]),
+    },
+    WeaponSkinDef {
+        name: "ROSE GOLD",
+        blurb: "Brushed rose metal with ivory bands",
+        weapons: &[],
+        body: Some([0.8, 0.52, 0.47]),
+        furniture: Some([0.2, 0.15, 0.15]),
+        accent: Some([0.97, 0.8, 0.72]),
+        detail: Some([0.14, 0.1, 0.1]),
+        pattern: WeaponPattern::Bands,
+        pattern_color: Some([0.94, 0.88, 0.82]),
+    },
+    WeaponSkinDef {
+        name: "GLACIER",
+        blurb: "Ice blue and white digital camouflage",
+        weapons: &[],
+        body: Some([0.5, 0.78, 0.9]),
+        furniture: Some([0.18, 0.27, 0.34]),
+        accent: Some([0.85, 0.96, 1.0]),
+        detail: Some([0.08, 0.12, 0.16]),
+        pattern: WeaponPattern::Digital,
+        pattern_color: Some([0.9, 0.96, 0.98]),
+    },
+    WeaponSkinDef {
+        name: "GILDED",
+        blurb: "Black lacquer with gold leaf bands",
+        weapons: &[],
+        body: Some([0.06, 0.06, 0.07]),
+        furniture: Some([0.1, 0.08, 0.05]),
+        accent: Some([1.0, 0.8, 0.25]),
+        detail: Some([0.05, 0.05, 0.05]),
+        pattern: WeaponPattern::Bands,
+        pattern_color: Some([0.92, 0.7, 0.18]),
     },
 ];
 

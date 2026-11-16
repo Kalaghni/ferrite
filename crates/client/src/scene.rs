@@ -238,28 +238,43 @@ pub fn build_world(w: &World) -> Mesh {
         slag_cathedral::build(&mut m, w);
         return m;
     }
-    const LEAF: [[f32; 3]; 5] =
-        [[0.74, 0.33, 0.13], [0.86, 0.57, 0.16], [0.63, 0.20, 0.15], [0.42, 0.47, 0.20], [0.24, 0.40, 0.25]];
     for (i, t) in w.trees.iter().enumerate() {
+        tree(&mut m, t, i);
+    }
+    build_ground_cover(&mut m, w);
+    flora::grow(&mut m, w);
+    if w.map == relay::ID {
+        relay::build(&mut m, w);
+    }
+    m
+}
+
+/// Leaf colours a broadleaf tree's `tint` picks from.
+pub const LEAF: [[f32; 3]; 5] =
+    [[0.74, 0.33, 0.13], [0.86, 0.57, 0.16], [0.63, 0.20, 0.15], [0.42, 0.47, 0.20], [0.24, 0.40, 0.25]];
+
+/// One tree. `i` is its index: mirrored pairs share a turn.
+fn tree(m: &mut Mesh, t: &Tree, i: usize) {
+    {
         let r = hash01(i as u32 / 2, 17) * std::f32::consts::TAU;
         let trunk = rgb(0.34, 0.25, 0.18);
         let th = t.height * 0.5;
-        taper(&mut m, t.base + vec3(-0.3, -0.5, -0.3), t.base + vec3(0.3, th * 0.35, 0.3), 1.0, 0.7, Vec3::ZERO, Vec3::ZERO, trunk);
-        taper(&mut m, t.base + vec3(-0.3, th * 0.35, -0.3), t.base + vec3(0.3, th, 0.3), 0.7, 0.5, Vec3::ZERO, vec3(r.cos(), 0.0, r.sin()) * 0.12, shade(trunk, 1.1));
+        taper(m, t.base + vec3(-0.3, -0.5, -0.3), t.base + vec3(0.3, th * 0.35, 0.3), 1.0, 0.7, Vec3::ZERO, Vec3::ZERO, trunk);
+        taper(m, t.base + vec3(-0.3, th * 0.35, -0.3), t.base + vec3(0.3, th, 0.3), 0.7, 0.5, Vec3::ZERO, vec3(r.cos(), 0.0, r.sin()) * 0.12, shade(trunk, 1.1));
         if t.pine {
             let c = shade(rgb(0.17, 0.33, 0.25), 0.85 + 0.1 * t.tint as f32);
             for k in 0..4 {
                 let f = k as f32 / 4.0;
                 let base = t.base + vec3(0.0, t.height * (0.25 + 0.25 * f), 0.0);
-                pyramid(&mut m, base, t.radius * (1.0 - 0.24 * f), t.height * 0.36, r + f, shade(c, 1.0 + 0.1 * f));
+                pyramid(m, base, t.radius * (1.0 - 0.24 * f), t.height * 0.36, r + f, shade(c, 1.0 + 0.1 * f));
             }
         } else {
             let lc = LEAF[t.tint as usize % 5];
             let c = rgb(lc[0], lc[1], lc[2]);
             let cen = t.base + vec3(0.0, t.height * 0.72, 0.0);
-            octa(&mut m, cen, vec3(t.radius, t.height * 0.34, t.radius), r, c);
-            octa(&mut m, cen + vec3(r.cos(), -0.8, r.sin()) * t.radius * 0.55, vec3(t.radius * 0.6, t.height * 0.2, t.radius * 0.6), r * 2.0, shade(c, 0.88));
-            octa(&mut m, cen + vec3(-r.sin(), 0.5, r.cos()) * t.radius * 0.5, vec3(t.radius * 0.5, t.height * 0.17, t.radius * 0.5), r * 3.0, shade(c, 1.08));
+            octa(m, cen, vec3(t.radius, t.height * 0.34, t.radius), r, c);
+            octa(m, cen + vec3(r.cos(), -0.8, r.sin()) * t.radius * 0.55, vec3(t.radius * 0.6, t.height * 0.2, t.radius * 0.6), r * 2.0, shade(c, 0.88));
+            octa(m, cen + vec3(-r.sin(), 0.5, r.cos()) * t.radius * 0.5, vec3(t.radius * 0.5, t.height * 0.17, t.radius * 0.5), r * 3.0, shade(c, 1.08));
             // a branch reaching to the side blob
             let b0 = t.base + vec3(0.0, th * 0.8, 0.0);
             let b1 = cen + vec3(r.cos(), -0.8, r.sin()) * t.radius * 0.5;
@@ -268,7 +283,11 @@ pub fn build_world(w: &World) -> Mesh {
             m.quad(b0 + side, b0 - side, b1 - side, b1 + side, shade(trunk, 0.8));
         }
     }
-    // Grass tufts and pebbles: cheap detail that breaks up the ground.
+}
+
+/// Grass tufts and pebbles: cheap detail that breaks up the ground.
+fn build_ground_cover(m: &mut Mesh, w: &World) {
+    let seed = w.seed as u32;
     let free = |x: f32, z: f32| !w.blocks.iter().any(|b| x > b.min.x - 0.2 && x < b.max.x + 0.2 && z > b.min.z - 0.2 && z < b.max.z + 0.2);
     // Same density as on the original 236 x 136 m footprint.
     let tufts = (26000.0 * (HALF_X + 6.0) * (HALF_Z + 6.0) / (124.0 * 74.0)) as u32;
@@ -290,7 +309,7 @@ pub fn build_world(w: &World) -> Mesh {
         if k % 10 == 0 {
             let s = 0.07 + 0.13 * hash01(k, 5);
             let g = 0.4 + 0.14 * hash01(k, 8);
-            taper(&mut m, base + vec3(-s, -0.04, -s * 0.8), base + vec3(s, s * 0.8, s * 0.8), 1.0, 0.6, Vec3::ZERO, Vec3::ZERO, rgb(g, g * 0.95, g * 0.9));
+            taper(m, base + vec3(-s, -0.04, -s * 0.8), base + vec3(s, s * 0.8, s * 0.8), 1.0, 0.6, Vec3::ZERO, Vec3::ZERO, rgb(g, g * 0.95, g * 0.9));
             continue;
         }
         let gc = ground_col(w, base, n, hash01(k, 4));
@@ -302,30 +321,32 @@ pub fn build_world(w: &World) -> Mesh {
             let off = vec3(a.cos(), 0.0, a.sin()) * 0.12 * hash01(k, 40 + b);
             let wd = vec3(-a.sin(), 0.0, a.cos()) * 0.02;
             let tip = base + off + vec3(a.cos() * 0.08, hgt, a.sin() * 0.08);
-            m.tri_n(base + off - wd, base + off + wd, tip, n, shade(col, 0.85 + 0.3 * hash01(k, 50 + b)));
+            m.tri_w([base + off - wd, base + off + wd, tip], n, [0.0, 0.0, hgt * 0.42], shade(col, 0.85 + 0.3 * hash01(k, 50 + b)));
         }
     }
-    if w.map == relay::ID {
-        relay::build(&mut m, w);
-    }
-    m
 }
 
-/// Existing maps retain their original lighting and shadow volume.
+/// Each map has its own hour: Relay and Slag Cathedral carry theirs with
+/// their art, the rest take a `flora::Mood`.
 pub fn fog_for(map: u8) -> [f32; 4] {
     match map {
         slag_cathedral::ID => slag_cathedral::FOG,
         relay::ID => relay::FOG,
-        _ => FOG,
+        _ => flora::mood(map).map_or(FOG, |m| m.fog),
     }
 }
 pub fn sun_for(map: u8) -> Vec3 {
     match map {
         slag_cathedral::ID => slag_cathedral::SUN,
         relay::ID => relay::SUN,
-        _ => SUN,
+        _ => flora::mood(map).map_or(SUN, |m| m.sun),
     }
 }
+/// Colour of the sun and of the two ambients.
+pub fn tone_for(map: u8) -> crate::gfx::Tone {
+    flora::mood(map).map_or(crate::gfx::TONE, |m| m.tone)
+}
+pub use flora::ambience;
 pub fn shadow_bounds(map: u8) -> (Vec3, Vec3) {
     (vec3(-HALF_X - 8.0, -12.0, -HALF_Z - 8.0), vec3(HALF_X + 8.0, if map == slag_cathedral::ID { 52.0 } else { 34.0 }, HALF_Z + 8.0))
 }
@@ -333,7 +354,7 @@ pub fn build_sky_for(map: u8) -> Mesh {
     match map {
         slag_cathedral::ID => slag_cathedral::sky(),
         relay::ID => relay::sky(),
-        _ => build_sky(),
+        _ => flora::mood(map).map_or_else(build_sky, flora::sky),
     }
 }
 pub fn map_lights(w: &World, eye: Vec3, existing: [crate::gfx::Light; 4]) -> [crate::gfx::Light; 4] {
@@ -411,12 +432,108 @@ pub fn crates(m: &mut Mesh, w: &World, dmask: u64) {
     }
 }
 
+/// Colour of each kind of pickup (`proto::pickup::*`).
+pub const PICKUP_COL: [[f32; 3]; 5] = [[0.35, 0.95, 0.45], [0.35, 0.65, 1.0], [0.95, 0.80, 0.30], [1.0, 0.55, 0.15], [0.95, 0.25, 0.85]];
+
+/// Something to walk over: a small case that turns and bobs, marked with
+/// what it is, under a short beam so it can be found in the grass.
+pub fn pickup(m: &mut Mesh, add: &mut Mesh, pos: Vec3, kind: u8, time: f32, seed: f32) {
+    use ferrite_shared::proto::pickup as pk;
+    let c = PICKUP_COL[kind as usize % PICKUP_COL.len()];
+    let col = rgb(c[0], c[1], c[2]);
+    let bob = (time * 2.4 + seed).sin() * 0.08;
+    let g = Mat4::from_translation(pos + vec3(0.0, 0.55 + bob, 0.0)) * Mat4::from_rotation_y(time * 1.6 + seed);
+    let case = rgb(0.16, 0.17, 0.19);
+    match kind {
+        pk::HEALTH => {
+            m.obox(&g, Vec3::ZERO, vec3(0.26, 0.2, 0.16), rgb(0.9, 0.9, 0.88));
+            for z in [-0.165, 0.165] {
+                m.obox(&g, vec3(0.0, 0.0, z), vec3(0.15, 0.045, 0.006), col);
+                m.obox(&g, vec3(0.0, 0.0, z), vec3(0.045, 0.15, 0.006), col);
+            }
+        }
+        pk::ARMOR => {
+            // A plate carrier: chest plate over a darker back.
+            m.obox(&g, Vec3::ZERO, vec3(0.24, 0.27, 0.08), case);
+            m.obox(&g, vec3(0.0, 0.02, 0.085), vec3(0.19, 0.2, 0.02), col);
+            m.obox(&g, vec3(0.0, 0.02, -0.085), vec3(0.19, 0.2, 0.02), col);
+            for x in [-0.17, 0.17] {
+                m.obox(&g, vec3(x, 0.3, 0.0), vec3(0.05, 0.05, 0.07), case);
+            }
+        }
+        pk::AMMO => {
+            m.obox(&g, Vec3::ZERO, vec3(0.28, 0.17, 0.17), rgb(0.25, 0.3, 0.2));
+            m.obox(&g, vec3(0.0, 0.19, 0.0), vec3(0.29, 0.025, 0.18), col);
+            m.obox(&g, vec3(0.0, 0.24, 0.0), vec3(0.1, 0.03, 0.03), case);
+        }
+        pk::OVERDRIVE => {
+            // A chevron pointing the way: go.
+            for (k, y) in [-0.14f32, 0.06, 0.26].into_iter().enumerate() {
+                let s = 1.0 - k as f32 * 0.12;
+                m.obox(&(g * Mat4::from_rotation_z(0.6)), vec3(-0.1 * s + y * 0.56, y * 0.82, 0.0), vec3(0.17 * s, 0.045, 0.05), col);
+                m.obox(&(g * Mat4::from_rotation_z(-0.6)), vec3(0.1 * s - y * 0.56, y * 0.82, 0.0), vec3(0.17 * s, 0.045, 0.05), col);
+            }
+        }
+        _ => {
+            // A charged cell.
+            m.tube(&(g * Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2)), Vec3::ZERO, 0.15, 0.15, 0.26, 10, case);
+            m.tube(&(g * Mat4::from_rotation_x(std::f32::consts::FRAC_PI_2)), Vec3::ZERO, 0.165, 0.165, 0.12, 10, col);
+            m.obox(&g, vec3(0.0, 0.3, 0.0), vec3(0.06, 0.04, 0.06), rgb(0.8, 0.8, 0.82));
+        }
+    }
+    let pulse = 0.75 + 0.25 * (time * 5.0 + seed).sin();
+    for (dx, dz) in [(0.32, 0.0), (0.0, 0.32)] {
+        let d = vec3(dx, 0.0, dz);
+        let lo = [c[0], c[1], c[2], 0.42 * pulse];
+        let hi = [c[0], c[1], c[2], 0.0];
+        add.quad_c(pos - d + vec3(0.0, 0.05, 0.0), pos + d + vec3(0.0, 0.05, 0.0), pos + d + vec3(0.0, 5.0, 0.0), pos - d + vec3(0.0, 5.0, 0.0), [lo, lo, hi, hi]);
+    }
+}
+
+/// A capture-the-flag flag: on its stand, on the ground where it fell, or
+/// on a carrier's back (`carried`: its pole leans and it sits higher).
+pub fn flag(m: &mut Mesh, add: &mut Mesh, pos: Vec3, team: u8, carried: bool, time: f32) {
+    let c = team_col(team);
+    let col = rgb(c[0], c[1], c[2]);
+    let base = pos + vec3(0.0, if carried { 0.9 } else { 0.0 }, 0.0);
+    let g = Mat4::from_translation(base) * Mat4::from_rotation_z(if carried { 0.16 } else { 0.0 });
+    let h = if carried { 1.9 } else { 3.4 };
+    m.obox(&g, vec3(0.0, h * 0.5, 0.0), vec3(0.035, h * 0.5, 0.035), rgb(0.86, 0.86, 0.84));
+    if !carried {
+        m.obox(&g, vec3(0.0, 0.06, 0.0), vec3(0.3, 0.06, 0.3), rgb(0.28, 0.28, 0.3));
+    }
+    // The cloth, in three strips so it can ripple.
+    let (top, drop, len) = (h, 0.75, 1.25);
+    for k in 0..3 {
+        let x0 = 0.035 + len * k as f32 / 3.0;
+        let x1 = 0.035 + len * (k + 1) as f32 / 3.0;
+        let wave = |x: f32| (time * 5.0 + x * 4.0).sin() * 0.11 * x;
+        let p = |x: f32, y: f32| g.transform_point3(vec3(x, y, wave(x)));
+        let shade = 1.0 - 0.1 * k as f32;
+        let cc = [col[0] * shade, col[1] * shade, col[2] * shade, col[3]];
+        m.quad(p(x0, top), p(x1, top), p(x1, top - drop), p(x0, top - drop), cc);
+        m.quad(p(x1, top), p(x0, top), p(x0, top - drop), p(x1, top - drop), cc);
+    }
+    if !carried {
+        for (dx, dz) in [(0.5, 0.0), (0.0, 0.5)] {
+            let d = vec3(dx, 0.0, dz);
+            let lo = [c[0], c[1], c[2], 0.3];
+            let hi = [c[0], c[1], c[2], 0.0];
+            add.quad_c(pos - d + vec3(0.0, 3.4, 0.0), pos + d + vec3(0.0, 3.4, 0.0), pos + d + vec3(0.0, 46.0, 0.0), pos - d + vec3(0.0, 46.0, 0.0), [lo, lo, hi, hi]);
+        }
+    }
+}
+
 /// Objective beacons: flag pole, ground ring and a light pillar readable
-/// from across the map.
+/// from across the map. An owner of 255 hides that objective (modes that
+/// do not use it).
 pub fn beacons(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, owners: &[(u8, f32, bool)], time: f32) {
     if w.map == slag_cathedral::ID { slag_cathedral::atmosphere(alpha, add, w, time); }
     if w.map == relay::ID { relay::atmosphere(m, alpha, add, w, time); }
     for (k, &(owner, progress, contested)) in owners.iter().enumerate() {
+        if owner == 255 {
+            continue;
+        }
         let c = w.points[k];
         let oc = team_col(owner);
         // progress colour: who is currently winning the tug
@@ -488,3 +605,5 @@ pub use weapons::*;
 mod slag_cathedral;
 #[path = "scene/relay.rs"]
 mod relay;
+#[path = "scene/flora.rs"]
+mod flora;

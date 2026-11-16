@@ -51,6 +51,9 @@ pub struct Net {
     pub snaps_recv: u64,
     pub bytes_in: u64,
     pub rejected: Option<String>,
+    /// Credits paid for finished rounds, not yet banked: (credits, won).
+    pub awards: Vec<(u32, bool)>,
+    award_round: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -115,6 +118,8 @@ impl Net {
                 snaps_recv: 0,
                 bytes_in: 0,
                 rejected: None,
+                awards: Vec::new(),
+                award_round: 0,
             },
             w,
         ))
@@ -189,6 +194,13 @@ impl Net {
                     self.rounds = rounds;
                 }
                 Some(S2C::Reject(why)) => self.rejected = Some(why),
+                Some(S2C::Award { round, credits, won }) => {
+                    // Resent while the result is up: each round pays once.
+                    if round > self.award_round {
+                        self.award_round = round;
+                        self.awards.push((credits, won));
+                    }
+                }
                 _ => {}
             }
         }
@@ -235,8 +247,8 @@ impl Net {
         }
     }
 
-    pub fn send_lobby(&self, vote: u8, ready: bool) {
-        let _ = self.sock.send(&encode(&C2S::Lobby { vote, ready }));
+    pub fn send_lobby(&self, vote: u8, ready: bool, mode: u8) {
+        let _ = self.sock.send(&encode(&C2S::Lobby { vote, ready, mode }));
     }
 
     pub fn bye(&self) {

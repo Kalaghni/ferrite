@@ -5,7 +5,8 @@ use crate::Game;
 use ferrite_shared::proto::{btn, btn2, Cmd};
 use ferrite_shared::rng::Rng;
 use ferrite_shared::sim;
-use ferrite_shared::{eligible, vec2, vec3, wrap_angle, Vec2, Vec3, NUM_POINTS};
+use ferrite_shared::proto::pickup;
+use ferrite_shared::{eligible, mode, vec2, vec3, wrap_angle, Vec2, Vec3, FLAG_POINT, NUM_POINTS};
 
 pub struct Bot {
     rng: Rng,
@@ -115,6 +116,21 @@ impl Bot {
 }
 
 fn choose_goal(g: &Game, team: u8, pos: Vec3, b: &mut Bot) -> usize {
+    match g.mode {
+        // No objective: mostly the middle, sometimes their side or ours.
+        mode::TDM => {
+            let (theirs, ours) = if team == 0 { (NUM_POINTS - 2, 1) } else { (1, NUM_POINTS - 2) };
+            let r = b.rng.f32();
+            return if r < 0.55 { NUM_POINTS / 2 } else if r < 0.85 { theirs } else { ours };
+        }
+        mode::KOTH => return NUM_POINTS / 2,
+        // A few stay by their own flag; the rest go for the other.
+        mode::CTF => {
+            let home = b.defender && b.rng.chance(0.45);
+            return FLAG_POINT[if home { team as usize % 2 } else { 1 - team as usize % 2 }];
+        }
+        _ => {}
+    }
     let owners = g.owners();
     // Most attackers follow the team's push order so assaults arrive massed.
     let order = g.orders[team as usize];
@@ -202,6 +218,10 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
                 continue;
             }
             let mut score = d;
+            // Whoever has our flag comes first.
+            if g.mode == mode::CTF && g.flags[me.team as usize % 2].state == 1 && g.flags[me.team as usize % 2].carrier == j {
+                score -= 25.0;
+            }
             if b.target == Some(j) {
                 score -= 12.0;
             }
@@ -256,6 +276,12 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
     } else {
         b.goal_timer -= 1;
     }
+    // Carrying their flag: nothing matters but getting it home.
+    let (mine, theirs) = (me.team as usize % 2, 1 - me.team as usize % 2);
+    let carrying = g.mode == mode::CTF && g.flags[theirs].state == 1 && g.flags[theirs].carrier == i;
+    if carrying {
+        b.goal = FLAG_POINT[mine];
+    }
     let gpos = g.world.points[b.goal];
     let dgoal = vec2(gpos.x - pos.x, gpos.z - pos.z).length();
     let mut mv = Vec2::ZERO;
@@ -278,6 +304,45 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
             }
         }
     }
+
+    // --- Things worth walking straight to ---
+    let mut detour: Option<Vec3> = None;
+    if g.mode == mode::CTF {
+        let near = |p: Vec3, r: f32| (p - pos).length() < r;
+        let (own, enemy) = (&g.flags[mine], &g.flags[theirs]);
+        if carrying && dgoal < 14.0 {
+            detour = Some(gpos); // the last steps onto our own stand
+        } else if own.state == 2 && near(own.pos, 45.0) {
+            detour = Some(own.pos); // ours is lying there: take it back
+        } else if enemy.state == 2 && near(enemy.pos, 45.0) {
+            detour = Some(enemy.pos);
+        } else if enemy.state == 0 && near(enemy.pos, 14.0) && !b.defender {
+            detour = Some(enemy.pos);
+        } else if own.state == 1 && near(own.pos, 40.0) {
+            detour = Some(own.pos); // run the carrier down
+        }
+    }
+    if detour.is_none() && b.target.is_none() {
+        let max = sim::kit(me.st.kit).hp;
+        detour = g
+            .pickups
+            .iter()
+            .filter(|p| match p.kind {
+                pickup::HEALTH => me.hp < max,
+                pickup::ARMOR => me.armor < 100.0,
+                _ => true,
+            })
+            .map(|p| p.pos)
+            .filter(|p| (*p - pos).length() < 14.0 && (p.y - pos.y).abs() < 2.0)
+            .min_by(|a, c| (*a - pos).length().total_cmp(&(*c - pos).length()));
+    }
+    if let Some(d) = detour {
+        let to = vec2(d.x - pos.x, d.z - pos.z);
+        if to.length() > 0.3 && !g.world.lava(d.x, d.z, 0.3) {
+            mv = to.normalize();
+        }
+    }
+    let route = mv;
 
     // --- Combat ---
     let mut want_yaw = b.yaw;
@@ -383,9 +448,14 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
         want_yaw = mv.x.atan2(mv.y);
     }
 
+    // The carrier does not stop to trade shots.
+    if carrying && route.length_squared() > 0.01 {
+        mv = route;
+    }
+
     // --- Squad sense ---
     let enemy = 1 - me.team as usize;
-    let assaulting = !engaged && b.target.is_none() && t >= b.hunt_until && g.points[b.goal].owner != me.team;
+    let assaulting = matches!(g.mode, mode::CONQUEST | mode::KOTH) && !engaged && b.target.is_none() && t >= b.hunt_until && g.points[b.goal].owner != me.team;
     let mut holding = false;
     if assaulting && kit == 2 && (7.0..26.0).contains(&dgoal) && g.points[b.goal].n[enemy] > 0 {
         // Long rifles cover the assault from outside the point.
@@ -470,7 +540,10 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
     let r = mv.dot(vec2(-cy, sy));
     cmd.mz = if f > 0.35 { 1 } else if f < -0.35 { -1 } else { 0 };
     cmd.mx = if r > 0.35 { 1 } else if r < -0.35 { -1 } else { 0 };
-    if ((!engaged && dgoal > 14.0) || fleeing) && cmd.mz > 0 {
+    if ((!engaged && dgoal > 14.0) || fleeing || carrying) && cmd.mz > 0 {
+        if carrying {
+            fire = false; // run
+        }
         cmd.buttons |= btn::SPRINT;
     }
     if wd.semi && t % 3 != 0 {

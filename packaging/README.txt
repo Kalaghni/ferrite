@@ -1,6 +1,23 @@
 FERRITE - 12v12 front-line conquest
 https://github.com/Kalaghni/ferrite
 
+NEW IN v0.10
+  Four game modes: Conquest, Team Deathmatch (fast), Capture the Flag
+  (slow) and Stronghold (hold the centre). Pick one on HOST & PLAY, or
+  MIXED for a new one each round; the lobby can vote for another.
+  Kill streaks: at 3, 5 and 7 kills your target drops armour, overdrive
+  or overcharge. Other kills may leave a health pack or ammunition.
+  Walk over a pickup to take it - so can anyone else.
+  Credits: every round pays, a win far more than a loss. Spend them in
+  the ARMORY on seven new weapon finishes and six new soldier looks.
+  Everything from earlier versions stays free.
+  A first launch opens with a short introduction and 400 credits.
+  The classic maps each have their own time of day and weather, far more
+  growing on them, wind in the grass, falling leaves, mist and birds.
+  Touch controls: an on-screen stick and buttons. Try them with --touch
+  or SETTINGS > CONTROLS > MOUSE > TOUCH CONTROLS.
+  Everyone in a match needs v0.10.0, including the dedicated server.
+
 NEW IN v0.9.2
   Every map is spread out by half again, with buildings, sheds, tanks,
   lookouts and ruins in the new ground between the objectives. Players

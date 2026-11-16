@@ -9,8 +9,8 @@ use crate::sim::PState;
 use bincode::Options;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-/// 15: every map spread out by half again, so collision differs from 14.
-pub const PROTO: u32 = 15;
+/// 16: game modes, flags, pickups, armour, streaks and credit awards.
+pub const PROTO: u32 = 16;
 pub const DEFAULT_PORT: u16 = 27500;
 pub const SPECTATOR_ID: u8 = 255;
 
@@ -35,6 +35,8 @@ pub struct ServerInfo {
     pub humans: u8,
     pub slots: u8,
     pub phase: u8,
+    /// Game mode being played: index into `ferrite_shared::MODES`.
+    pub mode: u8,
 }
 
 pub fn encode_info(i: &ServerInfo) -> Vec<u8> {
@@ -83,6 +85,31 @@ pub mod flag2 {
     pub const SLIDE: u8 = 2;
     pub const DRAW: u8 = 4;
     pub const MELEE: u8 = 8;
+    /// Carrying the enemy flag.
+    pub const CARRIER: u8 = 16;
+    /// Wearing armour picked up on the field.
+    pub const ARMOR: u8 = 32;
+    /// Overcharged: dealing extra damage.
+    pub const POWER: u8 = 64;
+}
+
+/// Things lying on the field to be walked over.
+pub mod pickup {
+    pub const HEALTH: u8 = 0;
+    pub const ARMOR: u8 = 1;
+    pub const AMMO: u8 = 2;
+    pub const OVERDRIVE: u8 = 3;
+    pub const OVERCHARGE: u8 = 4;
+    pub const NAMES: [&str; 5] = ["HEALTH PACK", "ARMOUR", "RESUPPLY", "OVERDRIVE", "OVERCHARGE"];
+    pub const BLURBS: [&str; 5] = ["+60 health", "+50 armour", "ammunition and frags refilled", "move and reload faster", "half again the damage"];
+}
+
+/// What happened to a flag (`Feed::Flag::what`).
+pub mod flag_ev {
+    pub const TAKEN: u8 = 0;
+    pub const DROPPED: u8 = 1;
+    pub const RETURNED: u8 = 2;
+    pub const CAPTURED: u8 = 3;
 }
 
 /// Player icons are this many pixels square, sent as RGBA8.
@@ -176,8 +203,9 @@ pub enum C2S {
     Bye,
     /// Ask to change sides mid-match.
     Team(u8),
-    /// In the lobby: the map voted for (255 = no vote) and whether ready.
-    Lobby { vote: u8, ready: bool },
+    /// In the lobby: the map voted for (255 = no vote), whether ready, and
+    /// the game mode voted for (255 = no vote).
+    Lobby { vote: u8, ready: bool, mode: u8 },
     /// Say something, to everyone or to our own side. `id` goes up by one
     /// per message, so a repeat of the same datagram is said only once.
     Chat { id: u32, team: bool, text: String },
@@ -201,6 +229,9 @@ pub enum S2C {
     /// Rounds won by each team since the server started, and the most
     /// recent finished rounds, oldest first.
     Rounds { wins: [u16; 2], rounds: Vec<RoundResult> },
+    /// Credits this player earned in round `round` (resent while the
+    /// result is on screen; the round number says which it is).
+    Award { round: u32, credits: u32, won: bool },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
@@ -246,6 +277,11 @@ pub struct SelfState {
     pub spawn_count: u8,
     pub spawn_yaw: f32,
     pub killer: u8,
+    /// Armour worn, 0..=100; kills since the last death; and seconds of
+    /// overcharge left.
+    pub armor: u8,
+    pub streak: u8,
+    pub power: u8,
 }
 
 /// Cosmetic, sent once. Losing one costs a tracer, not game state.
@@ -258,6 +294,8 @@ pub enum Fx {
     Throw { who: u8 },
     /// A melee swing, and whether it landed.
     Swing { who: u8, hit: bool },
+    /// Someone picked something up (`pickup::*`).
+    Pickup { who: u8, kind: u8, pos: [f32; 3] },
 }
 
 /// One line of chat. `seq` counts up across the whole server.
@@ -283,6 +321,39 @@ pub enum Feed {
     Neutralized { point: u8, by: u8 },
     MatchEnd { winner: u8 },
     MatchStart,
+    /// Flag `flag` (the team it belongs to) was taken, dropped, returned
+    /// or captured (`flag_ev::*`) by player `by` (SPECTATOR_ID: nobody,
+    /// it went home on its own).
+    Flag { flag: u8, by: u8, what: u8 },
+    /// `who` has `n` kills without dying.
+    Streak { who: u8, n: u8 },
+    /// `by` ended `victim`'s streak of `n`.
+    Shutdown { by: u8, victim: u8, n: u8 },
+}
+
+/// A flag in capture-the-flag. `state`: 0 at home, 1 carried, 2 dropped.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+pub struct FlagNet {
+    pub state: u8,
+    pub carrier: u8,
+    pub pos: [f32; 3],
+}
+
+/// Something to pick up. Position in decimetres.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct NetPickup {
+    pub id: u16,
+    pub kind: u8,
+    pub pos: [i16; 3],
+}
+
+impl NetPickup {
+    pub fn pos_f(&self) -> [f32; 3] {
+        [self.pos[0] as f32 * 0.1, self.pos[1] as f32 * 0.1, self.pos[2] as f32 * 0.1]
+    }
+    pub fn enc(p: [f32; 3]) -> [i16; 3] {
+        p.map(|v| (v * 10.0).round().clamp(-32000.0, 32000.0) as i16)
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
@@ -315,6 +386,19 @@ pub struct Snapshot {
     pub map: u8,
     pub next_map: u8,
     pub votes: [u8; 8],
+    /// Game mode (index into `MODES`), the one the next round will use,
+    /// and the lobby's votes per mode.
+    pub mode: u8,
+    pub next_mode: u8,
+    pub mode_votes: [u8; 4],
+    /// Score to reach (tickets a team starts with, in conquest), and the
+    /// seconds left on the clock (0 = no clock). Outside conquest
+    /// `tickets` holds each team's score.
+    pub goal: u16,
+    pub secs_left: u16,
+    /// Capture the flag: each team's flag.
+    pub flags: [FlagNet; 2],
+    pub pickups: Vec<NetPickup>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -357,6 +441,8 @@ pub struct Totals {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct RoundResult {
     pub map: u8,
+    /// Game mode it was played in.
+    pub mode: u8,
     pub winner: u8,
     pub tickets: [u16; 2],
     /// Length of the round in seconds.

@@ -124,9 +124,10 @@ pub fn run(cfg: Config, sock: UdpSocket, stop: Arc<AtomicBool>) {
     let (mut bytes_out, mut pkts_in) = (0u64, 0u64);
     if log {
         println!(
-            "FERRITE server on {} - map {} - {} per team, seed {:#x}",
+            "FERRITE server on {} - map {} - {} - {} per team, seed {:#x}",
             sock.local_addr().map(|a| a.to_string()).unwrap_or_default(),
             ferrite_shared::map::map_def(game.world.map).name,
+            ferrite_shared::mode_def(game.mode).name,
             game.cfg.per_team,
             game.cfg.seed
         );
@@ -157,6 +158,7 @@ pub fn run(cfg: Config, sock: UdpSocket, stop: Arc<AtomicBool>) {
                         humans: game.humans() as u8,
                         slots: game.players.len() as u8,
                         phase: game.phase,
+                        mode: game.mode,
                     };
                     let _ = d.send_to(&encode_info(&info), from);
                 }
@@ -209,7 +211,11 @@ pub fn run(cfg: Config, sock: UdpSocket, stop: Arc<AtomicBool>) {
             // Round results and who wears which icon change rarely: once
             // a second is plenty.
             let slow = (t % 60 == 0).then(|| [encode(&game.rounds_msg()), encode(&game.icons_msg())]);
-            for addr in conns.keys() {
+            for (addr, c) in conns.iter() {
+                // What the round just finished paid, until the next begins.
+                if let Some((round, credits, won)) = c.player.and_then(|i| game.players[i].award) {
+                    let _ = sock.send_to(&encode(&S2C::Award { round, credits, won }), addr);
+                }
                 for p in &parts {
                     let _ = sock.send_to(p, addr);
                 }
@@ -366,11 +372,12 @@ fn handle(game: &mut Game, conns: &mut HashMap<SocketAddr, Conn>, sock: &UdpSock
                 let _ = sock.send_to(&encode(&S2C::Icon { id, hash: p.icon_hash, rgba: p.icon.clone() }), addr);
             }
         }
-        C2S::Lobby { vote, ready } => {
+        C2S::Lobby { vote, ready, mode } => {
             let Some(c) = conns.get_mut(&addr) else { return };
             c.last_heard = Instant::now();
             if let Some(i) = c.player {
                 game.players[i].vote = vote;
+                game.players[i].mode_vote = mode;
                 game.players[i].ready = ready;
             }
         }

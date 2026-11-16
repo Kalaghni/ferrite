@@ -50,6 +50,41 @@ fn main() {
                         .collect(),
                 };
             }
+            "--mode" => {
+                cfg.mode = ferrite_shared::mode_by_name(&val).unwrap_or_else(|| {
+                    eprintln!("unknown mode '{val}'. Try --modes for the list.");
+                    std::process::exit(2);
+                })
+            }
+            "--modes" => {
+                for (i, m) in ferrite_shared::MODES.iter().enumerate() {
+                    println!("{i}  {:<11} {:<7} {}", m.key, m.pace.to_lowercase(), m.blurb);
+                }
+                return;
+            }
+            "--mode-rotation" => {
+                // "all", "off", or a comma-separated list of mode names.
+                cfg.mode_rotation = match val.as_str() {
+                    "off" | "none" => Vec::new(),
+                    "all" => (0..ferrite_shared::MODES.len() as u8).collect(),
+                    list => list
+                        .split(',')
+                        .map(|n| {
+                            ferrite_shared::mode_by_name(n).unwrap_or_else(|| {
+                                eprintln!("unknown mode '{n}' in --mode-rotation. Try --modes for the list.");
+                                std::process::exit(2);
+                            })
+                        })
+                        .collect(),
+                };
+            }
+            "--score" => cfg.score_limit = val.parse().expect("--score <points that win a round outside conquest>"),
+            "--time" => cfg.time_limit = val.parse().expect("--time <round length in seconds outside conquest>"),
+            "--no-drops" => {
+                cfg.drops = false;
+                i += 1;
+                continue;
+            }
             "--lobby" => cfg.lobby_secs = val.parse().expect("--lobby <seconds, 0 for none>"),
             "--name" => cfg.name = val.chars().filter(|c| !c.is_control()).take(24).collect(),
             "--no-discovery" => {
@@ -68,7 +103,7 @@ fn main() {
             }
             "--bench" => bench = Some(val.parse().expect("--bench <simulated seconds>")),
             "-h" | "--help" => {
-                println!("ferrite-server [--version] [--port 27500] [--map NAME|N] [--maps] [--rotation all|off|a,b,c] [--lobby 30] [--name NAME] [--no-discovery] [--bots 12] [--max-bots N] [--seed N] [--tickets 250] [--stats FILE|off] [--difficulty recruit|regular|veteran|elite] [--skill 1.0] [--bench SECS]");
+                println!("ferrite-server [--version] [--port 27500] [--map NAME|N] [--maps] [--rotation all|off|a,b,c] [--mode conquest|tdm|ctf|stronghold] [--modes] [--mode-rotation all|off|a,b,c] [--score N] [--time SECS] [--no-drops] [--lobby 30] [--name NAME] [--no-discovery] [--bots 12] [--max-bots N] [--seed N] [--tickets 250] [--stats FILE|off] [--difficulty recruit|regular|veteran|elite] [--skill 1.0] [--bench SECS]");
                 return;
             }
             other => panic!("unknown argument {other}"),
@@ -83,6 +118,9 @@ fn main() {
     } else if !args.iter().any(|a| a == "--map") {
         cfg.map = cfg.rotation[0];
     }
+    if cfg.mode_rotation.len() > 1 && !args.iter().any(|a| a == "--mode") {
+        cfg.mode = cfg.mode_rotation[0];
+    }
     cfg.stats_file = match stats.as_deref() {
         Some("off") | Some("none") => None,
         Some(f) => Some(f.into()),
@@ -93,7 +131,7 @@ fn main() {
         cfg.lobby_secs = 0;
         // Headless soak: simulate as fast as possible and report cost.
         let mut g = Game::new(cfg);
-        println!("map: {}", ferrite_shared::map::map_def(g.world.map).name);
+        println!("map: {} - mode: {}", ferrite_shared::map::map_def(g.world.map).name, ferrite_shared::mode_def(g.mode).name);
         let n = secs * 60;
         let t0 = std::time::Instant::now();
         let mut worst = 0.0f64;
@@ -103,7 +141,7 @@ fn main() {
             if g.tick % 1800 == 0 {
                 let o: String = g.points.iter().map(|p| ['E', 'C', '-'][p.owner as usize]).collect();
                 let alive = |t: u8| g.players.iter().filter(|p| p.team == t && p.alive).count();
-                println!("  t={:>4}s  line [{}]  tickets {:>3}-{:<3}  alive {}v{}  kills {}", g.tick / 60, o, g.tickets[0], g.tickets[1], alive(0), alive(1), g.stats.kills);
+                println!("  t={:>4}s  line [{}]  score {:>3}-{:<3}  alive {}v{}  kills {}  pickups {}  rounds {}", g.tick / 60, o, g.tickets[0], g.tickets[1], alive(0), alive(1), g.stats.kills, g.pickups.len(), g.stats.rounds);
             }
             worst = worst.max(s.elapsed().as_secs_f64() * 1000.0);
         }

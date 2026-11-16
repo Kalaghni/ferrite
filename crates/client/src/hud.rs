@@ -4,7 +4,8 @@ use crate::scene::{team_col, NEUTRAL_COL};
 use crate::App;
 use ferrite_shared::glam::{Mat4, Vec3, Vec4};
 use ferrite_shared::map::{BlockKind, HALF_X, HALF_Z};
-use ferrite_shared::proto::{flag, SPECTATOR_ID};
+use ferrite_shared::mode;
+use ferrite_shared::proto::{flag, pickup, SPECTATOR_ID};
 use ferrite_shared::sim;
 use ferrite_shared::{eligible, NEUTRAL, POINT_NAMES, POINT_RADIUS, TEAM_NAMES};
 use macroquad::prelude::{
@@ -334,16 +335,44 @@ fn draw_loadout(app: &App, w: f32, h: f32, icons: &mut Vec<GunIcon>) {
     }
 }
 
-/// Lobby click targets: one card per map, then the READY button.
+/// Lobby click targets: one card per map, the READY button, then one
+/// chip per game mode.
 #[allow(clippy::type_complexity)]
-pub fn lobby_rects(w: f32, _h: f32) -> (Vec<(f32, f32, f32, f32)>, (f32, f32, f32, f32)) {
+pub fn lobby_rects(w: f32, _h: f32) -> (Vec<(f32, f32, f32, f32)>, (f32, f32, f32, f32), Vec<(f32, f32, f32, f32)>) {
     let pw = (w - 40.0).min(1080.0);
     let x0 = w / 2.0 - pw / 2.0;
     let n = ferrite_shared::map::MAPS.len();
     let gap = 12.0;
     let cw = (pw - gap * (n as f32 - 1.0)) / n as f32;
-    let cards = (0..n).map(|k| (x0 + k as f32 * (cw + gap), 122.0, cw, 78.0)).collect();
-    (cards, (x0 + pw - 240.0, 34.0, 240.0, 48.0))
+    let cards = (0..n).map(|k| (x0 + k as f32 * (cw + gap), 120.0, cw, 62.0)).collect();
+    let m = ferrite_shared::MODES.len();
+    let mw = (pw - gap * (m as f32 - 1.0)) / m as f32;
+    let modes = (0..m).map(|k| (x0 + k as f32 * (mw + gap), 186.0, mw, 24.0)).collect();
+    (cards, (x0 + pw - 240.0, 34.0, 240.0, 48.0), modes)
+}
+
+/// "4:05" from a number of seconds.
+fn clock(secs: u16) -> String {
+    format!("{}:{:02}", secs / 60, secs % 60)
+}
+
+/// Whether objective `k` is in play in game mode `m`.
+fn point_used(m: u8, k: usize) -> bool {
+    match m {
+        mode::CONQUEST => true,
+        mode::KOTH => k == 2,
+        _ => false,
+    }
+}
+
+/// What the two scores are called in game mode `m`.
+fn score_word(m: u8) -> &'static str {
+    match m {
+        mode::CONQUEST => "tickets",
+        mode::TDM => "kills",
+        mode::CTF => "captures",
+        _ => "points",
+    }
 }
 
 fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32) {
@@ -360,12 +389,37 @@ fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
     let status = if snap.phase_secs > 0.05 { format!("MATCH STARTS IN 00:{:02.0}", snap.phase_secs.ceil()) } else { "WAITING FOR PLAYERS".to_string() };
     text("PRE-MATCH BRIEFING", hx, 36.0, 15.0, Color::new(0.718, 0.863, 1.0, 1.0));
     text(&status, hx, 66.0, 30.0, col(if soon { WARNING } else { WHITE }, 1.0));
-    text("Vote for the next map and choose a loadout. It starts early once everyone is ready.", hx, 90.0, 17.0, col(WHITE, 0.75));
+    text("Vote for the map and the game mode, and choose a loadout. It starts early once everyone is ready.", hx, 90.0, 17.0, col(WHITE, 0.75));
     text(&format!("{} team      R ready      {} chat      Q leave", key_hint(app, crate::bindings::Action::ChangeTeam), key_hint(app, crate::bindings::Action::ChatAll)), x0, 113.0, 17.0, col(WHITE, 0.7));
     if let Some(t) = &app.now_playing {
         text_r(&format!("now playing: {t}"), x0 + pw, 113.0, 17.0, col(WHITE, 0.7));
     }
-    let (cards, rb) = lobby_rects(w, h);
+    let (cards, rb, modes) = lobby_rects(w, h);
+    if !app.spectator {
+        text_r(&format!("{} CREDITS", app.profile.credits), rb.0 - 18.0, rb.1 + 31.0, 20.0, col(WARNING, 0.95));
+    }
+    for (k, &(x, y, cw, ch)) in modes.iter().enumerate() {
+        let def = &ferrite_shared::MODES[k];
+        let mine = app.mode_vote == k as u8;
+        let next = snap.next_mode == k as u8;
+        let over = mx >= x && mx < x + cw && my >= y && my < y + ch;
+        draw_rectangle(x, y, cw, ch, col(DARK, 0.82));
+        if mine {
+            draw_rectangle(x, y, cw, ch, col(tc, 0.3));
+        }
+        draw_rectangle_lines(x, y, cw, ch, if next { 3.0 } else { 2.0 }, if next { col(WHITE, 0.95) } else if over { Color::new(0.412, 0.678, 1.0, 1.0) } else { Color::new(0.706, 0.761, 0.882, 0.38) });
+        let v = snap.mode_votes[k % 4];
+        let label = if cw < 200.0 { def.name.to_string() } else { format!("{}  -  {}", def.name, def.pace) };
+        let size = (15.0 * (cw - 70.0) / crate::ui::width(&label, 15.0).max(1.0)).min(15.0);
+        text(&label, x + 10.0, y + 17.0, size, col(WHITE, if next { 1.0 } else { 0.8 }));
+        let tag = match (next, v) {
+            (true, 0) => "NEXT".to_string(),
+            (true, v) => format!("NEXT  {v}"),
+            (false, 0) => String::new(),
+            (false, v) => v.to_string(),
+        };
+        text_r(&tag, x + cw - 8.0, y + 17.0, 13.0, col(WHITE, 0.9));
+    }
     for (k, &(x, y, cw, ch)) in cards.iter().enumerate() {
         let def = &ferrite_shared::map::MAPS[k];
         let mine = app.vote == k as u8;
@@ -378,10 +432,10 @@ fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
         draw_rectangle_lines(x, y, cw, ch, if next { 3.0 } else { 2.0 }, if next { col(WHITE, 0.95) } else if over { Color::new(0.412, 0.678, 1.0, 1.0) } else { Color::new(0.706, 0.761, 0.882, 0.38) });
         draw_rectangle(x + 12.0, y + ch - 6.0, cw - 24.0, 2.0, col(if mine { tc } else { [0.412, 0.678, 1.0] }, 0.8));
         // Keep all map names inside their cards as the catalogue grows.
-        let name_size = (22.0 * (cw - 24.0) / crate::ui::width(def.name, 22.0).max(1.0)).min(22.0);
-        text(def.name, x + 12.0, y + 27.0, name_size, col(WHITE, 1.0));
+        let name_size = (20.0 * (cw - 24.0) / crate::ui::width(def.name, 20.0).max(1.0)).min(20.0);
+        text(def.name, x + 12.0, y + 22.0, name_size, col(WHITE, 1.0));
         let v = snap.votes[k % 8];
-        text(&format!("{} vote{}", v, if v == 1 { "" } else { "s" }), x + 12.0, y + 46.0, 16.0, col(WHITE, 0.75));
+        text(&format!("{} vote{}", v, if v == 1 { "" } else { "s" }), x + 12.0, y + 38.0, 14.0, col(WHITE, 0.75));
         let tag = match (next, mine) {
             (true, true) if cw < 230.0 => "VOTED / NEXT",
             (true, false) if cw < 230.0 => "NEXT MAP",
@@ -391,7 +445,7 @@ fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
             _ => "",
         };
         let tag_size = (14.0 * (cw - 24.0) / crate::ui::width(tag, 14.0).max(1.0)).min(14.0);
-        text(tag, x + 12.0, y + 64.0, tag_size, col(WHITE, 0.9));
+        text(tag, x + 12.0, y + 52.0, tag_size.min(13.0), col(WHITE, 0.9));
     }
     if !app.spectator {
         let over = mx >= rb.0 && mx < rb.0 + rb.2 && my >= rb.1 && my < rb.1 + rb.3;
@@ -457,7 +511,8 @@ fn draw_team_pick(app: &App, w: f32, h: f32) {
         text_c(&format!("{} fighters  -  {} human", total, humans), cx, y + 108.0, 20.0, col(WHITE, 0.85));
         if let Some(s) = app.net.latest() {
             let held = s.points.iter().filter(|p| p.owner as usize == t).count();
-            text_c(&format!("{} tickets  -  holds {} of 5", s.tickets[t], held), cx, y + 136.0, 20.0, col(WHITE, 0.85));
+            let line = if s.mode == mode::CONQUEST { format!("{} tickets  -  holds {} of 5", s.tickets[t], held) } else { format!("{} {}", s.tickets[t], score_word(s.mode)) };
+            text_c(&line, cx, y + 136.0, 20.0, col(WHITE, 0.85));
         }
         let (label, a) = if mine { ("YOUR TEAM", 0.7) } else if total > humans { ("CLICK TO JOIN", 1.0) } else { ("FULL", 0.5) };
         text_c(label, cx, y + ph - 28.0, 24.0, col(WHITE, a));
@@ -585,7 +640,9 @@ fn draw_pause(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
     let iw = pw - 44.0 * k;
     draw_text("MATCH STATUS", ix, py + 32.0 * k, sz(17.0), th::MUTED);
     draw_text(&ferrite_shared::map::map_def(snap.map).name.to_uppercase(), ix, py + 70.0 * k, sz(36.0), th::WHITE);
-    draw_text("FRONT-LINE CONQUEST", ix, py + 96.0 * k, sz(17.0), th::MUTED);
+    let mdef = ferrite_shared::mode_def(snap.mode);
+    let mline = if snap.mode == mode::CONQUEST { "FRONT-LINE CONQUEST".to_string() } else { format!("{}  -  FIRST TO {}", mdef.name, snap.goal) };
+    draw_text(&mline, ix, py + 96.0 * k, sz(17.0), th::MUTED);
     let cw = (iw - 12.0 * k) / 2.0;
     for t in 0..2usize {
         let cx = ix + t as f32 * (cw + 12.0 * k);
@@ -597,7 +654,7 @@ fn draw_pause(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
         draw_text(TEAM_NAMES[t], cx + 70.0 * k, cy + 28.0 * k, sz(17.0), col(tc, 1.0));
         draw_text(&snap.tickets[t].max(0).to_string(), cx + 70.0 * k, cy + 60.0 * k, sz(36.0), th::WHITE);
     }
-    let top_t = snap.tickets[0].max(snap.tickets[1]).max(250) as f32;
+    let top_t = snap.tickets[0].max(snap.tickets[1]).max(snap.goal.max(1)) as f32;
     for t in 0..2usize {
         let bx = ix + t as f32 * (cw + 12.0 * k);
         let by = py + 208.0 * k;
@@ -605,8 +662,13 @@ fn draw_pause(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
         draw_rectangle(bx, by, cw * (snap.tickets[t].max(0) as f32 / top_t).min(1.0), 10.0 * k, col(team_col(t as u8), 1.0));
     }
     draw_line(ix, py + 236.0 * k, ix + iw, py + 236.0 * k, 1.0, th::STROKE);
-    draw_text("THE FRONT LINE", ix, py + 264.0 * k, sz(17.0), th::MUTED);
-    for (p, pt) in snap.points.iter().enumerate().take(5) {
+    draw_text(if snap.mode == mode::CONQUEST { "THE FRONT LINE" } else { "THE OBJECTIVE" }, ix, py + 264.0 * k, sz(17.0), th::MUTED);
+    if snap.mode != mode::CONQUEST {
+        for (n, line) in wrap(mdef.blurb, sz(16.0), iw, iw).iter().take(3).enumerate() {
+            draw_text(line, ix, py + (292.0 + n as f32 * 20.0) * k, sz(16.0), th::WHITE);
+        }
+    }
+    for (p, pt) in snap.points.iter().enumerate().take(if snap.mode == mode::CONQUEST { 5 } else { 0 }) {
         let dx = ix + iw * (p as f32 + 0.5) / 5.0;
         let dy = py + 304.0 * k;
         if p < 4 {
@@ -684,7 +746,7 @@ fn draw_scoreboard(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h:
     text_c("-", mid, top + 26.0, 22.0, th::MUTED);
     text(&format!("{}  {}", wins[1], TEAM_NAMES[1]), mid + 14.0, top + 26.0, 22.0, col(team_col(1), 1.0));
     let live = match snap.phase {
-        0 => format!("round {} in progress on {}", app.net.rounds.len().max((wins[0] + wins[1]) as usize) + 1, ferrite_shared::map::map_def(snap.map).name),
+        0 => format!("round {} in progress: {} on {}", app.net.rounds.len().max((wins[0] + wins[1]) as usize) + 1, ferrite_shared::mode_def(snap.mode).name.to_lowercase(), ferrite_shared::map::map_def(snap.map).name),
         1 => "round over".to_string(),
         _ => "in the lobby".to_string(),
     };
@@ -729,7 +791,7 @@ fn draw_scoreboard(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h:
         let right = x + half - 12.0;
         let tc = team_col(t);
         text(TEAM_NAMES[t as usize], x, ty + 22.0, 24.0, col(tc, 1.0));
-        crate::ui::text_r(&format!("{} tickets", snap.tickets[t as usize]), x + 250.0f32.min(half * 0.5), ty + 20.0, 15.0, th::MUTED);
+        crate::ui::text_r(&format!("{} {}", snap.tickets[t as usize], score_word(snap.mode)), x + 250.0f32.min(half * 0.5), ty + 20.0, 15.0, th::MUTED);
         let head = |s: &str, off: f32| crate::ui::text_r(s, right - off, ty + 42.0, 13.0, th::QUIET);
         head("K", c_k);
         head("D", c_d);
@@ -818,6 +880,9 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
 
     // ---- world-space markers ----
     for (k, p) in app.world.points.iter().enumerate() {
+        if !point_used(snap.mode, k) {
+            continue;
+        }
         if let Some((sx, sy, d)) = project(vp, *p + Vec3::new(0.0, 9.3, 0.0), w, h) {
             let pt = &snap.points[k];
             let c = team_col(pt.owner);
@@ -827,6 +892,56 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
             draw_poly(sx, sy, 4, 12.0, 45.0, col(c, 0.92 * pulse));
             text_c(POINT_NAMES[k], sx, sy + 6.0, 21.0, col(DARK, 1.0));
             text_c(&format!("{:.0}m", d), sx, sy + 30.0, 16.0, col(WHITE, 0.85));
+        }
+    }
+    // Flags: where each one is, and what to do about it.
+    let have_flag = snap.mode == mode::CTF && playing && snap.flags.iter().any(|f| f.state == 1 && f.carrier == app.my_id);
+    if snap.mode == mode::CTF && app.kc.is_none() {
+        for (f, fl) in snap.flags.iter().enumerate() {
+            let ours = f as u8 == app.my_team && !app.spectator;
+            let mine = fl.state == 1 && fl.carrier == app.my_id && !app.spectator;
+            // Carrying theirs: the marker that matters is our own stand.
+            let (at, label) = if mine {
+                (app.world.points[ferrite_shared::FLAG_POINT[app.my_team as usize % 2]], "BRING IT HERE")
+            } else {
+                let pos = if fl.state == 1 { app.views.iter().find(|v| v.id == fl.carrier).map_or(Vec3::from(fl.pos), |v| v.pos) } else { Vec3::from(fl.pos) };
+                let label = match (fl.state, ours) {
+                    (0, true) => "DEFEND",
+                    (0, false) => "TAKE",
+                    (1, true) => "STOP THEM",
+                    (1, false) => "ESCORT",
+                    (_, true) => "RETURN",
+                    _ => "PICK UP",
+                };
+                (pos, label)
+            };
+            if let Some((sx, sy, d)) = project(vp, at + Vec3::new(0.0, 4.4, 0.0), w, h) {
+                let c = team_col(f as u8);
+                let pulse = if fl.state != 0 { 0.7 + 0.3 * (now as f32 * 8.0).sin() } else { 1.0 };
+                draw_poly(sx, sy, 3, 15.0, 90.0, col(DARK, 0.8));
+                draw_poly(sx, sy, 3, 11.0, 90.0, col(c, pulse));
+                text_c(label, sx, sy - 18.0, 15.0, col(WHITE, 0.95));
+                text_c(&format!("{:.0}m", d), sx, sy + 28.0, 15.0, col(WHITE, 0.85));
+            }
+        }
+    }
+    // Things to pick up, once close enough to go for.
+    if app.kc.is_none() {
+        for p in &snap.pickups {
+            let pos = Vec3::from(p.pos_f());
+            let d = (pos - my_pos).length();
+            if d > 45.0 {
+                continue;
+            }
+            if let Some((sx, sy, _)) = project(vp, pos + Vec3::new(0.0, 1.5, 0.0), w, h) {
+                let k = p.kind as usize % 5;
+                let c = crate::scene::PICKUP_COL[k];
+                draw_poly(sx, sy, 4, 7.0, 0.0, col(DARK, 0.75));
+                draw_poly(sx, sy, 4, 5.0, 0.0, col(c, 0.95));
+                if d < 16.0 {
+                    text_c(pickup::NAMES[k], sx, sy - 11.0, 14.0, col(c, 0.95));
+                }
+            }
         }
     }
     let view_dir = sim::view_dir(app.yaw, app.pitch);
@@ -1001,7 +1116,7 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
     draw_rectangle(cx - line_w * 0.5 - bar_w - 24.0, top - 6.0, line_w + 2.0 * bar_w + 48.0, 50.0, col(DARK, 0.55));
     for t in 0..2usize {
         let c = team_col(t as u8);
-        let frac = (snap.tickets[t] as f32 / 250.0).clamp(0.0, 1.0);
+        let frac = (snap.tickets[t] as f32 / snap.goal.max(1) as f32).clamp(0.0, 1.0);
         let x = if t == 0 { cx - line_w * 0.5 - 12.0 - bar_w } else { cx + line_w * 0.5 + 12.0 };
         draw_rectangle(x, top + 4.0, bar_w, 12.0, col(DARK, 0.8));
         if t == 0 {
@@ -1014,15 +1129,37 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
             text(TEAM_NAMES[t], x, top + 36.0, 18.0, col(WHITE, if app.my_team == 1 { 1.0 } else { 0.6 }));
         }
     }
+    // Outside conquest the middle of the bar is the target and the clock.
+    if snap.mode != mode::CONQUEST {
+        let left = if snap.phase == 0 && snap.secs_left > 0 { clock(snap.secs_left) } else { "--:--".to_string() };
+        let low = snap.phase == 0 && snap.secs_left > 0 && snap.secs_left <= 30;
+        let tx = if snap.mode == mode::KOTH { cx + 34.0 } else { cx };
+        text_c(&format!("FIRST TO {}", snap.goal), tx, top + 13.0, 15.0, col(WHITE, 0.75));
+        text_c(&left, tx, top + 38.0, 26.0, col(if low { WARNING } else { WHITE }, 1.0));
+    }
+    if snap.mode == mode::CTF {
+        // Each side's flag: at home, taken, or lying where it fell.
+        for (f, fl) in snap.flags.iter().enumerate() {
+            let x = cx + if f == 0 { -86.0 } else { 86.0 };
+            let c = team_col(f as u8);
+            let pulse = if fl.state != 0 { 0.6 + 0.4 * (now as f32 * 8.0).sin() } else { 1.0 };
+            draw_poly(x, top + 14.0, 3, 13.0, 90.0, col(DARK, 0.9));
+            draw_poly(x, top + 14.0, 3, 10.0, 90.0, col(c, pulse));
+            text_c(["HOME", "TAKEN", "DOWN"][fl.state as usize % 3], x, top + 40.0, 13.0, col(if fl.state == 0 { WHITE } else { WARNING }, 0.9));
+        }
+    }
     for k in 0..5 {
+        if snap.mode != mode::CONQUEST && !(snap.mode == mode::KOTH && k == 2) {
+            continue;
+        }
         let pt = &snap.points[k];
-        let x = cx - line_w * 0.5 + slot * (k as f32 + 0.5);
+        let x = if snap.mode == mode::KOTH { cx - 62.0 } else { cx - line_w * 0.5 + slot * (k as f32 + 0.5) };
         let y = top + 19.0;
         let c = team_col(pt.owner);
-        if k < 4 {
+        if k < 4 && snap.mode == mode::CONQUEST {
             draw_line(x + 15.0, y, x + slot - 15.0, y, 3.0, col(WHITE, 0.25));
         }
-        let hot = eligible(&owners, 0, k) && pt.owner != 0 || eligible(&owners, 1, k) && pt.owner != 1;
+        let hot = snap.mode != mode::CONQUEST || eligible(&owners, 0, k) && pt.owner != 0 || eligible(&owners, 1, k) && pt.owner != 1;
         let contested = pt.n[0] > 0 && pt.n[1] > 0;
         let pulse = if contested { 0.6 + 0.4 * (now as f32 * 8.0).sin() } else { 1.0 };
         draw_poly(x, y, 4, 17.0, 45.0, col(if hot { WHITE } else { DARK }, 0.9));
@@ -1121,7 +1258,22 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
             draw_rectangle(x0, y0, (b.max.x - b.min.x) * scale, (b.max.z - b.min.z) * scale, col(WHITE, 0.22));
         }
         draw_rectangle_lines(mx, my, mw, mh, 2.0, col(WHITE, 0.35));
+        for p in &snap.pickups {
+            let (x, y) = to(Vec3::from(p.pos_f()));
+            draw_rectangle(x - 2.0, y - 2.0, 4.0, 4.0, col(crate::scene::PICKUP_COL[p.kind as usize % 5], 0.9));
+        }
+        if snap.mode == mode::CTF {
+            for (f, fl) in snap.flags.iter().enumerate() {
+                let (x, y) = to(Vec3::from(fl.pos));
+                let pulse = if fl.state != 0 { 0.6 + 0.4 * (now as f32 * 8.0).sin() } else { 1.0 };
+                draw_poly(x, y, 3, 8.0, 90.0, col(DARK, 0.9));
+                draw_poly(x, y, 3, 6.0, 90.0, col(team_col(f as u8), pulse));
+            }
+        }
         for (k, p) in app.world.points.iter().enumerate() {
+            if !point_used(snap.mode, k) {
+                continue;
+            }
             let (x, y) = to(*p);
             let pt = &snap.points[k];
             draw_circle(x, y, POINT_RADIUS * scale, col(team_col(pt.owner), 0.3));
@@ -1152,7 +1304,7 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
     if playing || app.spectator {
         for (k, p) in app.world.points.iter().enumerate() {
             let d = *p - my_pos;
-            if d.x * d.x + d.z * d.z > POINT_RADIUS * POINT_RADIUS {
+            if d.x * d.x + d.z * d.z > POINT_RADIUS * POINT_RADIUS || !point_used(snap.mode, k) {
                 continue;
             }
             let pt = &snap.points[k];
@@ -1164,7 +1316,7 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
                 "CONTESTED"
             } else if pt.owner == me && prog.abs() > 0.98 {
                 "HOLDING"
-            } else if pt.owner != me && !eligible(&owners, me, k) {
+            } else if snap.mode == mode::CONQUEST && pt.owner != me && !eligible(&owners, me, k) {
                 "LOCKED - take the point before it first"
             } else if pt.n[me as usize] > 0 && pt.owner != me {
                 "CAPTURING"
@@ -1200,10 +1352,36 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
         let hc = if frac > 0.5 { WHITE } else if frac > 0.25 { [1.0, 0.75, 0.2] } else { [1.0, 0.25, 0.15] };
         draw_rectangle(x, y, 240.0 * frac, 20.0, col(hc, 0.92));
         text(&format!("{}", app.hp), x + 6.0, y + 16.0, 20.0, col(DARK, 1.0));
-        text(kd.name, x, y - 12.0, 20.0, col(team_col(app.my_team), 1.0));
-        if app.st.surge {
-            text("SURGE", x + 110.0, y - 12.0, 20.0, col([1.0, 0.86, 0.45], 0.7 + 0.3 * (now as f32 * 10.0).sin()));
+        // Armour sits over the health it protects.
+        let mut ly = y - 12.0;
+        if app.armor > 0 {
+            let ac = crate::scene::PICKUP_COL[pickup::ARMOR as usize];
+            draw_rectangle(x - 4.0, y - 18.0, 248.0, 14.0, col(DARK, 0.6));
+            draw_rectangle(x, y - 15.0, 240.0 * (app.armor as f32 / 100.0).min(1.0), 8.0, col(ac, 0.95));
+            text(&format!("ARMOUR {}", app.armor), x + 250.0, y - 6.0, 15.0, col(ac, 1.0));
+            ly -= 16.0;
         }
+        text(kd.name, x, ly, 20.0, col(team_col(app.my_team), 1.0));
+        let mut sx = x + 110.0;
+        let blink = 0.7 + 0.3 * (now as f32 * 10.0).sin();
+        if app.st.surge {
+            text("SURGE", sx, ly, 20.0, col([1.0, 0.86, 0.45], blink));
+            sx += 74.0;
+        }
+        if app.power > 0 {
+            text(&format!("OVERCHARGE {}s", app.power), sx, ly, 20.0, col(crate::scene::PICKUP_COL[pickup::OVERCHARGE as usize], blink));
+        }
+        if have_flag {
+            text_c("YOU HAVE THEIR FLAG", cx, h - 150.0, 24.0, col(WARNING, blink));
+        }
+        // The streak, and the kill its next reward comes at.
+        if app.streak >= 2 {
+            let next = [3u8, 5, 7, 10].into_iter().find(|n| *n > app.streak).unwrap_or((app.streak / 5 + 1) * 5);
+            text(&format!("STREAK {}", app.streak), x, ly - 24.0, 18.0, col(WARNING, 1.0));
+            text(&format!("reward at {next}"), x + 96.0, ly - 24.0, 15.0, col(WHITE, 0.6));
+        }
+        // With touch controls the fire cluster has the bottom right.
+        let w = if app.touch { w - 470.0 * (h / 720.0).clamp(0.75, 1.6) } else { w };
         let wd = sim::weapon_def(sim::wid(&app.st));
         let ammo = format!("{}", app.st.ammo);
         let low = app.st.ammo as f32 <= wd.mag as f32 * 0.25;
@@ -1296,6 +1474,9 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
         text_c(&format!("{} HOLDS THE FIELD", TEAM_NAMES[snap.winner as usize % 2]), cx, by + 52.0, 52.0, col(c, 1.0));
         let res = if app.spectator { "" } else if snap.winner == app.my_team { "VICTORY" } else { "DEFEAT" };
         let mut line = format!("{}   next round in {:.0}s", res, snap.phase_secs);
+        if let Some((credits, _, _)) = app.award.filter(|_| !app.spectator) {
+            line = format!("{res}   +{credits} CREDITS   next round in {:.0}s", snap.phase_secs);
+        }
         if snap.next_map != snap.map {
             line += &format!("   -   next map: {}", ferrite_shared::map::map_def(snap.next_map).name);
         }
@@ -1335,5 +1516,6 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
         text_c("CONNECTION LOST - waiting for server", cx, cy - 60.0, 30.0, Color::new(1.0, 0.4, 0.2, 1.0));
     }
     draw_chat(app, w, h, now);
+    crate::touch::draw();
     icons
 }
