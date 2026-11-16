@@ -109,6 +109,9 @@ pub struct Args {
     /// this in chat a moment into a scripted run; wear this built-in icon;
     /// take the picture while the killcam is playing.
     vm_melee: Option<f32>,
+    /// Verification aid: show this weapon finish in first person and in
+    /// the armory preview. Only this screen sees it; it is never saved.
+    wskin: Option<u8>,
     say: Option<String>,
     icon: Option<u8>,
     shot_killcam: bool,
@@ -163,6 +166,7 @@ fn parse_args() -> Args {
         shot_dead: false,
         menu_page: 0,
         vm_melee: None,
+        wskin: None,
         say: None,
         icon: None,
         shot_killcam: false,
@@ -275,6 +279,7 @@ fn parse_args() -> Args {
             }
             "--vm-reload" => a.vm_reload = val.parse().ok(),
             "--vm-melee" => a.vm_melee = val.parse().ok(),
+            "--wskin" => a.wskin = val.parse().ok(),
             "--say" => a.say = Some(val),
             "--icon" => a.icon = val.parse().ok(),
             "--shot-killcam" => {
@@ -560,6 +565,8 @@ pub struct App {
     icon_ask: f64,
     /// Finish chosen for each weapon id.
     pub wskins: [u8; 20],
+    /// `--wskin`: a finish shown on our own weapon only, for review.
+    review_wskin: Option<u8>,
     melee_latch: bool,
     /// Scripted runs: walk to the nearest point we do not hold.
     seek: bool,
@@ -623,7 +630,8 @@ impl App {
     pub fn wskin_of(&self, id: u8, side: bool) -> u8 {
         if id == self.my_id {
             let wid = if side { self.st.side } else { self.st.prim };
-            return sim::fix_weapon_skin(wid, self.wskins[wid as usize % self.wskins.len()]);
+            let worn = self.review_wskin.unwrap_or(self.wskins[wid as usize % self.wskins.len()]);
+            return sim::fix_weapon_skin(wid, worn);
         }
         self.net.roster.iter().find(|r| r.id == id).map_or(0, |r| r.wskin[side as usize])
     }
@@ -1327,6 +1335,9 @@ async fn main() {
     menu.tab = (args.menu_page / 10).min(2);
     menu.shop_tab = (args.menu_page / 10).min(1);
     menu.ob_step = (args.menu_page / 10).min(3);
+    if let Some(id) = args.wskin {
+        menu.review_finish(id, args.prim);
+    }
     // A first launch starts with the introduction.
     if args.menu_shot.is_none() && !menu.profile.onboarded {
         menu.go_to(5);
@@ -1594,6 +1605,7 @@ async fn play(
         icons: std::collections::HashMap::new(),
         icon_ask: 0.0,
         wskins: *wskins,
+        review_wskin: args.wskin,
         melee_latch: false,
         seek: args.seek,
         rmelee: [0.0; 64],
@@ -2332,6 +2344,7 @@ async fn play(
                 vel: app.rvel[i],
                 fall: 0.0,
                 sink: 0.0,
+                far: false,
             };
             app.last_view[i] = view;
             // The killcam looks through the killer's eyes: no body to draw.
@@ -2472,7 +2485,8 @@ async fn play(
         }
         cue_clock = world_t;
         for v in &app.views {
-            scene::soldier(&mut opaque, &mut alpha, &app.world, v, time, blob);
+            let far = v.pos.distance(eye) > scene::FINISH_DETAIL_RANGE;
+            scene::soldier(&mut opaque, &mut alpha, &app.world, &scene::PlayerView { far, ..*v }, time, blob);
         }
         app.corpses.retain(|c| now - c.1 < 7.0);
         // In the killcam the clock is back before we fell: no body yet.
@@ -2588,6 +2602,7 @@ async fn play(
                     time,
                     seq: app.shot_seq,
                     preview: None,
+                    detail: true,
                     skin: app.wskin_of(app.my_id, app.st.slot == 1),
                     melee: args.vm_melee.unwrap_or(app.st.melee as f32 / sim::MELEE_TICKS as f32),
                 },
@@ -2623,6 +2638,7 @@ async fn play(
                     time,
                     seq: (now * 20.0) as u32,
                     preview: None,
+                    detail: true,
                     skin: app.wskin_of(kid, kv.flags & flag::SIDEARM != 0),
                     melee: if kv.flags2 & flag2::MELEE != 0 { 0.72 } else { 0.0 },
                 },

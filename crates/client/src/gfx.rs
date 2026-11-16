@@ -71,6 +71,16 @@ impl Mesh {
         self.i.extend_from_slice(&[base, base + 1, base + 2]);
     }
 
+    /// Flat triangle with a colour per corner.
+    pub fn tri_c(&mut self, a: Vec3, b: Vec3, c: Vec3, cols: [Col; 3]) {
+        let base = self.reserve(3);
+        let n = (b - a).cross(c - a).normalize_or_zero().to_array();
+        for (p, col) in [a, b, c].into_iter().zip(cols) {
+            self.v.push(Vertex { pos: p.to_array(), nrm: n, col });
+        }
+        self.i.extend_from_slice(&[base, base + 1, base + 2]);
+    }
+
     /// Triangle with a given normal (grass takes the ground's shading).
     pub fn tri_n(&mut self, a: Vec3, b: Vec3, c: Vec3, n: Vec3, col: Col) {
         let base = self.reserve(3);

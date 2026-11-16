@@ -898,6 +898,15 @@ impl Menu {
         });
     }
 
+    /// Verification aid: look at this finish in the armory, on `wid` when
+    /// the armory sells finishes for it.
+    pub fn review_finish(&mut self, id: u8, wid: u8) {
+        self.shop_sel[0] = id.min(sim::WEAPON_SKINS.len() as u8 - 1);
+        if let Some(at) = shop_weapons().iter().position(|&w| w == wid) {
+            self.shop_weapon = at;
+        }
+    }
+
     /// The soldier in the armory: wearing the look and holding the gun
     /// and finish being looked at, or the ones equipped.
     fn stage_view(&self) -> scene::PlayerView {
