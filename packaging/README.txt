@@ -9,7 +9,7 @@ NEW IN v0.13
   Relay: climb the ladders of BACKBONE, the great mast, to a platform at
   20 m and a top deck at 36.75 m.
   Tunnel portals are one rock face, with no floating plate or open
-  corners.
+  corners (v0.13.1: inside the cave too).
   Everyone in a match needs v0.13.0, including the dedicated server.
 
 NEW IN v0.12
