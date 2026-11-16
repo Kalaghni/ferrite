@@ -221,7 +221,13 @@ pub fn sky(md: &Mood) -> Mesh {
             let c = mix3(hor, mix3(md.range, md.glow, 0.25 * lit(a0)), depth);
             let face = [c[0], c[1], c[2], 1.0];
             let foot = [hor[0], hor[1], hor[2], 1.0];
-            m.quad_c(dir(-0.06, a0) * dist, dir(-0.06, a1) * dist, dir(top(k + 1), a1) * dist, dir(top(k), a0) * dist, [foot, foot, face, face]);
+            m.quad_c(
+                dir(-0.06, a0) * dist,
+                dir(-0.06, a1) * dist,
+                dir(top(k + 1), a1) * dist,
+                dir(top(k), a0) * dist,
+                [foot, foot, face, face],
+            );
         }
     }
     // Slab clouds in small stacks: a lit top over a darker belly. With many
@@ -621,7 +627,13 @@ fn deadwood(m: &mut Mesh, p: Vec3, r: &mut Rng) {
         taper(m, p + vec3(-s, -0.3, -s), p + vec3(s, h, s), 1.15, 0.85, Vec3::ZERO, Vec3::ZERO, bark);
         let t = s * 0.8;
         let y = p.y + h + 0.006;
-        m.quad(vec3(p.x - t, y, p.z - t), vec3(p.x - t, y, p.z + t), vec3(p.x + t, y, p.z + t), vec3(p.x + t, y, p.z - t), rgb(0.62, 0.50, 0.34));
+        m.quad(
+            vec3(p.x - t, y, p.z - t),
+            vec3(p.x - t, y, p.z + t),
+            vec3(p.x + t, y, p.z + t),
+            vec3(p.x + t, y, p.z - t),
+            rgb(0.62, 0.50, 0.34),
+        );
     } else {
         let rad = r.range(0.09, 0.17);
         let g = Mat4::from_translation(p + vec3(0.0, rad * 0.8, 0.0)) * Mat4::from_rotation_y(r.range(0.0, TAU));
@@ -647,7 +659,16 @@ fn sapling(m: &mut Mesh, p: Vec3, r: &mut Rng, pine: bool, pal: &[[f32; 3]; 3]) 
         let lc = if r.chance(0.5) { LEAF[r.below(5) as usize] } else { pal[r.below(3) as usize] };
         let s = h * r.range(0.22, 0.3);
         blob(m, p + vec3(0.0, h * 0.72, 0.0), vec3(s, s * 1.25, s), r.range(0.0, TAU), col3(lc, 1.0), p.y, 0.035, r.below(1000));
-        blob(m, p + vec3(s * 0.5, h * 0.52, s * 0.3), vec3(s * 0.6, s * 0.6, s * 0.6), r.range(0.0, TAU), col3(lc, 0.9), p.y, 0.035, r.below(1000));
+        blob(
+            m,
+            p + vec3(s * 0.5, h * 0.52, s * 0.3),
+            vec3(s * 0.6, s * 0.6, s * 0.6),
+            r.range(0.0, TAU),
+            col3(lc, 0.9),
+            p.y,
+            0.035,
+            r.below(1000),
+        );
     }
 }
 
@@ -758,7 +779,12 @@ pub fn grow(m: &mut Mesh, w: &World) {
         .iter()
         .filter(|t| t.base.x < 0.0 && t.base.x.abs() < HALF_X && t.base.z.abs() < HALF_Z)
         .map(|t| t.base)
-        .chain(w.blocks.iter().filter(|b| b.kind == BlockKind::Rock && b.min.x < 0.0).map(|b| vec3((b.min.x + b.max.x) * 0.5, 0.0, b.max.z + 0.4)))
+        .chain(
+            w.blocks
+                .iter()
+                .filter(|b| b.kind == BlockKind::Rock && b.min.x < 0.0)
+                .map(|b| vec3((b.min.x + b.max.x) * 0.5, 0.0, b.max.z + 0.4)),
+        )
         .collect();
     let mut site = Rng::new(seed as u64 ^ 0xB05);
     for k in 0..b.bushes {
@@ -781,7 +807,8 @@ pub fn grow(m: &mut Mesh, w: &World) {
         let tries = (30000.0 * b.tall / 0.3) as usize;
         for k in 0..tries {
             let Some(spots) = f.pair(&mut site, 0.92, 10.0) else { continue };
-            let drift = vnoise(spots[0].x / 15.0, spots[0].z / 15.0, seed ^ 0x71) * 0.75 + vnoise(spots[0].x / 4.0, spots[0].z / 4.0, seed ^ 0x72) * 0.25;
+            let drift = vnoise(spots[0].x / 15.0, spots[0].z / 15.0, seed ^ 0x71) * 0.75
+                + vnoise(spots[0].x / 4.0, spots[0].z / 4.0, seed ^ 0x72) * 0.25;
             if drift < cut {
                 continue;
             }
@@ -877,7 +904,9 @@ pub fn grow(m: &mut Mesh, w: &World) {
     let open = Occ::new(w, 0.0);
     for (i, blk) in w.blocks.iter().enumerate() {
         // Moving to the destroyed state must not leave floating static ivy.
-        if blk.dest.is_some() { continue; }
+        if blk.dest.is_some() {
+            continue;
+        }
         let mut r = rng_for(9, i);
         if relay && super::relay::owns(blk) {
             continue;
@@ -975,7 +1004,8 @@ pub fn ambience(opaque: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, 
                 let d = t.radius * (0.3 + 0.7 * hash01(id, 4));
                 let fall = (f / 0.86).min(1.0);
                 let drift = vec3(1.0, 0.0, 0.35) * fall * 1.6;
-                let wob = vec3((time * 1.7 + a).sin(), 0.0, (time * 1.3 + a * 2.0).cos()) * 0.35 * (1.0 - (fall * 2.0 - 1.0).abs()).max(0.0);
+                let wob =
+                    vec3((time * 1.7 + a).sin(), 0.0, (time * 1.3 + a * 2.0).cos()) * 0.35 * (1.0 - (fall * 2.0 - 1.0).abs()).max(0.0);
                 let xz = t.base + vec3(a.cos() * d, 0.0, a.sin() * d) + drift + wob;
                 let ground = w.height(xz.x, xz.z) + 0.04;
                 let top = t.base.y + t.height * 0.7;
@@ -1001,7 +1031,9 @@ pub fn ambience(opaque: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, 
             for cy in -1..=1i32 {
                 for cx in -3..=3i32 {
                     let cell = c0 + vec3(cx as f32, cy as f32, cz as f32);
-                    let id = (cell.x as i32 as u32).wrapping_mul(73_856_093) ^ (cell.y as i32 as u32).wrapping_mul(19_349_663) ^ (cell.z as i32 as u32).wrapping_mul(83_492_791);
+                    let id = (cell.x as i32 as u32).wrapping_mul(73_856_093)
+                        ^ (cell.y as i32 as u32).wrapping_mul(19_349_663)
+                        ^ (cell.z as i32 as u32).wrapping_mul(83_492_791);
                     for k in 0..2u32 {
                         let h = |s: u32| hash01(id ^ k.wrapping_mul(0x9E37), s);
                         // Each drifts slowly and wraps inside its own cell.
@@ -1013,7 +1045,11 @@ pub fn ambience(opaque: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, 
                         let edge = (q * (Vec3::ONE - q)).min_element() * 8.0;
                         let p = (cell + q) * CELL_M;
                         let dist = (p - eye).length();
-                        let a = md.motes[3] * smooth(16.0, 8.0, dist) * smooth(0.6, 2.0, dist) * edge.min(1.0) * (0.55 + 0.45 * (time * (1.0 + h(7)) + h(8) * TAU).sin());
+                        let a = md.motes[3]
+                            * smooth(16.0, 8.0, dist)
+                            * smooth(0.6, 2.0, dist)
+                            * edge.min(1.0)
+                            * (0.55 + 0.45 * (time * (1.0 + h(7)) + h(8) * TAU).sin());
                         if a < 0.02 || p.y < w.height(p.x, p.z) + 0.1 {
                             continue;
                         }
@@ -1044,7 +1080,8 @@ pub fn ambience(opaque: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, 
                 let g = w.height(x, z);
                 let lie = smooth(low + md.mist.1 + 3.0, low + md.mist.1 - 1.0, g);
                 let d = ((x - eye.x).powi(2) + (z - eye.z).powi(2)).sqrt();
-                let a = md.mist.0 * lie * 0.17 * smooth(7.0, 26.0, d) * smooth(135.0, 95.0, d) * (0.7 + 0.3 * (time * 0.21 + h(5) * TAU).sin());
+                let a =
+                    md.mist.0 * lie * 0.17 * smooth(7.0, 26.0, d) * smooth(135.0, 95.0, d) * (0.7 + 0.3 * (time * 0.21 + h(5) * TAU).sin());
                 if a < 0.012 {
                     continue;
                 }
@@ -1166,7 +1203,11 @@ mod tests {
                 assert!((spots[0].x + spots[1].x).abs() < 1e-3 && (spots[0].z + spots[1].z).abs() < 1e-3);
                 for p in spots {
                     assert!(f.objective(p.x, p.z) > 10.5);
-                    assert!(!w.blocks.iter().any(|b| b.kind != BlockKind::Trunk && p.x > b.min.x && p.x < b.max.x && p.z > b.min.z && p.z < b.max.z));
+                    assert!(!w.blocks.iter().any(|b| b.kind != BlockKind::Trunk
+                        && p.x > b.min.x
+                        && p.x < b.max.x
+                        && p.z > b.min.z
+                        && p.z < b.max.z));
                 }
             }
             assert!(found > 400, "map {map}: only {found} open spots");

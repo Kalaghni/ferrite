@@ -18,12 +18,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self {
-            enabled: true,
-            sensitivity: 2.8,
-            deadzone: 0.18,
-            invert_y: false,
-        }
+        Self { enabled: true, sensitivity: 2.8, deadzone: 0.18, invert_y: false }
     }
 }
 
@@ -64,10 +59,7 @@ const BUTTONS: [(Button, u32); 16] = [
 ];
 
 fn button_bit(button: Button) -> u32 {
-    BUTTONS
-        .iter()
-        .find(|(b, _)| *b == button)
-        .map_or(0, |(_, bit)| *bit)
+    BUTTONS.iter().find(|(b, _)| *b == button).map_or(0, |(_, bit)| *bit)
 }
 
 fn finite(value: f32, fallback: f32) -> f32 {
@@ -123,11 +115,7 @@ impl Frame {
         let mut held = raw.buttons & !(LT | RT);
         // Hysteresis prevents analogue trigger noise from generating extra semi-auto shots.
         for (bit, value) in [(LT, raw.aim), (RT, raw.fire)] {
-            let value = if raw.buttons & bit != 0 {
-                1.0
-            } else {
-                finite(value, 0.0)
-            };
+            let value = if raw.buttons & bit != 0 { 1.0 } else { finite(value, 0.0) };
             let threshold = if previous & bit != 0 { 0.22 } else { 0.30 };
             if value > threshold {
                 held |= bit;
@@ -145,16 +133,8 @@ impl Frame {
         }
         self.movement = if ui { (0.0, 0.0) } else { movement };
         let look = radial(raw.right.0, raw.right.1, settings.deadzone);
-        let speed =
-            finite(settings.sensitivity, 2.8).clamp(0.1, 8.0) * finite(dt, 0.0).clamp(0.0, 0.1);
-        self.look = if ui {
-            (0.0, 0.0)
-        } else {
-            (
-                look.0 * speed,
-                look.1 * speed * if settings.invert_y { -1.0 } else { 1.0 },
-            )
-        };
+        let speed = finite(settings.sensitivity, 2.8).clamp(0.1, 8.0) * finite(dt, 0.0).clamp(0.0, 0.1);
+        self.look = if ui { (0.0, 0.0) } else { (look.0 * speed, look.1 * speed * if settings.invert_y { -1.0 } else { 1.0 }) };
     }
 
     fn action(&self, action: Action, edge: bool) -> bool {
@@ -162,11 +142,7 @@ impl Frame {
             return false;
         }
         if matches!(action, Action::Sprint) {
-            return if edge {
-                self.edges & L3 != 0
-            } else {
-                self.sprint
-            };
+            return if edge { self.edges & L3 != 0 } else { self.sprint };
         }
         // Movement is available as analogue values; directional queries also work.
         if !edge {
@@ -209,19 +185,8 @@ struct Pointer {
 }
 
 impl Pointer {
-    fn update(
-        &mut self,
-        raw: Option<RawPad>,
-        frame: &Frame,
-        settings: &Settings,
-        dt: f32,
-        ui: bool,
-        mouse: (f32, f32),
-        size: (f32, f32),
-    ) {
-        let moved = self
-            .last_mouse
-            .is_some_and(|last| (last.0 - mouse.0).hypot(last.1 - mouse.1) > 0.25);
+    fn update(&mut self, raw: Option<RawPad>, frame: &Frame, settings: &Settings, dt: f32, ui: bool, mouse: (f32, f32), size: (f32, f32)) {
+        let moved = self.last_mouse.is_some_and(|last| (last.0 - mouse.0).hypot(last.1 - mouse.1) > 0.25);
         self.last_mouse = Some(mouse);
         if !ui || !settings.enabled || raw.is_none() {
             self.active = false;
@@ -231,12 +196,7 @@ impl Pointer {
         }
         let width = size.0.max(1.0);
         let height = size.1.max(1.0);
-        let clamp = |p: (f32, f32)| {
-            (
-                finite(p.0, width * 0.5).clamp(0.0, width - 1.0),
-                finite(p.1, height * 0.5).clamp(0.0, height - 1.0),
-            )
-        };
+        let clamp = |p: (f32, f32)| (finite(p.0, width * 0.5).clamp(0.0, width - 1.0), finite(p.1, height * 0.5).clamp(0.0, height - 1.0));
         if !self.ui {
             self.position = clamp(mouse);
         }
@@ -248,10 +208,7 @@ impl Pointer {
             (frame.held & RIGHT != 0) as i32 - (frame.held & LEFT != 0) as i32,
             (frame.held & UP != 0) as i32 - (frame.held & DOWN != 0) as i32,
         );
-        let velocity = (
-            stick.0 + fine.0 * 0.35 + digital.0 as f32,
-            stick.1 + fine.1 * 0.35 + digital.1 as f32,
-        );
+        let velocity = (stick.0 + fine.0 * 0.35 + digital.0 as f32, stick.1 + fine.1 * 0.35 + digital.1 as f32);
         let magnitude = velocity.0.hypot(velocity.1);
         let click = frame.edges & (SOUTH | WEST) != 0;
         if moved {
@@ -271,10 +228,7 @@ impl Pointer {
             if self.active {
                 let speed = (height * 0.9).clamp(350.0, 1250.0) * finite(dt, 0.0).clamp(0.0, 0.1);
                 let scale = speed / magnitude.max(1.0);
-                self.position = clamp((
-                    self.position.0 + velocity.0 * scale,
-                    self.position.1 - velocity.1 * scale,
-                ));
+                self.position = clamp((self.position.0 + velocity.0 * scale, self.position.1 - velocity.1 * scale));
             }
         }
     }
@@ -293,23 +247,12 @@ struct Controller {
 impl Controller {
     fn new() -> Self {
         // Disable the backend's default deadzone to avoid applying two curves.
-        let result = GilrsBuilder::new()
-            .with_default_filters(false)
-            .with_force_feedback(false)
-            .build();
+        let result = GilrsBuilder::new().with_default_filters(false).with_force_feedback(false).build();
         let (backend, error) = match result {
             Ok(backend) => (Some(backend), None),
             Err(error) => (None, Some(error.to_string())),
         };
-        Self {
-            backend,
-            error,
-            active: None,
-            name: None,
-            frame: Frame::default(),
-            pointer: Pointer::default(),
-            enabled: true,
-        }
+        Self { backend, error, active: None, name: None, frame: Frame::default(), pointer: Pointer::default(), enabled: true }
     }
 
     fn sample(&mut self, settings: &Settings) -> Option<RawPad> {
@@ -334,9 +277,7 @@ impl Controller {
                     }
                     edges |= button_bit(button);
                 }
-                EventType::AxisChanged(axis, value, _)
-                    if axis.is_stick() && value.abs() > settings.deadzone.max(0.3) =>
-                {
+                EventType::AxisChanged(axis, value, _) if axis.is_stick() && value.abs() > settings.deadzone.max(0.3) => {
                     if self.active != Some(event.id) {
                         self.active = Some(event.id);
                         self.frame = Frame::default();
@@ -380,22 +321,12 @@ impl Controller {
         if dpad.1 > 0.5 {
             buttons |= UP;
         }
-        let trigger = |button, axis| {
-            gamepad
-                .button_data(button)
-                .map_or_else(|| gamepad.value(axis).max(0.0), |data| data.value())
-        };
+        let trigger = |button, axis| gamepad.button_data(button).map_or_else(|| gamepad.value(axis).max(0.0), |data| data.value());
         Some(RawPad {
             buttons,
             edges,
-            left: (
-                gamepad.value(Axis::LeftStickX),
-                gamepad.value(Axis::LeftStickY),
-            ),
-            right: (
-                gamepad.value(Axis::RightStickX),
-                gamepad.value(Axis::RightStickY),
-            ),
+            left: (gamepad.value(Axis::LeftStickX), gamepad.value(Axis::LeftStickY)),
+            right: (gamepad.value(Axis::RightStickX), gamepad.value(Axis::RightStickY)),
             aim: trigger(Button::LeftTrigger2, Axis::LeftZ),
             fire: trigger(Button::RightTrigger2, Axis::RightZ),
         })
@@ -408,10 +339,7 @@ impl Controller {
         if let Some(error) = &self.error {
             return format!("CONTROLLER UNAVAILABLE: {error}");
         }
-        self.name.as_ref().map_or_else(
-            || "NO CONTROLLER CONNECTED".to_string(),
-            |name| format!("CONNECTED: {name}"),
-        )
+        self.name.as_ref().map_or_else(|| "NO CONTROLLER CONNECTED".to_string(), |name| format!("CONNECTED: {name}"))
     }
 }
 
@@ -442,15 +370,7 @@ pub fn poll(settings: &Settings, dt: f32, ui: bool) {
         let raw = controller.sample(settings).filter(|_| settings.enabled);
         controller.frame.update(raw, settings, dt, ui);
         let Controller { frame, pointer, .. } = &mut *controller;
-        pointer.update(
-            raw,
-            frame,
-            settings,
-            dt,
-            ui,
-            mq::mouse_position(),
-            (mq::screen_width(), mq::screen_height()),
-        );
+        pointer.update(raw, frame, settings, dt, ui, mq::mouse_position(), (mq::screen_width(), mq::screen_height()));
         if ui {
             mq::show_mouse(!pointer.active);
         }
@@ -527,26 +447,9 @@ pub fn draw_cursor() {
         mq::show_mouse(false);
         let s = (mq::screen_height() / 900.0).clamp(0.8, 1.6);
         let point = |dx, dy| mq::vec2(x + dx * s, y + dy * s);
-        mq::draw_triangle(
-            point(-2.0, -2.0),
-            point(-2.0, 23.0),
-            point(18.0, 14.0),
-            mq::Color::new(0.04, 0.06, 0.12, 0.95),
-        );
-        mq::draw_triangle(
-            point(0.0, 0.0),
-            point(0.0, 19.0),
-            point(14.0, 13.0),
-            mq::Color::new(0.92, 0.96, 1.0, 1.0),
-        );
-        mq::draw_line(
-            x + 5.0 * s,
-            y + 13.0 * s,
-            x + 10.0 * s,
-            y + 23.0 * s,
-            3.0 * s,
-            mq::Color::new(0.41, 0.68, 1.0, 1.0),
-        );
+        mq::draw_triangle(point(-2.0, -2.0), point(-2.0, 23.0), point(18.0, 14.0), mq::Color::new(0.04, 0.06, 0.12, 0.95));
+        mq::draw_triangle(point(0.0, 0.0), point(0.0, 19.0), point(14.0, 13.0), mq::Color::new(0.92, 0.96, 1.0, 1.0));
+        mq::draw_line(x + 5.0 * s, y + 13.0 * s, x + 10.0 * s, y + 23.0 * s, 3.0 * s, mq::Color::new(0.41, 0.68, 1.0, 1.0));
     }
 }
 
@@ -591,12 +494,7 @@ mod tests {
     fn buttons_have_single_edges_and_disconnect_releases_everything() {
         let settings = Settings::default();
         let mut frame = Frame::default();
-        let raw = RawPad {
-            buttons: SOUTH | SELECT,
-            fire: 0.8,
-            left: (0.4, 0.8),
-            ..RawPad::default()
-        };
+        let raw = RawPad { buttons: SOUTH | SELECT, fire: 0.8, left: (0.4, 0.8), ..RawPad::default() };
         frame.update(Some(raw), &settings, 0.016, false);
         assert!(frame.action(Action::Jump, true) && frame.action(Action::Fire, true));
         frame.update(Some(raw), &settings, 0.016, false);
@@ -606,38 +504,16 @@ mod tests {
         assert_eq!(frame.held | frame.edges, 0);
         assert_eq!(frame.movement, (0.0, 0.0));
         frame.update(Some(raw), &settings, 0.016, false);
-        assert!(
-            frame.action(Action::Jump, true),
-            "a reconnected device starts fresh"
-        );
-        frame.update(
-            Some(RawPad {
-                edges: WEST,
-                ..RawPad::default()
-            }),
-            &settings,
-            0.016,
-            false,
-        );
-        assert!(
-            frame.action(Action::Reload, true),
-            "a short tap must survive the polling frame"
-        );
+        assert!(frame.action(Action::Jump, true), "a reconnected device starts fresh");
+        frame.update(Some(RawPad { edges: WEST, ..RawPad::default() }), &settings, 0.016, false);
+        assert!(frame.action(Action::Reload, true), "a short tap must survive the polling frame");
         assert!(!frame.action(Action::Reload, false));
     }
 
     #[test]
     fn menus_allow_scoreboard_but_block_gameplay_actions() {
         let mut frame = Frame::default();
-        frame.update(
-            Some(RawPad {
-                buttons: SELECT | SOUTH | RT,
-                ..RawPad::default()
-            }),
-            &Settings::default(),
-            0.016,
-            true,
-        );
+        frame.update(Some(RawPad { buttons: SELECT | SOUTH | RT, ..RawPad::default() }), &Settings::default(), 0.016, true);
         assert!(frame.action(Action::Scoreboard, false));
         assert!(!frame.action(Action::Jump, false));
         assert!(!frame.action(Action::Fire, false));
@@ -646,23 +522,10 @@ mod tests {
     #[test]
     fn trigger_hysteresis_prevents_repeated_fire_edges() {
         let mut frame = Frame::default();
-        for (value, held, edge) in [
-            (0.29, false, false),
-            (0.31, true, true),
-            (0.27, true, false),
-            (0.23, true, false),
-            (0.21, false, false),
-            (0.31, true, true),
-        ] {
-            frame.update(
-                Some(RawPad {
-                    fire: value,
-                    ..RawPad::default()
-                }),
-                &Settings::default(),
-                0.016,
-                false,
-            );
+        for (value, held, edge) in
+            [(0.29, false, false), (0.31, true, true), (0.27, true, false), (0.23, true, false), (0.21, false, false), (0.31, true, true)]
+        {
+            frame.update(Some(RawPad { fire: value, ..RawPad::default() }), &Settings::default(), 0.016, false);
             assert_eq!(frame.action(Action::Fire, false), held);
             assert_eq!(frame.action(Action::Fire, true), edge);
         }
@@ -671,12 +534,7 @@ mod tests {
     #[test]
     fn look_uses_elapsed_time_and_inversion_and_disabled_input_is_neutral() {
         let mut frame = Frame::default();
-        let raw = RawPad {
-            buttons: SOUTH,
-            right: (0.0, 1.0),
-            left: (1.0, 0.0),
-            ..RawPad::default()
-        };
+        let raw = RawPad { buttons: SOUTH, right: (0.0, 1.0), left: (1.0, 0.0), ..RawPad::default() };
         let mut settings = Settings::default();
         frame.update(Some(raw), &settings, 0.02, false);
         assert!((frame.look.1 - 0.056).abs() < 0.0001);
@@ -689,63 +547,25 @@ mod tests {
         assert_eq!(frame.look, (0.0, 0.0));
         assert_eq!(frame.movement, (0.0, 0.0));
         frame.update(None, &Settings::default(), 0.02, false);
-        assert!(
-            !frame.action(Action::Jump, false),
-            "no device leaves keyboard/mouse control alone"
-        );
+        assert!(!frame.action(Action::Jump, false), "no device leaves keyboard/mouse control alone");
     }
 
     #[test]
     fn sprint_toggles_and_clears_on_idle_aim_or_crouch() {
         let settings = Settings::default();
         let mut frame = Frame::default();
-        let moving = RawPad {
-            left: (0.0, 1.0),
-            ..RawPad::default()
-        };
-        frame.update(
-            Some(RawPad {
-                buttons: L3,
-                ..moving
-            }),
-            &settings,
-            0.016,
-            false,
-        );
+        let moving = RawPad { left: (0.0, 1.0), ..RawPad::default() };
+        frame.update(Some(RawPad { buttons: L3, ..moving }), &settings, 0.016, false);
         assert!(frame.action(Action::Sprint, false));
         frame.update(Some(moving), &settings, 0.016, false);
         assert!(frame.action(Action::Sprint, false));
         frame.update(Some(RawPad { aim: 1.0, ..moving }), &settings, 0.016, false);
         assert!(!frame.sprint);
-        frame.update(
-            Some(RawPad {
-                buttons: L3,
-                ..moving
-            }),
-            &settings,
-            0.016,
-            false,
-        );
+        frame.update(Some(RawPad { buttons: L3, ..moving }), &settings, 0.016, false);
         assert!(frame.sprint);
-        frame.update(
-            Some(RawPad {
-                buttons: EAST,
-                ..moving
-            }),
-            &settings,
-            0.016,
-            false,
-        );
+        frame.update(Some(RawPad { buttons: EAST, ..moving }), &settings, 0.016, false);
         assert!(!frame.sprint);
-        frame.update(
-            Some(RawPad {
-                buttons: L3,
-                ..moving
-            }),
-            &settings,
-            0.016,
-            false,
-        );
+        frame.update(Some(RawPad { buttons: L3, ..moving }), &settings, 0.016, false);
         frame.update(Some(RawPad::default()), &settings, 0.016, false);
         assert!(!frame.sprint);
     }
@@ -753,77 +573,23 @@ mod tests {
     #[test]
     fn ui_pointer_is_bounded_and_mouse_takes_over_until_stick_returns_to_idle() {
         let settings = Settings::default();
-        let raw = RawPad {
-            left: (1.0, 1.0),
-            ..RawPad::default()
-        };
+        let raw = RawPad { left: (1.0, 1.0), ..RawPad::default() };
         let mut frame = Frame::default();
         let mut pointer = Pointer::default();
         frame.update(Some(raw), &settings, 0.1, true);
-        pointer.update(
-            Some(raw),
-            &frame,
-            &settings,
-            0.1,
-            true,
-            (790.0, 10.0),
-            (800.0, 600.0),
-        );
+        pointer.update(Some(raw), &frame, &settings, 0.1, true, (790.0, 10.0), (800.0, 600.0));
         assert!(pointer.active);
         assert!(pointer.position.0 <= 799.0 && pointer.position.1 >= 0.0);
         assert_eq!(frame.movement, (0.0, 0.0));
         assert!(!frame.action(Action::Jump, false));
-        pointer.update(
-            Some(raw),
-            &frame,
-            &settings,
-            0.1,
-            true,
-            (400.0, 300.0),
-            (800.0, 600.0),
-        );
+        pointer.update(Some(raw), &frame, &settings, 0.1, true, (400.0, 300.0), (800.0, 600.0));
         assert!(!pointer.active);
-        pointer.update(
-            Some(raw),
-            &frame,
-            &settings,
-            0.1,
-            true,
-            (400.0, 300.0),
-            (800.0, 600.0),
-        );
-        assert!(
-            !pointer.active,
-            "held stick cannot steal the physical mouse"
-        );
-        pointer.update(
-            Some(RawPad::default()),
-            &frame,
-            &settings,
-            0.1,
-            true,
-            (400.0, 300.0),
-            (800.0, 600.0),
-        );
-        pointer.update(
-            Some(raw),
-            &frame,
-            &settings,
-            0.1,
-            true,
-            (400.0, 300.0),
-            (800.0, 600.0),
-        );
+        pointer.update(Some(raw), &frame, &settings, 0.1, true, (400.0, 300.0), (800.0, 600.0));
+        assert!(!pointer.active, "held stick cannot steal the physical mouse");
+        pointer.update(Some(RawPad::default()), &frame, &settings, 0.1, true, (400.0, 300.0), (800.0, 600.0));
+        pointer.update(Some(raw), &frame, &settings, 0.1, true, (400.0, 300.0), (800.0, 600.0));
         assert!(pointer.active);
-        pointer.update(
-            None,
-            &Frame::default(),
-            &settings,
-            0.1,
-            true,
-            (400.0, 300.0),
-            (800.0, 600.0),
-        );
+        pointer.update(None, &Frame::default(), &settings, 0.1, true, (400.0, 300.0), (800.0, 600.0));
         assert!(!pointer.active);
     }
 }

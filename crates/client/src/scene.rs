@@ -38,7 +38,9 @@ fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
 /// Ground colour at `c`: the map's palette, worn to dirt around its
 /// objectives and to rock on slopes.
 fn ground_col(w: &World, c: Vec3, n: Vec3, jitter: f32) -> Col {
-    if w.map == slag_cathedral::ID { return slag_cathedral::ground(w, c, n, jitter); }
+    if w.map == slag_cathedral::ID {
+        return slag_cathedral::ground(w, c, n, jitter);
+    }
     let [grass, dry, dirt] = map_def(w.map).ground;
     let patch = vnoise(c.x / 24.0, c.z / 24.0, w.seed as u32 ^ 7);
     let mut col = mix3(grass, dry, smooth(0.3, 0.75, patch));
@@ -186,9 +188,7 @@ pub fn build_world(w: &World) -> Mesh {
     // walls stay where the sim put them.
     const SMOOTH: f32 = 0.05;
     let smooth = if w.map == slag_cathedral::ID { 0.0 } else { SMOOTH }; // a cast floor stays flat
-    let hg = |ix: isize, iz: isize| {
-        w.heights[iz.clamp(0, TNZ as isize) as usize * (TNX + 1) + ix.clamp(0, TNX as isize) as usize]
-    };
+    let hg = |ix: isize, iz: isize| w.heights[iz.clamp(0, TNZ as isize) as usize * (TNX + 1) + ix.clamp(0, TNX as isize) as usize];
     let cr = |a: f32, b: f32, c: f32, d: f32| (-a + 9.0 * b + 9.0 * c - d) / 16.0;
     let (fnx, fnz) = (TNX * 2, TNZ * 2);
     let mut fine = Vec::with_capacity((fnx + 1) * (fnz + 1));
@@ -203,17 +203,12 @@ pub fn build_world(w: &World) -> Mesh {
                 (0, 0) => (hg(ix, iz), hg(ix, iz)),
                 (1, 0) => (along_x(iz), (hg(ix, iz) + hg(ix + 1, iz)) * 0.5),
                 (0, 1) => (along_z(ix), (hg(ix, iz) + hg(ix, iz + 1)) * 0.5),
-                _ => (
-                    cr(along_x(iz - 1), along_x(iz), along_x(iz + 1), along_x(iz + 2)),
-                    (hg(ix + 1, iz) + hg(ix, iz + 1)) * 0.5,
-                ),
+                _ => (cr(along_x(iz - 1), along_x(iz), along_x(iz + 1), along_x(iz + 2)), (hg(ix + 1, iz) + hg(ix, iz + 1)) * 0.5),
             };
             fine.push(walked + (curved - walked).clamp(-smooth, smooth));
         }
     }
-    let hp = |fx: usize, fz: usize| {
-        vec3(TER_X0 + fx as f32 * CELL * 0.5, fine[fz * (fnx + 1) + fx], TER_Z0 + fz as f32 * CELL * 0.5)
-    };
+    let hp = |fx: usize, fz: usize| vec3(TER_X0 + fx as f32 * CELL * 0.5, fine[fz * (fnx + 1) + fx], TER_Z0 + fz as f32 * CELL * 0.5);
     for iz in 0..fnz {
         for ix in 0..fnx {
             let (p00, p10, p01, p11) = (hp(ix, iz), hp(ix + 1, iz), hp(ix, iz + 1), hp(ix + 1, iz + 1));
@@ -230,12 +225,25 @@ pub fn build_world(w: &World) -> Mesh {
     for (i, b) in w.blocks.iter().enumerate() {
         // Breakable route pieces and cabinets are drawn from the current mask
         // every frame, just like crates; none can survive in the static mesh.
-        if b.dest.is_some() { continue; }
-        if w.map == fallen_giant::ID && ferrite_shared::map::fallen_giant::owns(b) { fallen_giant::block(&mut m, b); continue; }
+        if b.dest.is_some() {
+            continue;
+        }
+        if w.map == fallen_giant::ID && ferrite_shared::map::fallen_giant::owns(b) {
+            fallen_giant::block(&mut m, b);
+            continue;
+        }
         let g = groups[i]; // shade of the group, so coplanar faces match
-        if w.map == slag_cathedral::ID { slag_cathedral::block(&mut m, b, g); continue; }
-        if w.map == relay::ID && relay::owns(b) { continue; }
-        if landmarks::owns(w, b) { landmarks::block(&mut m, w, b); continue; }
+        if w.map == slag_cathedral::ID {
+            slag_cathedral::block(&mut m, b, g);
+            continue;
+        }
+        if w.map == relay::ID && relay::owns(b) {
+            continue;
+        }
+        if landmarks::owns(w, b) {
+            landmarks::block(&mut m, w, b);
+            continue;
+        }
         let j = 0.9 + 0.2 * hash01(g as u32, 91);
         match b.kind {
             BlockKind::Crate => {}
@@ -243,9 +251,17 @@ pub fn build_world(w: &World) -> Mesh {
                 let k = j * (0.92 + 0.05 * b.tint as f32);
                 m.cuboid(b.min, b.max, rgb(0.63 * k, 0.61 * k, 0.57 * k));
                 // weathered cap
-                m.cuboid(vec3(b.min.x - 0.04, b.max.y - 0.12, b.min.z - 0.04), b.max + vec3(0.04, 0.02, 0.04), rgb(0.5 * k, 0.48 * k, 0.45 * k));
+                m.cuboid(
+                    vec3(b.min.x - 0.04, b.max.y - 0.12, b.min.z - 0.04),
+                    b.max + vec3(0.04, 0.02, 0.04),
+                    rgb(0.5 * k, 0.48 * k, 0.45 * k),
+                );
                 let g = b.min.y + 0.6;
-                m.cuboid(vec3(b.min.x - 0.06, g, b.min.z - 0.06), vec3(b.max.x + 0.06, g + 0.35, b.max.z + 0.06), rgb(0.55 * k, 0.53 * k, 0.5 * k));
+                m.cuboid(
+                    vec3(b.min.x - 0.06, g, b.min.z - 0.06),
+                    vec3(b.max.x + 0.06, g + 0.35, b.max.z + 0.06),
+                    rgb(0.55 * k, 0.53 * k, 0.5 * k),
+                );
             }
             BlockKind::Step => {
                 let k = 0.9 + 0.08 * b.tint as f32;
@@ -287,7 +303,11 @@ pub fn build_world(w: &World) -> Mesh {
                 m.cuboid(b.min, b.max, rgb(0.33 * k, 0.31 * k, 0.32 * k));
                 if b.max.y - b.min.y > 8.0 {
                     // chimney hazard band
-                    m.cuboid(vec3(b.min.x - 0.05, b.max.y - 1.6, b.min.z - 0.05), vec3(b.max.x + 0.05, b.max.y - 0.8, b.max.z + 0.05), rgb(0.85, 0.38, 0.12));
+                    m.cuboid(
+                        vec3(b.min.x - 0.05, b.max.y - 1.6, b.min.z - 0.05),
+                        vec3(b.max.x + 0.05, b.max.y - 0.8, b.max.z + 0.05),
+                        rgb(0.85, 0.38, 0.12),
+                    );
                 }
             }
             BlockKind::Trunk => {}
@@ -313,8 +333,7 @@ pub fn build_world(w: &World) -> Mesh {
 }
 
 /// Leaf colours a broadleaf tree's `tint` picks from.
-pub const LEAF: [[f32; 3]; 5] =
-    [[0.74, 0.33, 0.13], [0.86, 0.57, 0.16], [0.63, 0.20, 0.15], [0.42, 0.47, 0.20], [0.24, 0.40, 0.25]];
+pub const LEAF: [[f32; 3]; 5] = [[0.74, 0.33, 0.13], [0.86, 0.57, 0.16], [0.63, 0.20, 0.15], [0.42, 0.47, 0.20], [0.24, 0.40, 0.25]];
 
 /// One tree. `i` is its index: mirrored pairs share a turn.
 fn tree(m: &mut Mesh, t: &Tree, i: usize) {
@@ -338,8 +357,20 @@ fn tree(m: &mut Mesh, t: &Tree, i: usize) {
             let c = rgb(lc[0], lc[1], lc[2]);
             let cen = t.base + vec3(0.0, t.height * 0.72, 0.0);
             octa(m, cen, vec3(t.radius, t.height * 0.34, t.radius), r, c);
-            octa(m, cen + vec3(r.cos(), -0.8, r.sin()) * t.radius * 0.55, vec3(t.radius * 0.6, t.height * 0.2, t.radius * 0.6), r * 2.0, shade(c, 0.88));
-            octa(m, cen + vec3(-r.sin(), 0.5, r.cos()) * t.radius * 0.5, vec3(t.radius * 0.5, t.height * 0.17, t.radius * 0.5), r * 3.0, shade(c, 1.08));
+            octa(
+                m,
+                cen + vec3(r.cos(), -0.8, r.sin()) * t.radius * 0.55,
+                vec3(t.radius * 0.6, t.height * 0.2, t.radius * 0.6),
+                r * 2.0,
+                shade(c, 0.88),
+            );
+            octa(
+                m,
+                cen + vec3(-r.sin(), 0.5, r.cos()) * t.radius * 0.5,
+                vec3(t.radius * 0.5, t.height * 0.17, t.radius * 0.5),
+                r * 3.0,
+                shade(c, 1.08),
+            );
             // a branch reaching to the side blob
             let b0 = t.base + vec3(0.0, th * 0.8, 0.0);
             let b1 = cen + vec3(r.cos(), -0.8, r.sin()) * t.radius * 0.5;
@@ -374,11 +405,21 @@ fn build_ground_cover(m: &mut Mesh, w: &World) {
         if k % 10 == 0 {
             let s = 0.07 + 0.13 * hash01(k, 5);
             let g = 0.4 + 0.14 * hash01(k, 8);
-            taper(m, base + vec3(-s, -0.04, -s * 0.8), base + vec3(s, s * 0.8, s * 0.8), 1.0, 0.6, Vec3::ZERO, Vec3::ZERO, rgb(g, g * 0.95, g * 0.9));
+            taper(
+                m,
+                base + vec3(-s, -0.04, -s * 0.8),
+                base + vec3(s, s * 0.8, s * 0.8),
+                1.0,
+                0.6,
+                Vec3::ZERO,
+                Vec3::ZERO,
+                rgb(g, g * 0.95, g * 0.9),
+            );
             continue;
         }
         let gc = ground_col(w, base, n, hash01(k, 4));
-        let col = if hash01(k, 6) < 0.3 { rgb(gc[0] * 1.12, gc[1] * 1.05, gc[2] * 0.9) } else { rgb(gc[0] * 0.82, gc[1] * 0.98, gc[2] * 0.74) };
+        let col =
+            if hash01(k, 6) < 0.3 { rgb(gc[0] * 1.12, gc[1] * 1.05, gc[2] * 0.9) } else { rgb(gc[0] * 0.82, gc[1] * 0.98, gc[2] * 0.74) };
         let blades = 3 + (hash01(k, 7) * 3.0) as u32;
         for b in 0..blades {
             let a = hash01(k, 20 + b) * std::f32::consts::TAU;
@@ -481,7 +522,6 @@ pub fn build_sky() -> Mesh {
     m
 }
 
-
 pub fn crates(m: &mut Mesh, w: &World, dmask: u64) {
     for (i, b) in w.blocks.iter().enumerate() {
         if b.kind != BlockKind::Crate || !w.solid(i, dmask) {
@@ -555,7 +595,13 @@ pub fn pickup(m: &mut Mesh, add: &mut Mesh, pos: Vec3, kind: u8, time: f32, seed
         let d = vec3(dx, 0.0, dz);
         let lo = [c[0], c[1], c[2], 0.42 * pulse];
         let hi = [c[0], c[1], c[2], 0.0];
-        add.quad_c(pos - d + vec3(0.0, 0.05, 0.0), pos + d + vec3(0.0, 0.05, 0.0), pos + d + vec3(0.0, 5.0, 0.0), pos - d + vec3(0.0, 5.0, 0.0), [lo, lo, hi, hi]);
+        add.quad_c(
+            pos - d + vec3(0.0, 0.05, 0.0),
+            pos + d + vec3(0.0, 0.05, 0.0),
+            pos + d + vec3(0.0, 5.0, 0.0),
+            pos - d + vec3(0.0, 5.0, 0.0),
+            [lo, lo, hi, hi],
+        );
     }
 }
 
@@ -588,7 +634,13 @@ pub fn flag(m: &mut Mesh, add: &mut Mesh, pos: Vec3, team: u8, carried: bool, ti
             let d = vec3(dx, 0.0, dz);
             let lo = [c[0], c[1], c[2], 0.3];
             let hi = [c[0], c[1], c[2], 0.0];
-            add.quad_c(pos - d + vec3(0.0, 3.4, 0.0), pos + d + vec3(0.0, 3.4, 0.0), pos + d + vec3(0.0, 46.0, 0.0), pos - d + vec3(0.0, 46.0, 0.0), [lo, lo, hi, hi]);
+            add.quad_c(
+                pos - d + vec3(0.0, 3.4, 0.0),
+                pos + d + vec3(0.0, 3.4, 0.0),
+                pos + d + vec3(0.0, 46.0, 0.0),
+                pos - d + vec3(0.0, 46.0, 0.0),
+                [lo, lo, hi, hi],
+            );
         }
     }
 }
@@ -597,8 +649,12 @@ pub fn flag(m: &mut Mesh, add: &mut Mesh, pos: Vec3, team: u8, carried: bool, ti
 /// from across the map. An owner of 255 hides that objective (modes that
 /// do not use it).
 pub fn beacons(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, owners: &[(u8, f32, bool)], time: f32, dmask: u64) {
-    if w.map == slag_cathedral::ID { slag_cathedral::atmosphere(alpha, add, w, time); }
-    if w.map == relay::ID { relay::atmosphere(m, alpha, add, w, time); }
+    if w.map == slag_cathedral::ID {
+        slag_cathedral::atmosphere(alpha, add, w, time);
+    }
+    if w.map == relay::ID {
+        relay::atmosphere(m, alpha, add, w, time);
+    }
     landmarks::features(m, alpha, add, w, dmask, time);
     landmarks::atmosphere(m, alpha, add, w, time, dmask);
     special_landmarks::atmosphere(m, alpha, add, w, time);
@@ -610,7 +666,13 @@ pub fn beacons(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, owners
         let c = w.points[k];
         let oc = team_col(owner);
         // progress colour: who is currently winning the tug
-        let lead = if progress > 0.02 { 1 } else if progress < -0.02 { 0 } else { NEUTRAL };
+        let lead = if progress > 0.02 {
+            1
+        } else if progress < -0.02 {
+            0
+        } else {
+            NEUTRAL
+        };
         let pc = team_col(lead);
         let pulse = if contested { 0.6 + 0.4 * (time * 7.0).sin() } else { 1.0 };
         m.cuboid(c + vec3(-0.09, 0.0, -0.09), c + vec3(0.09, 8.0, 0.09), rgb(0.9, 0.9, 0.88));
@@ -641,11 +703,16 @@ pub fn beacons(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, owners
             let d = vec3(dx, 0.0, dz);
             let lo = [oc[0], oc[1], oc[2], 0.22 * pulse];
             let hi = [oc[0], oc[1], oc[2], 0.0];
-            add.quad_c(c - d + vec3(0.0, 8.0, 0.0), c + d + vec3(0.0, 8.0, 0.0), c + d + vec3(0.0, 60.0, 0.0), c - d + vec3(0.0, 60.0, 0.0), [lo, lo, hi, hi]);
+            add.quad_c(
+                c - d + vec3(0.0, 8.0, 0.0),
+                c + d + vec3(0.0, 8.0, 0.0),
+                c + d + vec3(0.0, 60.0, 0.0),
+                c - d + vec3(0.0, 60.0, 0.0),
+                [lo, lo, hi, hi],
+            );
         }
     }
 }
-
 
 /// Box stretched from `a` to `b` (a forearm, a thigh...).
 fn limb(m: &mut Mesh, g: &Mat4, a: Vec3, b: Vec3, r: f32, round: bool, col: Col) {
@@ -666,7 +733,6 @@ fn limb(m: &mut Mesh, g: &Mat4, a: Vec3, b: Vec3, r: f32, round: bool, col: Col)
     }
 }
 
-
 #[path = "scene/players.rs"]
 mod players;
 #[path = "scene/weapons.rs"]
@@ -674,15 +740,15 @@ mod weapons;
 pub use players::*;
 pub use weapons::*;
 
-#[path = "scene/slag_cathedral.rs"]
-mod slag_cathedral;
-#[path = "scene/relay.rs"]
-mod relay;
+#[path = "scene/fallen_giant.rs"]
+mod fallen_giant;
 #[path = "scene/flora.rs"]
 mod flora;
 #[path = "scene/landmarks.rs"]
 mod landmarks;
+#[path = "scene/relay.rs"]
+mod relay;
+#[path = "scene/slag_cathedral.rs"]
+mod slag_cathedral;
 #[path = "scene/special_landmarks.rs"]
 mod special_landmarks;
-#[path = "scene/fallen_giant.rs"]
-mod fallen_giant;

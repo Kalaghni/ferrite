@@ -37,10 +37,34 @@ pub struct ModeDef {
 }
 
 pub static MODES: [ModeDef; 4] = [
-    ModeDef { name: "CONQUEST", key: "conquest", pace: "LONG", blurb: "Five points taken in order along one front line. Tickets decide it.", brief: "TAKE THE LINE" },
-    ModeDef { name: "TEAM DEATHMATCH", key: "tdm", pace: "FAST", blurb: "No objectives. Forward spawns, quick redeploys, first side to the kill target.", brief: "FIRST TO THE KILL TARGET" },
-    ModeDef { name: "CAPTURE THE FLAG", key: "ctf", pace: "SLOW", blurb: "Take their flag from B or D and carry it back to your own. Three captures win.", brief: "BRING THEIR FLAG HOME" },
-    ModeDef { name: "STRONGHOLD", key: "stronghold", pace: "MEDIUM", blurb: "One point in the middle. Every second you hold it scores.", brief: "HOLD THE CENTRE" },
+    ModeDef {
+        name: "CONQUEST",
+        key: "conquest",
+        pace: "LONG",
+        blurb: "Five points taken in order along one front line. Tickets decide it.",
+        brief: "TAKE THE LINE",
+    },
+    ModeDef {
+        name: "TEAM DEATHMATCH",
+        key: "tdm",
+        pace: "FAST",
+        blurb: "No objectives. Forward spawns, quick redeploys, first side to the kill target.",
+        brief: "FIRST TO THE KILL TARGET",
+    },
+    ModeDef {
+        name: "CAPTURE THE FLAG",
+        key: "ctf",
+        pace: "SLOW",
+        blurb: "Take their flag from B or D and carry it back to your own. Three captures win.",
+        brief: "BRING THEIR FLAG HOME",
+    },
+    ModeDef {
+        name: "STRONGHOLD",
+        key: "stronghold",
+        pace: "MEDIUM",
+        blurb: "One point in the middle. Every second you hold it scores.",
+        brief: "HOLD THE CENTRE",
+    },
 ];
 
 pub fn mode_def(m: u8) -> &'static ModeDef {

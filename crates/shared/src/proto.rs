@@ -102,7 +102,8 @@ pub mod pickup {
     pub const OVERDRIVE: u8 = 3;
     pub const OVERCHARGE: u8 = 4;
     pub const NAMES: [&str; 5] = ["HEALTH PACK", "ARMOUR", "RESUPPLY", "OVERDRIVE", "OVERCHARGE"];
-    pub const BLURBS: [&str; 5] = ["+60 health", "+50 armour", "ammunition and frags refilled", "move and reload faster", "half again the damage"];
+    pub const BLURBS: [&str; 5] =
+        ["+60 health", "+50 armour", "ammunition and frags refilled", "move and reload faster", "half again the damage"];
 }
 
 /// What happened to a flag (`Feed::Flag::what`).
@@ -196,43 +197,89 @@ pub enum C2S {
     /// `team`: 0 or 1 to ask for a side, anything else for auto-balance.
     /// `uuid`: who this is, whatever callsign they use today (all zeros =
     /// nobody in particular). `icon`: empty, or `ICON_BYTES` of RGBA.
-    Hello { proto: u32, name: String, spectator: bool, team: u8, uuid: [u8; 16], icon: Vec<u8> },
+    Hello {
+        proto: u32,
+        name: String,
+        spectator: bool,
+        team: u8,
+        uuid: [u8; 16],
+        icon: Vec<u8>,
+    },
     /// `kit`, `prim`, `side`: the loadout wanted at the next deploy, and
     /// `wskin` the finish on the primary and the sidearm. `ack_chat`: the
     /// newest chat line received.
-    Cmds { cmds: Vec<Cmd>, ack_feed: u32, kit: u8, prim: u8, side: u8, skin: u8, wskin: [u8; 2], ack_chat: u32 },
+    Cmds {
+        cmds: Vec<Cmd>,
+        ack_feed: u32,
+        kit: u8,
+        prim: u8,
+        side: u8,
+        skin: u8,
+        wskin: [u8; 2],
+        ack_chat: u32,
+    },
     Bye,
     /// Ask to change sides mid-match.
     Team(u8),
     /// In the lobby: the map voted for (255 = no vote), whether ready, and
     /// the game mode voted for (255 = no vote).
-    Lobby { vote: u8, ready: bool, mode: u8 },
+    Lobby {
+        vote: u8,
+        ready: bool,
+        mode: u8,
+    },
     /// Say something, to everyone or to our own side. `id` goes up by one
     /// per message, so a repeat of the same datagram is said only once.
-    Chat { id: u32, team: bool, text: String },
+    Chat {
+        id: u32,
+        team: bool,
+        text: String,
+    },
     /// Ask for a player's icon (answered with `S2C::Icon`).
     WantIcon(u8),
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum S2C {
-    Welcome { id: u8, team: u8, seed: u64, map: u8, feed_id: u32, tick: u32 },
+    Welcome {
+        id: u8,
+        team: u8,
+        seed: u64,
+        map: u8,
+        feed_id: u32,
+        tick: u32,
+    },
     Snap(Snapshot),
     /// The roster, `ROSTER_PART` entries at a time: `at` is the index of
     /// the first entry here, `total` how many there are in all.
-    Roster { at: u8, total: u8, entries: Vec<RosterEntry> },
+    Roster {
+        at: u8,
+        total: u8,
+        entries: Vec<RosterEntry>,
+    },
     Reject(String),
     /// Chat lines the client has not acknowledged yet, oldest first.
     Chat(Vec<ChatLine>),
     /// Who wears an icon: (player id, icon hash). Anyone absent has none.
     Icons(Vec<(u8, u32)>),
-    Icon { id: u8, hash: u32, rgba: Vec<u8> },
+    Icon {
+        id: u8,
+        hash: u32,
+        rgba: Vec<u8>,
+    },
     /// Rounds won by each team since the server started, and the most
     /// recent finished rounds, oldest first.
-    Rounds { wins: [u16; 2], rounds: Vec<RoundResult> },
+    Rounds {
+        wins: [u16; 2],
+        rounds: Vec<RoundResult>,
+    },
     /// Credits this player earned in round `round` (resent while the
     /// result is on screen; the round number says which it is).
-    Award { round: u32, credits: u32, won: bool },
+    Award {
+        round: u32,
+        credits: u32,
+        won: bool,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
@@ -288,18 +335,45 @@ pub struct SelfState {
 /// Cosmetic, sent once. Losing one costs a tracer, not game state.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 pub enum Fx {
-    Shot { who: u8, from: [f32; 3], to: [f32; 3], hit: u8 },
-    Hit { attacker: u8, victim: u8, dmg: u8, head: bool, kill: bool },
-    Boom { pos: [f32; 3] },
-    CrateBreak { pos: [f32; 3] },
-    Throw { who: u8 },
+    Shot {
+        who: u8,
+        from: [f32; 3],
+        to: [f32; 3],
+        hit: u8,
+    },
+    Hit {
+        attacker: u8,
+        victim: u8,
+        dmg: u8,
+        head: bool,
+        kill: bool,
+    },
+    Boom {
+        pos: [f32; 3],
+    },
+    CrateBreak {
+        pos: [f32; 3],
+    },
+    Throw {
+        who: u8,
+    },
     /// A melee swing, and whether it landed.
-    Swing { who: u8, hit: bool },
+    Swing {
+        who: u8,
+        hit: bool,
+    },
     /// Someone picked something up (`pickup::*`).
-    Pickup { who: u8, kind: u8, pos: [f32; 3] },
+    Pickup {
+        who: u8,
+        kind: u8,
+        pos: [f32; 3],
+    },
     /// A designated wall panel, walkway or machine changed state. The
     /// persistent state is in Snapshot::dmask; this only adds debris/sound.
-    MapBreak { kind: u8, pos: [f32; 3] },
+    MapBreak {
+        kind: u8,
+        pos: [f32; 3],
+    },
 }
 
 /// One line of chat. `seq` counts up across the whole server.
@@ -320,19 +394,44 @@ pub struct ChatLine {
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 pub enum Feed {
     /// `assist`: who else did real damage, or SPECTATOR_ID for nobody.
-    Kill { killer: u8, victim: u8, weapon: u8, head: bool, assist: u8 },
-    Capture { point: u8, team: u8 },
-    Neutralized { point: u8, by: u8 },
-    MatchEnd { winner: u8 },
+    Kill {
+        killer: u8,
+        victim: u8,
+        weapon: u8,
+        head: bool,
+        assist: u8,
+    },
+    Capture {
+        point: u8,
+        team: u8,
+    },
+    Neutralized {
+        point: u8,
+        by: u8,
+    },
+    MatchEnd {
+        winner: u8,
+    },
     MatchStart,
     /// Flag `flag` (the team it belongs to) was taken, dropped, returned
     /// or captured (`flag_ev::*`) by player `by` (SPECTATOR_ID: nobody,
     /// it went home on its own).
-    Flag { flag: u8, by: u8, what: u8 },
+    Flag {
+        flag: u8,
+        by: u8,
+        what: u8,
+    },
     /// `who` has `n` kills without dying.
-    Streak { who: u8, n: u8 },
+    Streak {
+        who: u8,
+        n: u8,
+    },
     /// `by` ended `victim`'s streak of `n`.
-    Shutdown { by: u8, victim: u8, n: u8 },
+    Shutdown {
+        by: u8,
+        victim: u8,
+        n: u8,
+    },
 }
 
 /// A flag in capture-the-flag. `state`: 0 at home, 1 carried, 2 dropped.
@@ -458,10 +557,7 @@ pub struct RoundResult {
 }
 
 fn opts() -> impl Options {
-    bincode::DefaultOptions::new()
-        .with_fixint_encoding()
-        .allow_trailing_bytes()
-        .with_limit(64 * 1024)
+    bincode::DefaultOptions::new().with_fixint_encoding().allow_trailing_bytes().with_limit(64 * 1024)
 }
 
 pub fn encode<T: Serialize>(v: &T) -> Vec<u8> {

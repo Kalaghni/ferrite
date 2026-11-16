@@ -35,17 +35,7 @@ fn walk_to(st: &mut PState, w: &World, seq: &mut u32, target: (f32, f32)) -> boo
             return true;
         }
         *seq += 1;
-        sim::step(
-            st,
-            &Cmd {
-                seq: *seq,
-                mz: 1,
-                yaw: d.x.atan2(d.y),
-                ..Default::default()
-            },
-            w,
-            0,
-        );
+        sim::step(st, &Cmd { seq: *seq, mz: 1, yaw: d.x.atan2(d.y), ..Default::default() }, w, 0);
         assert!(st.pos.is_finite());
     }
     false
@@ -67,24 +57,13 @@ fn every_tower_stair_is_walked_to_its_deck_without_jumping() {
             for j in 0..flights {
                 let (_, b, foot) = relay::flight(flights, j);
                 let (tx, tz) = at(CORNERS[b].0, CORNERS[b].1);
-                assert!(
-                    walk_to(&mut st, &w, &mut seq, (tx, tz)),
-                    "seed {seed:x}: tower {x},{z} flight {j} stalled at {:?}",
-                    st.pos
-                );
+                assert!(walk_to(&mut st, &w, &mut seq, (tx, tz)), "seed {seed:x}: tower {x},{z} flight {j} stalled at {:?}", st.pos);
                 let want = base + foot + relay::FLIGHT_RISE;
-                assert!(
-                    (st.pos.y - want).abs() < 0.05,
-                    "seed {seed:x}: tower {x},{z} flight {j} ended at {} not {want}",
-                    st.pos.y
-                );
+                assert!((st.pos.y - want).abs() < 0.05, "seed {seed:x}: tower {x},{z} flight {j} ended at {} not {want}", st.pos.y);
             }
             // Step off the arrival corner onto the deck and cross to a parapet.
             for target in [at(0.0, -1.85), at(1.85, 0.0)] {
-                assert!(
-                    walk_to(&mut st, &w, &mut seq, target),
-                    "seed {seed:x}: deck of {x},{z} is not walkable"
-                );
+                assert!(walk_to(&mut st, &w, &mut seq, target), "seed {seed:x}: deck of {x},{z} is not walkable");
                 assert!((st.pos.y - deck).abs() < 0.05);
             }
             // Headroom to stand anywhere on the deck's two covered sides.
@@ -126,15 +105,7 @@ fn deck_rails_and_parapets_keep_a_walking_player_on_the_tower() {
                 let mut seq = 0;
                 for _ in 0..12 {
                     seq += 1;
-                    sim::step(
-                        &mut st,
-                        &Cmd {
-                            seq,
-                            ..Default::default()
-                        },
-                        &w,
-                        0,
-                    );
+                    sim::step(&mut st, &Cmd { seq, ..Default::default() }, &w, 0);
                 }
                 let (tx, tz) = at(toward.0, toward.1);
                 let _ = walk_to(&mut st, &w, &mut seq, (tx, tz));
@@ -156,28 +127,15 @@ fn towers_are_mirrored_vantage_points_clear_of_objectives_and_spawns() {
         let all = towers();
         for &(x, z, flights, rot, side) in &all {
             // Its mirror exists, with the same climb and the same foundation.
-            assert!(all.iter().any(|&(mx, mz, mf, mr, ms)| mx == -x
-                && mz == -z
-                && mf == flights
-                && mr == rot
-                && ms == -side));
-            assert!(
-                (relay::pad_top(&w, x, z) - relay::pad_top(&w, -x, -z)).abs() < 0.03,
-                "seed {seed:x}: uneven tower sites"
-            );
+            assert!(all.iter().any(|&(mx, mz, mf, mr, ms)| mx == -x && mz == -z && mf == flights && mr == rot && ms == -side));
+            assert!((relay::pad_top(&w, x, z) - relay::pad_top(&w, -x, -z)).abs() < 0.03, "seed {seed:x}: uneven tower sites");
             assert!(nav.is_blocked(x, z), "bots must route round a tower");
             for (i, p) in w.points.iter().enumerate() {
                 let d = vec2(p.x - x, p.z - z).length();
-                assert!(
-                    d > 9.0,
-                    "seed {seed:x}: tower {x},{z} crowds point {i} ({d:.1} m)"
-                );
+                assert!(d > 9.0, "seed {seed:x}: tower {x},{z} crowds point {i} ({d:.1} m)");
             }
             for p in &w.bases {
-                assert!(
-                    vec2(p.x - x, p.z - z).length() > 40.0,
-                    "a tower overlooks a spawn too closely"
-                );
+                assert!(vec2(p.x - x, p.z - z).length() > 40.0, "a tower overlooks a spawn too closely");
             }
             // Sites are levelled: the apron, then the pad, are each one
             // walkable step up from the ground on every side.
@@ -188,21 +146,14 @@ fn towers_are_mirrored_vantage_points_clear_of_objectives_and_spawns() {
                     let reach = relay::APRON_HALF + 0.5;
                     let (px, pz) = (x + dx * reach + dz * t * 2.5, z + dz * reach + dx * t * 2.5);
                     let lip = base - relay::APRON_DROP - w.height(px, pz);
-                    assert!(
-                        lip <= sim::STEP_H,
-                        "seed {seed:x}: tower {x},{z} apron lip is {lip:.2} m on side {dx},{dz}"
-                    );
+                    assert!(lip <= sim::STEP_H, "seed {seed:x}: tower {x},{z} apron lip is {lip:.2} m on side {dx},{dz}");
                 }
             }
             // The deck sees the objective it stands beside.
             let eye = vec3(x, base + relay::deck_height(flights) + 1.6, z);
             let (ex, ez) = relay::place(x, z, rot, side, 2.0, -2.0);
             let eye = Vec3::new(ex, eye.y, ez);
-            let nearest = w
-                .points
-                .iter()
-                .min_by(|a, b| (**a - eye).length().total_cmp(&(**b - eye).length()))
-                .unwrap();
+            let nearest = w.points.iter().min_by(|a, b| (**a - eye).length().total_cmp(&(**b - eye).length())).unwrap();
             // Trees and cover differ by seed, so ask for a view of most of
             // the capture area rather than of one exact spot.
             let mut seen = 0;
@@ -212,10 +163,7 @@ fn towers_are_mirrored_vantage_points_clear_of_objectives_and_spawns() {
                 let p = vec3(p.x, w.height(p.x, p.z) + 1.0, p.z);
                 seen += w.los(eye, p, 0) as usize;
             }
-            assert!(
-                seen >= 8,
-                "seed {seed:x}: tower {x},{z} sees only {seen}/16 of its objective"
-            );
+            assert!(seen >= 8, "seed {seed:x}: tower {x},{z} sees only {seen}/16 of its objective");
         }
         eprintln!("Relay seed {seed:x}: {} collision blocks", w.blocks.len());
     }

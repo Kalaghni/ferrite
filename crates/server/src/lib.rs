@@ -63,23 +63,46 @@ pub fn difficulty_by_name(s: &str) -> Option<f32> {
 
 impl Default for Config {
     fn default() -> Self {
-        Config { port: DEFAULT_PORT, per_team: 12, max_bots: 64, seed: 0xFE221, map: 0, rotation: Vec::new(), lobby_secs: 0, tickets: 250, bot_skill: 1.0, log: false, name: host_name(), discover: true, stats_file: None, mode: 0, mode_rotation: Vec::new(), score_limit: 0, time_limit: 0, drops: true }
+        Config {
+            port: DEFAULT_PORT,
+            per_team: 12,
+            max_bots: 64,
+            seed: 0xFE221,
+            map: 0,
+            rotation: Vec::new(),
+            lobby_secs: 0,
+            tickets: 250,
+            bot_skill: 1.0,
+            log: false,
+            name: host_name(),
+            discover: true,
+            stats_file: None,
+            mode: 0,
+            mode_rotation: Vec::new(),
+            score_limit: 0,
+            time_limit: 0,
+            drops: true,
+        }
     }
 }
 
 /// This machine's name, for the server list.
 pub fn host_name() -> String {
     let n = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).unwrap_or_default();
-    if n.trim().is_empty() { "FERRITE server".to_string() } else { n.trim().chars().take(24).collect() }
+    if n.trim().is_empty() {
+        "FERRITE server".to_string()
+    } else {
+        n.trim().chars().take(24).collect()
+    }
 }
 
 const HIST: usize = 64;
 const MAX_REWIND: f64 = 30.0;
 const CAP_RATE: f32 = 0.1;
 const BOT_NAMES: [&str; 32] = [
-    "Anvil", "Brick", "Cinder", "Dross", "Echo", "Flint", "Gasket", "Hex", "Ingot", "Jolt", "Kiln", "Latch",
-    "Mica", "Nickel", "Onyx", "Piston", "Quartz", "Rivet", "Slag", "Tongs", "Umber", "Vise", "Weld", "Xylo",
-    "Yoke", "Zinc", "Bolt", "Crank", "Dynamo", "Ember", "Forge", "Girder",
+    "Anvil", "Brick", "Cinder", "Dross", "Echo", "Flint", "Gasket", "Hex", "Ingot", "Jolt", "Kiln", "Latch", "Mica", "Nickel", "Onyx",
+    "Piston", "Quartz", "Rivet", "Slag", "Tongs", "Umber", "Vise", "Weld", "Xylo", "Yoke", "Zinc", "Bolt", "Crank", "Dynamo", "Ember",
+    "Forge", "Girder",
 ];
 
 pub struct Player {
@@ -435,7 +458,8 @@ impl Game {
         // Bots carry a mix of what their class allows, weighted to the default.
         let prims = sim::kit(p.next_kit).prims;
         p.next_prim = if self.rng.below(5) < 2 { prims[0] } else { prims[self.rng.below(prims.len() as u32) as usize] };
-        p.next_side = if self.rng.below(2) == 0 { sim::SIDEARM_ID } else { sim::SIDEARMS[self.rng.below(sim::SIDEARMS.len() as u32) as usize] };
+        p.next_side =
+            if self.rng.below(2) == 0 { sim::SIDEARM_ID } else { sim::SIDEARMS[self.rng.below(sim::SIDEARMS.len() as u32) as usize] };
         p.vote = 255;
         p.ready = false;
         p.mode_vote = 255;
@@ -915,7 +939,15 @@ impl Game {
         let (team, kit, origin, hspeed, airborne, human, crouch) = {
             let p = &self.players[i];
             let v = p.st.vel;
-            (p.team, sim::wid(&p.st), p.st.pos + vec3(0.0, sim::eye_h(p.st.crouch), 0.0), (v.x * v.x + v.z * v.z).sqrt(), !p.st.on_ground, p.bot.is_none(), p.st.crouch)
+            (
+                p.team,
+                sim::wid(&p.st),
+                p.st.pos + vec3(0.0, sim::eye_h(p.st.crouch), 0.0),
+                (v.x * v.x + v.z * v.z).sqrt(),
+                !p.st.on_ground,
+                p.bot.is_none(),
+                p.st.crouch,
+            )
         };
         let wd = sim::weapon_def(kit);
         let ads = cmd.buttons & btn::ADS != 0;
@@ -1113,7 +1145,12 @@ impl Game {
         let mut best = 30.0;
         for (a, when, dmg) in hits {
             let ai = a as usize;
-            if ai != killer_id as usize && ai < self.players.len() && self.players[ai].team != team && t - when < 10 * TICK_HZ && dmg >= best {
+            if ai != killer_id as usize
+                && ai < self.players.len()
+                && self.players[ai].team != team
+                && t - when < 10 * TICK_HZ
+                && dmg >= best
+            {
                 best = dmg;
                 assist = a;
             }
@@ -1188,7 +1225,11 @@ impl Game {
                     continue;
                 }
                 let d = (q.st.pos - p).length();
-                if q.team == team { friend = friend.min(d) } else { foe = foe.min(d) }
+                if q.team == team {
+                    friend = friend.min(d)
+                } else {
+                    foe = foe.min(d)
+                }
             }
             score += friend + foe * 0.6;
             if score > best {
@@ -1238,19 +1279,23 @@ impl Game {
         let before = self.dmask;
         // Decide exposure against the intact field. A released panel cannot
         // let this same blast reach another structure through its new hole.
-        let broken: Vec<_> = self.world.features.iter().filter(|feature| {
-            let bit = 1u64 << feature.bit;
-            if before & bit != 0 { return false; }
-            let exposed = |target: Vec3| {
-                pos.distance_squared(target) <= 4.5 * 4.5
-                    && self.world.los(pos, target, before | bit)
-            };
-            // Ignore only this group's own collision when testing exposure.
-            // Nearby permanent walls and other intact groups still shield it.
-            exposed(feature.pos) || self.world.blocks.iter().any(|block| {
-                block.dest == Some(feature.bit) && exposed(pos.clamp(block.min, block.max))
+        let broken: Vec<_> = self
+            .world
+            .features
+            .iter()
+            .filter(|feature| {
+                let bit = 1u64 << feature.bit;
+                if before & bit != 0 {
+                    return false;
+                }
+                let exposed = |target: Vec3| pos.distance_squared(target) <= 4.5 * 4.5 && self.world.los(pos, target, before | bit);
+                // Ignore only this group's own collision when testing exposure.
+                // Nearby permanent walls and other intact groups still shield it.
+                exposed(feature.pos)
+                    || self.world.blocks.iter().any(|block| block.dest == Some(feature.bit) && exposed(pos.clamp(block.min, block.max)))
             })
-        }).map(|feature| (feature.bit, feature.kind as u8, feature.pos)).collect();
+            .map(|feature| (feature.bit, feature.kind as u8, feature.pos))
+            .collect();
         for bi in 0..self.world.blocks.len() {
             let b = &self.world.blocks[bi];
             if b.dest.is_some() && ((b.min + b.max) * 0.5 - pos).length() < 5.5 {
@@ -1885,14 +1930,7 @@ impl Game {
                 }
             }
         }
-        let feed = self
-            .feed
-            .iter()
-            .enumerate()
-            .skip(ack_feed as usize)
-            .take(10)
-            .map(|(i, f)| (i as u32 + 1, *f))
-            .collect();
+        let feed = self.feed.iter().enumerate().skip(ack_feed as usize).take(10).map(|(i, f)| (i as u32 + 1, *f)).collect();
         let (ack_seq, me_state) = match me {
             Some(i) => {
                 let p = &self.players[i];
@@ -1935,7 +1973,11 @@ impl Game {
             next_mode: if self.phase == 2 { self.lobby_mode_choice() } else { self.next_mode() },
             mode_votes: self.mode_votes(),
             goal: self.goal.clamp(0, 65535) as u16,
-            secs_left: if self.phase == 0 && self.round_end > 0 { (self.round_end.saturating_sub(t) / TICK_HZ).min(65535) as u16 } else { 0 },
+            secs_left: if self.phase == 0 && self.round_end > 0 {
+                (self.round_end.saturating_sub(t) / TICK_HZ).min(65535) as u16
+            } else {
+                0
+            },
             flags: [0, 1].map(|f| {
                 let fl = &self.flags[f];
                 FlagNet { state: fl.state, carrier: fl.carrier.min(255) as u8, pos: fl.pos.to_array() }
@@ -2054,18 +2096,28 @@ mod map_feature_tests {
     #[test]
     fn firearms_never_release_structural_groups_but_still_break_crates() {
         let mut g = Game::new(Config { per_team: 1, max_bots: 0, log: false, discover: false, ..Default::default() });
-        let structural: Vec<_> = g.world.blocks.iter().enumerate().filter(|(_, block)| {
-            block.dest.is_some_and(|bit| g.world.features.iter().any(|feature| feature.bit == bit))
-        }).map(|(i, _)| i).collect();
+        let structural: Vec<_> = g
+            .world
+            .blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, block)| block.dest.is_some_and(|bit| g.world.features.iter().any(|feature| feature.bit == bit)))
+            .map(|(i, _)| i)
+            .collect();
         assert!(!structural.is_empty());
         for bi in structural {
             g.hit_block(bi, 10000.0);
         }
         assert_eq!(g.dmask, 0, "even overwhelming bullet damage must not release explosive charges");
         assert!(g.fx.is_empty());
-        let crate_block = g.world.blocks.iter().enumerate().find(|(_, block)| {
-            block.dest.is_some_and(|bit| !g.world.features.iter().any(|feature| feature.bit == bit))
-        }).map(|(i, _)| i).expect("the classic crates still exist");
+        let crate_block = g
+            .world
+            .blocks
+            .iter()
+            .enumerate()
+            .find(|(_, block)| block.dest.is_some_and(|bit| !g.world.features.iter().any(|feature| feature.bit == bit)))
+            .map(|(i, _)| i)
+            .expect("the classic crates still exist");
         let bit = g.world.blocks[crate_block].dest.unwrap();
         g.hit_block(crate_block, 110.0);
         assert_ne!(g.dmask & (1u64 << bit), 0);

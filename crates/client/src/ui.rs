@@ -85,7 +85,12 @@ pub fn text(s: &str, x: f32, y: f32, size: f32, c: Color) {
     FONTS.with(|f| match &*f.borrow() {
         Some((r, b)) => {
             let font = if bold(size) { b } else { r };
-            draw_text_ex(s, x, y, TextParams { font: Some(font), font_size: (size * FONT_K).round() as u16, color: c, ..Default::default() });
+            draw_text_ex(
+                s,
+                x,
+                y,
+                TextParams { font: Some(font), font_size: (size * FONT_K).round() as u16, color: c, ..Default::default() },
+            );
         }
         None => {
             draw_text(s, x, y, size, c);

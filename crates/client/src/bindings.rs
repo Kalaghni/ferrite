@@ -290,10 +290,7 @@ impl Input {
             "wheel" => Some(Self::Wheel),
             _ => {
                 let name = s.strip_prefix("key:")?;
-                KEYS.iter()
-                    .copied()
-                    .find(|key| format!("{key:?}").eq_ignore_ascii_case(name))
-                    .map(Self::Key)
+                KEYS.iter().copied().find(|key| format!("{key:?}").eq_ignore_ascii_case(name)).map(Self::Key)
             }
         }
     }
@@ -338,21 +335,14 @@ impl Input {
     }
     pub fn capture() -> Option<Self> {
         // Stable priority makes simultaneous modifier/key presses predictable.
-        let mut keys: Vec<_> = mq::get_keys_pressed()
-            .into_iter()
-            .filter(|k| KEYS.contains(k))
-            .collect();
+        let mut keys: Vec<_> = mq::get_keys_pressed().into_iter().filter(|k| KEYS.contains(k)).collect();
         keys.sort_by_key(|k| *k as u16);
         if let Some(key) = keys.first() {
             return Some(Self::Key(*key));
         }
-        for button in [
-            mq::MouseButton::Left,
-            mq::MouseButton::Right,
-            mq::MouseButton::Middle,
-            mq::MouseButton::Extra1,
-            mq::MouseButton::Extra2,
-        ] {
+        for button in
+            [mq::MouseButton::Left, mq::MouseButton::Right, mq::MouseButton::Middle, mq::MouseButton::Extra1, mq::MouseButton::Extra2]
+        {
             if mq::is_mouse_button_pressed(button) {
                 return Some(Self::Mouse(button));
             }
@@ -444,11 +434,7 @@ impl Bindings {
         if inputs.is_empty() {
             "UNBOUND".into()
         } else {
-            inputs
-                .iter()
-                .map(|i| i.label())
-                .collect::<Vec<_>>()
-                .join(" / ")
+            inputs.iter().map(|i| i.label()).collect::<Vec<_>>().join(" / ")
         }
     }
     /// Reject conflicts without mutating either action.
@@ -457,19 +443,10 @@ impl Bindings {
             return Err("That key is reserved for navigation.".into());
         }
         if !Self::accepts(action, input) {
-            return Err(
-                "This action needs a held key or mouse button; the wheel is a press input.".into(),
-            );
+            return Err("This action needs a held key or mouse button; the wheel is a press input.".into());
         }
-        if let Some(other) = Action::ALL
-            .into_iter()
-            .find(|&other| other != action && self.inputs(other).contains(&input))
-        {
-            return Err(format!(
-                "{} is assigned to {}. Clear that row first.",
-                input.label(),
-                other.label()
-            ));
+        if let Some(other) = Action::ALL.into_iter().find(|&other| other != action && self.inputs(other).contains(&input)) {
+            return Err(format!("{} is assigned to {}. Clear that row first.", input.label(), other.label()));
         }
         Ok(())
     }
@@ -501,11 +478,7 @@ impl Bindings {
             .into_iter()
             .map(|action| {
                 let inputs = self.inputs(action);
-                let value = if inputs.is_empty() {
-                    "none".into()
-                } else {
-                    inputs.iter().map(|i| i.id()).collect::<Vec<_>>().join(",")
-                };
+                let value = if inputs.is_empty() { "none".into() } else { inputs.iter().map(|i| i.id()).collect::<Vec<_>>().join(",") };
                 format!("bind_{}={}\n", action.id(), value)
             })
             .collect()
@@ -523,11 +496,7 @@ impl Bindings {
             self.clear(action);
             return true;
         }
-        let parsed: Option<Vec<_>> = value
-            .split(',')
-            .take(8)
-            .map(|s| Input::parse(s.trim()))
-            .collect();
+        let parsed: Option<Vec<_>> = value.split(',').take(8).map(|s| Input::parse(s.trim())).collect();
         if let Some(mut inputs) = parsed {
             inputs.retain(|input| Self::accepts(action, *input));
             if !inputs.is_empty() {
@@ -560,17 +529,11 @@ mod tests {
     fn saved_remaps_preserve_swapped_keys_unbound_rows_and_mouse_inputs() {
         let mut bindings = Bindings::default();
         bindings.clear(Action::Backward);
-        bindings
-            .replace(Action::Forward, Input::Key(mq::KeyCode::S))
-            .unwrap();
-        bindings
-            .replace(Action::Backward, Input::Key(mq::KeyCode::W))
-            .unwrap();
+        bindings.replace(Action::Forward, Input::Key(mq::KeyCode::S)).unwrap();
+        bindings.replace(Action::Backward, Input::Key(mq::KeyCode::W)).unwrap();
         bindings.clear(Action::Grenade);
         bindings.clear(Action::Melee);
-        bindings
-            .replace(Action::Grenade, Input::Mouse(mq::MouseButton::Middle))
-            .unwrap();
+        bindings.replace(Action::Grenade, Input::Mouse(mq::MouseButton::Middle)).unwrap();
         let mut loaded = Bindings::default();
         for line in bindings.write_config().lines() {
             let (key, value) = line.split_once('=').unwrap();
@@ -606,10 +569,7 @@ mod tests {
 
     #[test]
     fn side_mouse_buttons_have_distinct_persistent_ids() {
-        for (button, id, label) in [
-            (mq::MouseButton::Extra1, "mouse:4", "MOUSE 4"),
-            (mq::MouseButton::Extra2, "mouse:5", "MOUSE 5"),
-        ] {
+        for (button, id, label) in [(mq::MouseButton::Extra1, "mouse:4", "MOUSE 4"), (mq::MouseButton::Extra2, "mouse:5", "MOUSE 5")] {
             let input = Input::Mouse(button);
             assert_eq!(input.id(), id);
             assert_eq!(input.label(), label);
@@ -626,10 +586,7 @@ mod tests {
         let mut bindings = Bindings::default();
         bindings.clear(Action::SwapWeapon);
         let before = bindings.clone();
-        assert!(bindings
-            .replace(Action::Forward, Input::Wheel)
-            .unwrap_err()
-            .contains("held"));
+        assert!(bindings.replace(Action::Forward, Input::Wheel).unwrap_err().contains("held"));
         assert_eq!(bindings, before);
         bindings.read_entry("bind_aim", "wheel");
         assert_eq!(bindings.inputs(Action::Aim), before.inputs(Action::Aim));
@@ -643,13 +600,8 @@ mod tests {
     fn conflicting_or_reserved_keys_do_not_silently_remove_another_action() {
         let mut bindings = Bindings::default();
         let before = bindings.clone();
-        assert!(bindings
-            .replace(Action::Jump, Input::Key(mq::KeyCode::R))
-            .unwrap_err()
-            .contains("RELOAD"));
-        assert!(bindings
-            .replace(Action::Jump, Input::Key(mq::KeyCode::Escape))
-            .is_err());
+        assert!(bindings.replace(Action::Jump, Input::Key(mq::KeyCode::R)).unwrap_err().contains("RELOAD"));
+        assert!(bindings.replace(Action::Jump, Input::Key(mq::KeyCode::Escape)).is_err());
         bindings.read_entry("bind_jump", "key:DoesNotExist");
         assert_eq!(before, bindings);
     }

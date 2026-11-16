@@ -1,8 +1,8 @@
 //! The working valley: inhabited-looking workshops, mine portals and machinery.
 //! Large silhouettes use shared collision; motion stays above the walking routes.
+use super::hash01;
 use super::slag_cathedral::art::{soft, stencil, wall};
 use super::slag_cathedral::{beam, girder, pipe};
-use super::hash01;
 use crate::gfx::{rgb, shade, Col, Mesh};
 use ferrite_shared::glam::{vec3, Mat4, Vec3};
 use ferrite_shared::map::{landmarks as layout, Block, BlockKind, FeatureKind, World};
@@ -18,17 +18,20 @@ const SAFETY: Col = [0.94, 0.61, 0.11, 0.0];
 const LAMP: Col = [1.0, 0.83, 0.54, 0.85];
 
 fn frame(x: f32, y: f32, z: f32, side: f32) -> Mat4 {
-    Mat4::from_translation(vec3(x * side, y, z * side))
-        * Mat4::from_rotation_y(if side < 0.0 { PI } else { 0.0 })
+    Mat4::from_translation(vec3(x * side, y, z * side)) * Mat4::from_rotation_y(if side < 0.0 { PI } else { 0.0 })
 }
-fn point(g: &Mat4, p: Vec3) -> Vec3 { g.transform_point3(p) }
+fn point(g: &Mat4, p: Vec3) -> Vec3 {
+    g.transform_point3(p)
+}
 fn bar(m: &mut Mesh, g: &Mat4, a: Vec3, b: Vec3, width: f32, col: Col) {
     beam(m, point(g, a), point(g, b), width, width, col);
 }
 fn rod(m: &mut Mesh, g: &Mat4, a: Vec3, b: Vec3, radius: f32, col: Col) {
     pipe(m, point(g, a), point(g, b), radius, col);
 }
-fn box_at(m: &mut Mesh, g: &Mat4, p: Vec3, h: Vec3, col: Col) { m.obox(g, p, h, col); }
+fn box_at(m: &mut Mesh, g: &Mat4, p: Vec3, h: Vec3, col: Col) {
+    m.obox(g, p, h, col);
+}
 
 fn breach_local(w: &World, g: &Mat4, s: layout::Site) -> Option<(Vec3, Vec3)> {
     let inv = g.inverse();
@@ -81,8 +84,18 @@ fn roof(m: &mut Mesh, g: &Mat4, s: layout::Site, color: Col) {
     bar(m, g, vec3(-x - 0.08, ridge + 0.04, 0.0), vec3(x + 0.08, ridge + 0.04, 0.0), 0.23, EDGE);
     for k in [-1.0, 1.0] {
         let x = (s.hx + 0.03) * k;
-        m.tri(point(g, vec3(x, s.height + 0.30, -s.hz)), point(g, vec3(x, ridge, 0.0)), point(g, vec3(x, s.height + 0.30, s.hz)), shade(color, 0.7));
-        m.tri(point(g, vec3(x, s.height + 0.30, s.hz)), point(g, vec3(x, ridge, 0.0)), point(g, vec3(x, s.height + 0.30, -s.hz)), shade(color, 0.7));
+        m.tri(
+            point(g, vec3(x, s.height + 0.30, -s.hz)),
+            point(g, vec3(x, ridge, 0.0)),
+            point(g, vec3(x, s.height + 0.30, s.hz)),
+            shade(color, 0.7),
+        );
+        m.tri(
+            point(g, vec3(x, s.height + 0.30, s.hz)),
+            point(g, vec3(x, ridge, 0.0)),
+            point(g, vec3(x, s.height + 0.30, -s.hz)),
+            shade(color, 0.7),
+        );
         // Gable louvres and the bolted corner frame.
         for j in 0..5 {
             box_at(m, g, vec3(x + k * 0.02, s.height + 0.55 + j as f32 * 0.14, 0.0), vec3(0.035, 0.035, 0.65 - j as f32 * 0.08), EDGE);
@@ -123,7 +136,9 @@ fn workshop(m: &mut Mesh, w: &World, side: f32) {
         for x in [-s.hx * 0.60, s.hx * 0.60] {
             // This bay's window and infill are replaced together by the
             // broad breach panel, so no static frame crosses the opening.
-            if breach.is_some_and(|(lo, hi)| x + 0.77 > lo.x && x - 0.77 < hi.x && (lo.z + hi.z) * k > 0.0) { continue; }
+            if breach.is_some_and(|(lo, hi)| x + 0.77 > lo.x && x - 0.77 < hi.x && (lo.z + hi.z) * k > 0.0) {
+                continue;
+            }
             for dx in [-0.71, 0.71] {
                 box_at(m, &g, vec3(x + dx, 1.575, k * (s.hz + 0.04)), vec3(0.055, 0.58, 0.055), EDGE);
             }
@@ -148,7 +163,14 @@ fn workshop(m: &mut Mesh, w: &World, side: f32) {
     }
     // Electrical services are on the high wall, leaving the floor entirely open.
     for k in [-1.0, 1.0] {
-        rod(m, &g, vec3(-s.hx + 0.42, s.height - 0.7, k * (s.hz - 0.30)), vec3(s.hx - 0.42, s.height - 0.7, k * (s.hz - 0.30)), 0.055, DARK);
+        rod(
+            m,
+            &g,
+            vec3(-s.hx + 0.42, s.height - 0.7, k * (s.hz - 0.30)),
+            vec3(s.hx - 0.42, s.height - 0.7, k * (s.hz - 0.30)),
+            0.055,
+            DARK,
+        );
         box_at(m, &g, vec3(s.hx - 0.36, 3.2, k * 3.0), vec3(0.16, 0.45, 0.65), STEEL);
     }
 }
@@ -156,7 +178,9 @@ fn workshop(m: &mut Mesh, w: &World, side: f32) {
 /// Blasted cave walls and ceilings keep the exact collision silhouette.
 /// The generic small-boulder taper would leave a hollow gap under a rock roof.
 pub fn owns(w: &World, b: &Block) -> bool {
-    if !(1..=2).contains(&w.map) || b.kind != BlockKind::Rock { return false; }
+    if !(1..=2).contains(&w.map) || b.kind != BlockKind::Rock {
+        return false;
+    }
     let s = layout::PASSAGES[w.map as usize];
     let c = (b.min + b.max) * 0.5;
     [1.0, -1.0].into_iter().any(|k| (c.x - s.x * k).abs() < s.hx + 2.0 && (c.z - s.z * k).abs() < s.hz + 5.0)
@@ -178,7 +202,11 @@ pub fn block(m: &mut Mesh, w: &World, b: &Block) {
                     let dy = (b.max.y - b.min.y) / ny as f32;
                     let x = b.min.x + ix as f32 * dx;
                     let y = b.min.y + iy as f32 * dy;
-                    let c = vec3(x + dx * (0.3 + hash01(seed, 33) * 0.4), y + dy * (0.25 + hash01(seed, 34) * 0.5), z + k * (0.05 + hash01(seed, 35) * 0.10));
+                    let c = vec3(
+                        x + dx * (0.3 + hash01(seed, 33) * 0.4),
+                        y + dy * (0.25 + hash01(seed, 34) * 0.5),
+                        z + k * (0.05 + hash01(seed, 35) * 0.10),
+                    );
                     let mossy = hash01(seed, 36) > 0.60;
                     let color = if mossy { rgb(0.29, 0.36, 0.24) } else { shade(stone, 0.73 + hash01(seed, 37) * 0.4) };
                     let corners = [vec3(x, y, z), vec3(x + dx, y, z), vec3(x + dx, y + dy, z), vec3(x, y + dy, z)];
@@ -231,7 +259,9 @@ fn passage(m: &mut Mesh, w: &World, side: f32) {
             box_at(m, &g, vec3(x, s.height * 0.5, z), vec3(0.16, s.height * 0.5, 0.16), timber);
         }
         box_at(m, &g, vec3(x, s.height - 0.12, 0.0), vec3(0.17, 0.12, s.hz), timber);
-        if i % 2 == 0 { lamp(m, &g, vec3(x, s.height - 0.33, 0.0)); }
+        if i % 2 == 0 {
+            lamp(m, &g, vec3(x, s.height - 0.33, 0.0));
+        }
     }
     for z in [-s.hz + 0.12, s.hz - 0.12] {
         rod(m, &g, vec3(-s.hx, s.height - 0.62, z), vec3(s.hx, s.height - 0.62, z), 0.035, DARK);
@@ -328,12 +358,17 @@ fn ridge(m: &mut Mesh, w: &World, side: f32) {
     for k in [-1.0, 1.0] {
         for j in 0..14 {
             let y = 0.25 + j as f32 * 0.27;
-            if y > 0.95 && y < 2.20 { continue; }
+            if y > 0.95 && y < 2.20 {
+                continue;
+            }
             for x in [-1.0, 1.0] {
                 let (c, h) = (x * (s.hx * 0.5 + 0.9), (s.hx - 1.8) * 0.5);
-                let runs = if let Some((lo, hi)) = breach.filter(|(lo, hi)| (lo.z + hi.z) * k > 0.0 && y + 0.025 > lo.y && y - 0.025 < hi.y) {
+                let runs = if let Some((lo, hi)) = breach.filter(|(lo, hi)| (lo.z + hi.z) * k > 0.0 && y + 0.025 > lo.y && y - 0.025 < hi.y)
+                {
                     [(c - h, lo.x.clamp(c - h, c + h)), (hi.x.clamp(c - h, c + h), c + h)]
-                } else { [(c - h, c + h), (0.0, 0.0)] };
+                } else {
+                    [(c - h, c + h), (0.0, 0.0)]
+                };
                 for (a, b) in runs {
                     if b > a {
                         box_at(m, &g, vec3((a + b) * 0.5, y, k * (s.hz + 0.10)), vec3((b - a) * 0.5, 0.025, 0.025), TIMBER);
@@ -385,7 +420,9 @@ fn crane(m: &mut Mesh, w: &World) {
             bar(m, &g, vec3(x, top - 0.4, z), vec3(x, top + 1.2, z + 4.0), 0.16, SAFETY);
         }
         // Runway light fixtures remain well above containers and players.
-        for z in [-20.0, 0.0, 20.0] { lamp(m, &g, vec3(x, top - 0.7, z)); }
+        for z in [-20.0, 0.0, 20.0] {
+            lamp(m, &g, vec3(x, top - 0.7, z));
+        }
     }
     for z in [-1.2, 1.2] {
         bar(m, &g, vec3(-hx - 2.0, top + 0.25, z), vec3(hx + 2.0, top + 0.25, z), 0.3, SAFETY);
@@ -406,7 +443,9 @@ fn crane(m: &mut Mesh, w: &World) {
 }
 
 pub fn build(m: &mut Mesh, w: &World) {
-    if w.map > 3 { return; }
+    if w.map > 3 {
+        return;
+    }
     for side in [1.0, -1.0] {
         workshop(m, w, side);
         passage(m, w, side);
@@ -417,7 +456,9 @@ pub fn build(m: &mut Mesh, w: &World) {
             _ => {}
         }
     }
-    if w.map == 3 { crane(m, w); }
+    if w.map == 3 {
+        crane(m, w);
+    }
 }
 
 fn wheel(m: &mut Mesh, g: &Mat4, center: Vec3, radius: f32, angle: f32, col: Col) {
@@ -467,7 +508,9 @@ fn quarry_motion(m: &mut Mesh, alpha: &mut Mesh, w: &World, time: f32, side: f32
     for z in [-0.72, 0.72] {
         rod(m, &g, vec3(-0.8, hoist + 0.8, z), vec3(-0.8, 19.5, z), 0.035, DARK);
     }
-    if running { smoke(alpha, point(&g, vec3(-0.8, hoist + 1.0, 0.0)), time, 78, true); }
+    if running {
+        smoke(alpha, point(&g, vec3(-0.8, hoist + 1.0, 0.0)), time, 78, true);
+    }
 }
 
 fn ridge_motion(m: &mut Mesh, w: &World, time: f32, side: f32) {
@@ -543,7 +586,13 @@ pub fn features(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, dmask
                 // No standing debris implies cover after collision is gone.
                 let y = w.height(f.pos.x, f.pos.z) + 0.025;
                 let p = vec3(f.pos.x, y, f.pos.z);
-                m.quad(p + vec3(-0.8, 0.0, -0.6), p + vec3(-0.8, 0.0, 0.6), p + vec3(0.8, 0.0, 0.6), p + vec3(0.8, 0.0, -0.6), [0.17, 0.15, 0.12, 0.0]);
+                m.quad(
+                    p + vec3(-0.8, 0.0, -0.6),
+                    p + vec3(-0.8, 0.0, 0.6),
+                    p + vec3(0.8, 0.0, 0.6),
+                    p + vec3(0.8, 0.0, -0.6),
+                    [0.17, 0.15, 0.12, 0.0],
+                );
                 for i in 0..3 {
                     let age = (time * 0.15 + i as f32 / 3.0).rem_euclid(1.0);
                     soft(alpha, p + vec3(age * 0.4, 0.3 + age * 1.2, 0.0), 0.22 + age * 0.28, 0.35, [0.22, 0.23, 0.22, (1.0 - age) * 0.10]);
@@ -619,7 +668,9 @@ pub fn features(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, dmask
 }
 
 pub fn atmosphere(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, time: f32, dmask: u64) {
-    if w.map > 3 { return; }
+    if w.map > 3 {
+        return;
+    }
     for side in [1.0, -1.0] {
         let running = powered(w, dmask, side);
         let machine_time = if running { time } else { 0.0 };
@@ -683,7 +734,11 @@ mod tests {
             crane_motion(&mut m, &mut add, &w, t, true);
             let positions: Vec<_> = m.v.iter().map(|v| v.pos).collect();
             assert!(positions.iter().all(|p| p[1] > ground + 12.0));
-            if first.is_empty() { first = positions; } else { assert_ne!(positions, first); }
+            if first.is_empty() {
+                first = positions;
+            } else {
+                assert_ne!(positions, first);
+            }
         }
     }
     #[test]
@@ -727,13 +782,19 @@ mod tests {
             let (e1, e2) = (b - a, c - a);
             let h = d.cross(e2);
             let det = e1.dot(h);
-            if det.abs() < 0.00001 { return false; }
+            if det.abs() < 0.00001 {
+                return false;
+            }
             let s = o - a;
             let u = s.dot(h) / det;
-            if !(0.0..=1.0).contains(&u) { return false; }
+            if !(0.0..=1.0).contains(&u) {
+                return false;
+            }
             let q = s.cross(e1);
             let v = d.dot(q) / det;
-            if v < 0.0 || u + v > 1.0 { return false; }
+            if v < 0.0 || u + v > 1.0 {
+                return false;
+            }
             let t = e2.dot(q) / det;
             t > 0.0 && t < 2.0
         }
@@ -744,15 +805,24 @@ mod tests {
             let chunks = mesh.finish();
             for f in w.features.iter().filter(|f| f.kind == FeatureKind::BreachPanel) {
                 for y in [0.25, 0.85, 1.4, 2.15, 2.4] {
-                  for dx in [-1.15, -0.7, 0.0, 0.7, 1.15] {
-                    let o = vec3(f.pos.x + dx, w.height(f.pos.x, f.pos.z) + y, f.pos.z - 1.0);
-                    for (vertices, indices) in &chunks {
-                        for tri in indices.chunks_exact(3) {
-                            assert!(!ray_triangle(o, Vec3::Z, Vec3::from_array(vertices[tri[0] as usize].pos), Vec3::from_array(vertices[tri[1] as usize].pos), Vec3::from_array(vertices[tri[2] as usize].pos)),
-                                "map {id} static art covers the breach panel at {:?}", f.pos);
+                    for dx in [-1.15, -0.7, 0.0, 0.7, 1.15] {
+                        let o = vec3(f.pos.x + dx, w.height(f.pos.x, f.pos.z) + y, f.pos.z - 1.0);
+                        for (vertices, indices) in &chunks {
+                            for tri in indices.chunks_exact(3) {
+                                assert!(
+                                    !ray_triangle(
+                                        o,
+                                        Vec3::Z,
+                                        Vec3::from_array(vertices[tri[0] as usize].pos),
+                                        Vec3::from_array(vertices[tri[1] as usize].pos),
+                                        Vec3::from_array(vertices[tri[2] as usize].pos)
+                                    ),
+                                    "map {id} static art covers the breach panel at {:?}",
+                                    f.pos
+                                );
+                            }
                         }
                     }
-                  }
                 }
             }
         }

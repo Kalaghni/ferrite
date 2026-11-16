@@ -4,10 +4,10 @@
 //! symmetric under a 180-degree rotation so neither team has a terrain
 //! advantage.
 
+pub mod fallen_giant;
+pub mod landmarks;
 pub mod relay;
 pub mod slag_cathedral;
-pub mod landmarks;
-pub mod fallen_giant;
 
 use crate::rng::Rng;
 use glam::{vec2, vec3, Vec2, Vec3};
@@ -26,8 +26,7 @@ pub const TNZ: usize = 168;
 pub const TER_X0: f32 = -240.0;
 pub const TER_Z0: f32 = -168.0;
 
-pub const POINTS_XZ: [(f32, f32); 5] =
-    [(-108.0, 21.0), (-54.0, -36.0), (0.0, 0.0), (54.0, 36.0), (108.0, -21.0)];
+pub const POINTS_XZ: [(f32, f32); 5] = [(-108.0, 21.0), (-54.0, -36.0), (0.0, 0.0), (54.0, 36.0), (108.0, -21.0)];
 pub const BASES_XZ: [(f32, f32); 2] = [(-159.0, 0.0), (159.0, 0.0)];
 /// Players spawn this far from the centre of their base, at most.
 pub const BASE_SPAWN_RADIUS: f32 = 20.0;
@@ -165,7 +164,11 @@ pub struct RayHit {
 /// Blast-sensitive map features share the same replicated destruction bits
 /// as crates. A bit may remove a whole group of structural collision blocks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FeatureKind { BreachPanel, Walkway, Machinery }
+pub enum FeatureKind {
+    BreachPanel,
+    Walkway,
+    Machinery,
+}
 
 #[derive(Clone, Debug)]
 pub struct Feature {
@@ -189,9 +192,7 @@ pub struct World {
 }
 
 fn hash(x: i32, z: i32, seed: u32) -> f32 {
-    let mut h = (x as u32).wrapping_mul(0x85EB_CA6B)
-        ^ (z as u32).wrapping_mul(0xC2B2_AE35)
-        ^ seed.wrapping_mul(0x27D4_EB2F);
+    let mut h = (x as u32).wrapping_mul(0x85EB_CA6B) ^ (z as u32).wrapping_mul(0xC2B2_AE35) ^ seed.wrapping_mul(0x27D4_EB2F);
     h ^= h >> 15;
     h = h.wrapping_mul(0x2C1B_3C6D);
     h ^= h >> 12;
@@ -223,8 +224,7 @@ fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
 
 fn raw_height(x: f32, z: f32, s: u32) -> f32 {
     let n = |x: f32, z: f32| {
-        (vnoise(x / 40.0 + 100.0, z / 40.0 + 100.0, s) - 0.5) * 8.0
-            + (vnoise(x / 13.0 + 50.0, z / 13.0 + 50.0, s ^ 0x9E37) - 0.5) * 1.8
+        (vnoise(x / 40.0 + 100.0, z / 40.0 + 100.0, s) - 0.5) * 8.0 + (vnoise(x / 13.0 + 50.0, z / 13.0 + 50.0, s ^ 0x9E37) - 0.5) * 1.8
     };
     n(x, z) + n(-x, -z)
 }
@@ -557,13 +557,7 @@ impl World {
         } else {
             None
         };
-        self.blocks.push(Block {
-            min: vec3(cx - hx, min_y, cz - hz),
-            max: vec3(cx + hx, g + y0 + h, cz + hz),
-            kind,
-            tint,
-            dest,
-        });
+        self.blocks.push(Block { min: vec3(cx - hx, min_y, cz - hz), max: vec3(cx + hx, g + y0 + h, cz + hz), kind, tint, dest });
     }
 
     /// Place a block and its 180-degree mirror.
@@ -573,9 +567,9 @@ impl World {
     }
 
     fn footprint_free(&self, cx: f32, cz: f32, r: f32) -> bool {
-        !landmarks::reserved(self.map, cx, cz, r, r) && !fallen_giant::reserved(self.map, cx, cz, r, r) && !self.blocks.iter().any(|b| {
-            cx + r > b.min.x && cx - r < b.max.x && cz + r > b.min.z && cz - r < b.max.z
-        })
+        !landmarks::reserved(self.map, cx, cz, r, r)
+            && !fallen_giant::reserved(self.map, cx, cz, r, r)
+            && !self.blocks.iter().any(|b| cx + r > b.min.x && cx - r < b.max.x && cz + r > b.min.z && cz - r < b.max.z)
     }
 
     fn near_objective(&self, cx: f32, cz: f32, r_point: f32, r_base: f32) -> bool {
@@ -796,11 +790,14 @@ impl World {
 
     /// Nothing solid within the rectangle, here or at the mirrored spot.
     fn rect_free(&self, cx: f32, cz: f32, hx: f32, hz: f32) -> bool {
-        if landmarks::reserved(self.map, cx, cz, hx, hz) { return false; }
-        if fallen_giant::reserved(self.map, cx, cz, hx, hz) { return false; }
-        let free = |x: f32, z: f32| {
-            !self.blocks.iter().any(|b| x + hx > b.min.x && x - hx < b.max.x && z + hz > b.min.z && z - hz < b.max.z)
-        };
+        if landmarks::reserved(self.map, cx, cz, hx, hz) {
+            return false;
+        }
+        if fallen_giant::reserved(self.map, cx, cz, hx, hz) {
+            return false;
+        }
+        let free =
+            |x: f32, z: f32| !self.blocks.iter().any(|b| x + hx > b.min.x && x - hx < b.max.x && z + hz > b.min.z && z - hz < b.max.z);
         free(cx, cz) && free(-cx, -cz)
     }
 
@@ -981,7 +978,14 @@ impl World {
     /// Up to `n` structures dropped where `site_ok` allows, each picked by
     /// `make` from a size returned by `size`.
     /// `turn` lets the footprint be turned a quarter.
-    fn scatter(&mut self, rng: &mut Rng, n: usize, turn: bool, size: impl Fn(&mut Rng) -> (f32, f32), mut make: impl FnMut(&mut World, &mut Rng, f32, f32, f32, f32)) {
+    fn scatter(
+        &mut self,
+        rng: &mut Rng,
+        n: usize,
+        turn: bool,
+        size: impl Fn(&mut Rng) -> (f32, f32),
+        mut make: impl FnMut(&mut World, &mut Rng, f32, f32, f32, f32),
+    ) {
         for _ in 0..n {
             for _ in 0..60 {
                 let (mut hx, mut hz) = size(rng);
@@ -1177,7 +1181,11 @@ impl World {
         while along < 76.0 * SPREAD {
             let (x, z) = (ux * along + rng.range(-1.2, 1.2), uz * along + rng.range(-1.0, 1.0));
             let size = rng.range(1.6, 2.4);
-            if (along - pass).abs() > 8.5 * SPREAD && z.abs() < HALF_Z - 3.0 && !self.near_objective(x, z, 13.0, 16.0) && self.clear_both(x, z, 3.6) {
+            if (along - pass).abs() > 8.5 * SPREAD
+                && z.abs() < HALF_Z - 3.0
+                && !self.near_objective(x, z, 13.0, 16.0)
+                && self.clear_both(x, z, 3.6)
+            {
                 self.rock(rng, x, z, size);
             }
             along += 4.2;
@@ -1560,18 +1568,23 @@ impl Nav {
             first as usize..=last as usize
         };
         for (i, b) in world.blocks.iter().enumerate() {
-            if !world.solid(i, dmask) { continue; }
+            if !world.solid(i, dmask) {
+                continue;
+            }
             let xs = range(b.min.x, b.max.x, HALF_X, w);
             for cz in range(b.min.z, b.max.z, HALF_Z, h) {
                 let z = -HALF_Z + (cz as f32 + 0.5) * NAV_CELL;
-                if z + r <= b.min.z || z - r >= b.max.z { continue; }
+                if z + r <= b.min.z || z - r >= b.max.z {
+                    continue;
+                }
                 for cx in xs.clone() {
                     let cell = cz * w + cx;
-                    if blocked[cell] { continue; }
+                    if blocked[cell] {
+                        continue;
+                    }
                     let x = -HALF_X + (cx as f32 + 0.5) * NAV_CELL;
                     let g = ground[cell];
-                    if x + r > b.min.x && x - r < b.max.x
-                        && b.max.y - g > 0.45 && b.min.y - g < 1.9 {
+                    if x + r > b.min.x && x - r < b.max.x && b.max.y - g > 0.45 && b.min.y - g < 1.9 {
                         blocked[cell] = true;
                     }
                 }
@@ -1588,9 +1601,7 @@ impl Nav {
         }
         let mut nav = Nav { w, h, blocked, fields: Vec::new() };
         let changed_features = world.features.iter().any(|f| dmask & (1u64 << f.bit) != 0);
-        let workers = if changed_features {
-            std::thread::available_parallelism().map_or(1, |n| n.get().min(4))
-        } else { 1 };
+        let workers = if changed_features { std::thread::available_parallelism().map_or(1, |n| n.get().min(4)) } else { 1 };
         let compute = |job: usize| {
             let goal = job / NAV_LANES;
             let gp = if goal < 5 { world.points[goal] } else { world.bases[goal - 5] };
@@ -1604,11 +1615,14 @@ impl Nav {
             // routes regardless of worker scheduling or machine core count.
             let mut fields = vec![Vec::new(); NAV_GOALS * NAV_LANES];
             std::thread::scope(|scope| {
-                let jobs: Vec<_> = (0..workers).map(|worker| {
-                    let compute = &compute;
-                    scope.spawn(move || (worker..NAV_GOALS * NAV_LANES).step_by(workers)
-                        .map(|job| (job, compute(job))).collect::<Vec<_>>())
-                }).collect();
+                let jobs: Vec<_> = (0..workers)
+                    .map(|worker| {
+                        let compute = &compute;
+                        scope.spawn(move || {
+                            (worker..NAV_GOALS * NAV_LANES).step_by(workers).map(|job| (job, compute(job))).collect::<Vec<_>>()
+                        })
+                    })
+                    .collect();
                 for worker in jobs {
                     for (job, field) in worker.join().expect("navigation worker") {
                         fields[job] = field;
@@ -1749,12 +1763,22 @@ mod tests {
     // between targets, but covers the complete terrain, collision geometry,
     // trees, objectives and crate assignment of every map.
     const FINGERPRINTS_FE221: [u64; 7] = [
-        0xe5a9186a98463522, 0x8d6a72a4e55cb258, 0x99c100d1ea100d86, 0x57c62f6f2f7b39da,
-        0x9add6dc3e14285f4, 0xf1134b5f6ab0c68f, 0xa4522d55ba21aae2,
+        0xe5a9186a98463522,
+        0x8d6a72a4e55cb258,
+        0x99c100d1ea100d86,
+        0x57c62f6f2f7b39da,
+        0x9add6dc3e14285f4,
+        0xf1134b5f6ab0c68f,
+        0xa4522d55ba21aae2,
     ];
     const FINGERPRINTS_D091: [u64; 7] = [
-        0x56fcf92cda86bcfc, 0xc57680dd94415d9c, 0x8530e9d166094ead, 0x57246f9b0a5621e4,
-        0x4b79a71339bec22c, 0x378a3fde022bcd47, 0xa89dded116c53bbc,
+        0x56fcf92cda86bcfc,
+        0xc57680dd94415d9c,
+        0x8530e9d166094ead,
+        0x57246f9b0a5621e4,
+        0x4b79a71339bec22c,
+        0x378a3fde022bcd47,
+        0xa89dded116c53bbc,
     ];
 
     fn fingerprint(w: &World) -> u64 {
@@ -1781,7 +1805,9 @@ mod tests {
         for feature in &w.features {
             add(feature.kind as u32);
             add(feature.bit as u32);
-            for v in feature.pos.to_array() { add(mm(v)); }
+            for v in feature.pos.to_array() {
+                add(mm(v));
+            }
         }
         for t in &w.trees {
             for v in t.base.to_array().into_iter().chain([t.height, t.radius]) {
@@ -1803,19 +1829,22 @@ mod tests {
         for map in 0..4 {
             let world = World::with_map(0xFE221, map);
             let nav = Nav::build_mask(&world, 1u64 << world.features[0].bit);
-            let near: Vec<bool> = (0..nav.w * nav.h).map(|cell| {
-                let (cx, cz) = ((cell % nav.w) as i32, (cell / nav.w) as i32);
-                DIRS.iter().any(|&(dx, dz)| {
-                    let (nx, nz) = (cx + dx, cz + dz);
-                    nx >= 0 && nz >= 0 && nx < nav.w as i32 && nz < nav.h as i32
-                        && nav.blocked[nz as usize * nav.w + nx as usize]
+            let near: Vec<bool> = (0..nav.w * nav.h)
+                .map(|cell| {
+                    let (cx, cz) = ((cell % nav.w) as i32, (cell / nav.w) as i32);
+                    DIRS.iter().any(|&(dx, dz)| {
+                        let (nx, nz) = (cx + dx, cz + dz);
+                        nx >= 0 && nz >= 0 && nx < nav.w as i32 && nz < nav.h as i32 && nav.blocked[nz as usize * nav.w + nx as usize]
+                    })
                 })
-            }).collect();
+                .collect();
             for job in 0..NAV_GOALS * NAV_LANES {
                 let goal = job / NAV_LANES;
                 let gp = if goal < 5 { world.points[goal] } else { world.bases[goal - 5] };
-                assert!(nav.fields[job] == nav.field(gp.x, gp.z, job % NAV_LANES, &near),
-                    "map {map}: parallel navigation changed goal/lane {job}");
+                assert!(
+                    nav.fields[job] == nav.field(gp.x, gp.z, job % NAV_LANES, &near),
+                    "map {map}: parallel navigation changed goal/lane {job}"
+                );
             }
         }
     }
@@ -1837,13 +1866,19 @@ mod tests {
                             let g = world.height(p.x, p.y);
                             let reference = world.lava(p.x, p.y, 0.9)
                                 || world.blocks.iter().enumerate().any(|(i, b)| {
-                                    world.solid(i, mask) && p.x + 0.6 > b.min.x
-                                        && p.x - 0.6 < b.max.x && p.y + 0.6 > b.min.z
-                                        && p.y - 0.6 < b.max.z && b.max.y - g > 0.45
+                                    world.solid(i, mask)
+                                        && p.x + 0.6 > b.min.x
+                                        && p.x - 0.6 < b.max.x
+                                        && p.y + 0.6 > b.min.z
+                                        && p.y - 0.6 < b.max.z
+                                        && b.max.y - g > 0.45
                                         && b.min.y - g < 1.9
                                 });
-                            assert_eq!(nav.blocked[cz * nav.w + cx], reference,
-                                "map {map}, seed {seed:x}, mask {mask:x}: collision differs at {p:?}");
+                            assert_eq!(
+                                nav.blocked[cz * nav.w + cx],
+                                reference,
+                                "map {map}, seed {seed:x}, mask {mask:x}: collision differs at {p:?}"
+                            );
                         }
                     }
                 }
@@ -1945,10 +1980,15 @@ mod tests {
                 for b in &w.blocks {
                     assert!(b.min.is_finite() && b.max.is_finite() && b.min.cmplt(b.max).all(), "{name}: invalid block");
                     let mirrored = |q: &Block| {
-                        (q.min.x + b.max.x).abs() < 0.002 && (q.max.x + b.min.x).abs() < 0.002
-                            && (q.min.z + b.max.z).abs() < 0.002 && (q.max.z + b.min.z).abs() < 0.002
-                            && (q.min.y - b.min.y).abs() < 0.05 && (q.max.y - b.max.y).abs() < 0.05
-                            && q.kind == b.kind && q.tint == b.tint && q.dest.is_some() == b.dest.is_some()
+                        (q.min.x + b.max.x).abs() < 0.002
+                            && (q.max.x + b.min.x).abs() < 0.002
+                            && (q.min.z + b.max.z).abs() < 0.002
+                            && (q.max.z + b.min.z).abs() < 0.002
+                            && (q.min.y - b.min.y).abs() < 0.05
+                            && (q.max.y - b.max.y).abs() < 0.05
+                            && q.kind == b.kind
+                            && q.tint == b.tint
+                            && q.dest.is_some() == b.dest.is_some()
                     };
                     assert!(w.blocks.iter().any(mirrored), "{name}: unmatched {:?} at {:?}", b.kind, b.min);
                 }
@@ -1964,7 +2004,10 @@ mod tests {
                                 }
                                 p += nav.dir(goal, lane, p.x, p.y) * 0.6;
                             }
-                            assert!(p.distance(vec2(target.x, target.z)) < 6.5, "{name}, seed {seed:x}: no lane {lane} route from {start:?} to goal {goal}; stopped at {p:?}");
+                            assert!(
+                                p.distance(vec2(target.x, target.z)) < 6.5,
+                                "{name}, seed {seed:x}: no lane {lane} route from {start:?} to goal {goal}; stopped at {p:?}"
+                            );
                         }
                     }
                 }

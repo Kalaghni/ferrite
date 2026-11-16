@@ -221,8 +221,10 @@ fn parse_args() -> Args {
             "--audio-devices" => {
                 // List the sound outputs; an id can go in ferrite-client.txt.
                 for (id, name) in quad_snd::output_devices() {
-                    println!("{name}
-    audio_device={id}");
+                    println!(
+                        "{name}
+    audio_device={id}"
+                    );
                 }
                 std::process::exit(0);
             }
@@ -577,10 +579,18 @@ impl App {
     /// Keyboard and mouse bindings; keys alone while touch controls are
     /// on, when a finger on the screen is not a mouse button.
     fn bind_down(&self, action: Action) -> bool {
-        if self.touch { self.bindings.down_keys(action) } else { self.bindings.down(action) }
+        if self.touch {
+            self.bindings.down_keys(action)
+        } else {
+            self.bindings.down(action)
+        }
     }
     fn bind_pressed(&self, action: Action) -> bool {
-        if self.touch { self.bindings.pressed_keys(action) } else { self.bindings.pressed(action) }
+        if self.touch {
+            self.bindings.pressed_keys(action)
+        } else {
+            self.bindings.pressed(action)
+        }
     }
     pub fn action_down(&self, action: Action) -> bool {
         !typing() && (self.bind_down(action) || controller::down(action) || touch::down(action))
@@ -638,7 +648,11 @@ impl App {
     }
     /// The loadout panel is on screen and takes clicks.
     pub fn loadout_shown(&self) -> bool {
-        self.demo_panel || (!self.spectator && !self.auto && !self.team_pick && (self.lobby || (self.captured && ((!self.alive && self.kc.is_none()) || self.loadout_open))))
+        self.demo_panel
+            || (!self.spectator
+                && !self.auto
+                && !self.team_pick
+                && (self.lobby || (self.captured && ((!self.alive && self.kc.is_none()) || self.loadout_open))))
     }
     /// Choose row `row` of column `col` (0 class, 1 primary, 2 sidearm);
     /// column 3 moves on to the next look, 4 and 5 to the next finish for
@@ -1050,15 +1064,33 @@ impl App {
             if right != 0.0 || forward != 0.0 {
                 c.set_analog_movement((c.mx as f32 + right).clamp(-1.0, 1.0), (c.mz as f32 + forward).clamp(-1.0, 1.0));
             }
-            if self.action_down(Action::Jump) || self.jump_latch { c.buttons |= btn::JUMP; }
-            if self.action_down(Action::Sprint) { c.buttons |= btn::SPRINT; }
-            if self.action_down(Action::Fire) || self.fire_latch { c.buttons |= btn::FIRE; }
-            if self.aim_on { c.buttons |= btn::ADS; }
-            if self.action_down(Action::Crouch) { c.buttons |= btn::CROUCH; }
-            if self.reload_latch { c.buttons |= btn::RELOAD; }
-            if self.gren_latch { c.buttons |= btn::GRENADE; }
-            if self.swap_latch { c.buttons |= btn::SWAP; }
-            if self.melee_latch { c.more |= btn2::MELEE; }
+            if self.action_down(Action::Jump) || self.jump_latch {
+                c.buttons |= btn::JUMP;
+            }
+            if self.action_down(Action::Sprint) {
+                c.buttons |= btn::SPRINT;
+            }
+            if self.action_down(Action::Fire) || self.fire_latch {
+                c.buttons |= btn::FIRE;
+            }
+            if self.aim_on {
+                c.buttons |= btn::ADS;
+            }
+            if self.action_down(Action::Crouch) {
+                c.buttons |= btn::CROUCH;
+            }
+            if self.reload_latch {
+                c.buttons |= btn::RELOAD;
+            }
+            if self.gren_latch {
+                c.buttons |= btn::GRENADE;
+            }
+            if self.swap_latch {
+                c.buttons |= btn::SWAP;
+            }
+            if self.melee_latch {
+                c.more |= btn2::MELEE;
+            }
         }
         self.fire_latch = false;
         self.melee_latch = false;
@@ -1183,7 +1215,17 @@ async fn main() {
     if direct {
         let choice = match &args.connect {
             Some(a) => menu::Choice::Join(a.clone()),
-            None => menu::Choice::Host { port: args.port, per_team: args.per_team, max_bots: args.max_bots.unwrap_or(64), map: args.map.unwrap_or(0), rotate: !args.no_rotate, lobby: args.lobby.unwrap_or(if scripted { 0 } else { 30 }), skill: args.skill, mode: args.mode.unwrap_or(0), mode_rotate: false },
+            None => menu::Choice::Host {
+                port: args.port,
+                per_team: args.per_team,
+                max_bots: args.max_bots.unwrap_or(64),
+                map: args.map.unwrap_or(0),
+                rotate: !args.no_rotate,
+                lobby: args.lobby.unwrap_or(if scripted { 0 } else { 30 }),
+                skill: args.skill,
+                mode: args.mode.unwrap_or(0),
+                mode_rotate: false,
+            },
         };
         let mut loadout = [args.kit, 0, 1, 2, args.side, args.skin];
         loadout[1 + args.kit as usize % 3] = args.prim;
@@ -1198,7 +1240,9 @@ async fn main() {
             music.in_match = saved.music_in_match;
         }
         let mut prefs = saved.prefs.clone();
-        if std::env::args().any(|a| a == "--shadows") { prefs.shadows = args.shadows; }
+        if std::env::args().any(|a| a == "--shadows") {
+            prefs.shadows = args.shadows;
+        }
         let mut sens = saved.sens;
         if !scripted {
             saved.persist();
@@ -1210,7 +1254,24 @@ async fn main() {
         let mut wskins = saved.wskins;
         let mut sights = saved.sights;
         let mut profile = saved.profile.clone();
-        let (_, msg) = play(&args, &args.name, args.team, choice, &mut sens, &mut loadout, &mut volume, &mut music, &art, &prefs, saved.uuid, &icon, &mut wskins, &mut sights, &mut profile).await;
+        let (_, msg) = play(
+            &args,
+            &args.name,
+            args.team,
+            choice,
+            &mut sens,
+            &mut loadout,
+            &mut volume,
+            &mut music,
+            &art,
+            &prefs,
+            saved.uuid,
+            &icon,
+            &mut wskins,
+            &mut sights,
+            &mut profile,
+        )
+        .await;
         if !scripted {
             saved.profile = profile;
             saved.prefs.fullscreen = is_fullscreen();
@@ -1221,7 +1282,9 @@ async fn main() {
         if let Some(m) = msg {
             eprintln!("{m}");
             for _ in 0..240 {
-                if mq::is_quit_requested() { break; }
+                if mq::is_quit_requested() {
+                    break;
+                }
                 mq::clear_background(mq::Color::new(0.09, 0.08, 0.08, 1.0));
                 mq::draw_text(&m, 40.0, 60.0, 28.0, mq::ORANGE);
                 mq::next_frame().await;
@@ -1272,14 +1335,33 @@ async fn main() {
         let name = menu.name();
         let prefs = menu.prefs.clone();
         let (uuid, icon) = (menu.uuid, menu.icon_rgba());
-        let (joined, msg) = play(&args, &name, 2, choice, &mut menu.sens, &mut menu.loadout, &mut menu.volume, &mut music, &art, &prefs, uuid, &icon, &mut menu.wskins, &mut menu.sights, &mut menu.profile).await;
+        let (joined, msg) = play(
+            &args,
+            &name,
+            2,
+            choice,
+            &mut menu.sens,
+            &mut menu.loadout,
+            &mut menu.volume,
+            &mut music,
+            &art,
+            &prefs,
+            uuid,
+            &icon,
+            &mut menu.wskins,
+            &mut menu.sights,
+            &mut menu.profile,
+        )
+        .await;
         if music.available() {
             menu.music_vol = music.vol;
             menu.music_in_match = music.in_match;
         }
         menu.prefs.fullscreen = is_fullscreen(); // F11 in the match
         menu.persist();
-        if mq::is_quit_requested() { break; }
+        if mq::is_quit_requested() {
+            break;
+        }
         if let (true, Some(a)) = (joined, joining) {
             menu.remember(&a);
         }
@@ -1290,7 +1372,23 @@ async fn main() {
 /// Run one match. Returns whether we got into the match, and a message for
 /// the home screen if it ended for a reason other than the player leaving.
 #[allow(clippy::too_many_arguments)]
-async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mut f32, loadout: &mut [u8; 6], volume: &mut f32, music: &mut Music, art: &ui::Art, prefs: &menu::Prefs, uuid: [u8; 16], icon: &[u8], wskins: &mut [u8; 20], sights: &mut [u8; 20], profile: &mut menu::Profile) -> (bool, Option<String>) {
+async fn play(
+    args: &Args,
+    name: &str,
+    team: u8,
+    choice: menu::Choice,
+    sens: &mut f32,
+    loadout: &mut [u8; 6],
+    volume: &mut f32,
+    music: &mut Music,
+    art: &ui::Art,
+    prefs: &menu::Prefs,
+    uuid: [u8; 16],
+    icon: &[u8],
+    wskins: &mut [u8; 20],
+    sights: &mut [u8; 20],
+    profile: &mut menu::Profile,
+) -> (bool, Option<String>) {
     touch::set_enabled(args.touch || prefs.touch);
     let mut server = None;
     let addr = match choice {
@@ -1353,7 +1451,13 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
     let seed = welcome.seed;
     let world = World::with_map(seed, welcome.map);
     let bounds = scene::shadow_bounds(world.map);
-    let mut gpu = gfx::Gpu::new(scene::build_world(&world), scene::build_sky_for(world.map), prefs.shadows, scene::sun_for(world.map).normalize(), bounds);
+    let mut gpu = gfx::Gpu::new(
+        scene::build_world(&world),
+        scene::build_sky_for(world.map),
+        prefs.shadows,
+        scene::sun_for(world.map).normalize(),
+        bounds,
+    );
     let map_name = ferrite_shared::map::map_def(world.map).name;
     let audio = Audio::new(*volume).await;
     let start = mq::get_time();
@@ -1554,7 +1658,9 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
             // The briefing names the winning next map while its predecessor
             // is still loaded; let that map choose the lobby score too.
             Scene::Lobby(app.net.latest().map_or(app.world.map, |snap| snap.next_map))
-        } else { Scene::Match(app.world.map) };
+        } else {
+            Scene::Match(app.world.map)
+        };
         music.update(music_scene, dt).await;
         app.now_playing = music.now_playing().map(|t| t.to_string());
 
@@ -1591,7 +1697,11 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
                     app.chat_open = false;
                     app.chat_buf.clear();
                 }
-            } else if !app.spectator && !app.auto && !app.team_pick && (app.bind_pressed(Action::ChatAll) || app.bind_pressed(Action::ChatTeam)) {
+            } else if !app.spectator
+                && !app.auto
+                && !app.team_pick
+                && (app.bind_pressed(Action::ChatAll) || app.bind_pressed(Action::ChatTeam))
+            {
                 app.chat_open = true;
                 app.chat_team = app.bind_pressed(Action::ChatTeam);
                 app.chat_buf.clear();
@@ -1608,7 +1718,11 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         // ---- input: mouse capture, look, edge-triggered keys ----
         // Team picker: M opens it; click a side, or M / Esc to cancel.
         let mut picked = false;
-        let back_pressed = !typing() && (pressed(mq::KeyCode::Escape) || controller::pause_pressed() || touch::pause_pressed() || (ui_input && controller::menu_back()));
+        let back_pressed = !typing()
+            && (pressed(mq::KeyCode::Escape)
+                || controller::pause_pressed()
+                || touch::pause_pressed()
+                || (ui_input && controller::menu_back()));
         if app.team_pick {
             if app.action_pressed(Action::ChangeTeam) || back_pressed {
                 app.team_pick = false;
@@ -1757,7 +1871,9 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
             }
             app.last_mouse = mq::mouse_position();
         }
-        if leave || !app.team_pick && !picked && (!app.captured || app.spectator) && (pressed(mq::KeyCode::Q) || (app.spectator && back_pressed)) {
+        if leave
+            || !app.team_pick && !picked && (!app.captured || app.spectator) && (pressed(mq::KeyCode::Q) || (app.spectator && back_pressed))
+        {
             break;
         }
         app.input_blocked = ui_input || picked || !grabbed || typing();
@@ -1817,7 +1933,10 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
                 app.sub_banner = Some((format!("{} FINISH: {}", sim::weapon_def(wid).name.to_uppercase(), fin), now));
             }
         }
-        for (k, action) in [Action::ClassVanguard, Action::ClassBreacher, Action::ClassMarksman, Action::NextPrimary, Action::NextSidearm].into_iter().enumerate() {
+        for (k, action) in [Action::ClassVanguard, Action::ClassBreacher, Action::ClassMarksman, Action::NextPrimary, Action::NextSidearm]
+            .into_iter()
+            .enumerate()
+        {
             if panel && !picked && app.action_pressed(action) && !app.spectator {
                 let (kit, prim, side) = app.loadout();
                 match k {
@@ -1833,7 +1952,10 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
                     _ => app.pick_loadout(0, k as u8),
                 }
                 let (kit, prim, side) = app.loadout();
-                app.sub_banner = Some((format!("NEXT DEPLOY: {} - {} - {}", sim::kit(kit).name, sim::weapon_def(prim).name, sim::weapon_def(side).name), now));
+                app.sub_banner = Some((
+                    format!("NEXT DEPLOY: {} - {} - {}", sim::kit(kit).name, sim::weapon_def(prim).name, sim::weapon_def(side).name),
+                    now,
+                ));
             }
         }
         if grabbed && !picked && app.action_pressed(Action::CycleSight) && app.alive && !app.spectator {
@@ -1863,7 +1985,9 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
             app.aim_toggle_on = false;
         } else {
             if app.toggle_aim {
-                if app.bind_pressed(Action::Aim) { app.aim_toggle_on = !app.aim_toggle_on; }
+                if app.bind_pressed(Action::Aim) {
+                    app.aim_toggle_on = !app.aim_toggle_on;
+                }
             } else {
                 app.aim_toggle_on = app.bind_down(Action::Aim);
             }
@@ -1877,7 +2001,13 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         if let Some(m) = app.net.latest().map(|s| s.map) {
             if m != app.world.map {
                 app.world = World::with_map(seed, m);
-                let fresh = gfx::Gpu::new(scene::build_world(&app.world), scene::build_sky_for(app.world.map), prefs.shadows, scene::sun_for(app.world.map).normalize(), scene::shadow_bounds(app.world.map));
+                let fresh = gfx::Gpu::new(
+                    scene::build_world(&app.world),
+                    scene::build_sky_for(app.world.map),
+                    prefs.shadows,
+                    scene::sun_for(app.world.map).normalize(),
+                    scene::shadow_bounds(app.world.map),
+                );
                 std::mem::replace(&mut gpu, fresh).destroy();
                 app.fx = fx::Fx::new();
                 app.corpses.clear();
@@ -1945,12 +2075,18 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
             if let Some(t) = app.net.roster.iter().find(|r| r.id == app.my_id).map(|r| r.team) {
                 if t != app.my_team && t < 2 {
                     app.my_team = t;
-                    app.banner = Some((format!("YOU JOINED {}", TEAM_NAMES[t as usize]), if t == 0 { [1.0, 0.72, 0.38] } else { [0.5, 0.8, 1.0] }, now));
+                    app.banner = Some((
+                        format!("YOU JOINED {}", TEAM_NAMES[t as usize]),
+                        if t == 0 { [1.0, 0.72, 0.38] } else { [0.5, 0.8, 1.0] },
+                        now,
+                    ));
                 }
             }
         }
 
-        if mq::is_quit_requested() { break; }
+        if mq::is_quit_requested() {
+            break;
+        }
 
         // ---- fixed-rate prediction ----
         acc += dt;
@@ -2031,14 +2167,28 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
                 app.kc_armed = None;
                 // From where the killer is first on record, up to 3.2 s back.
                 let from = tick as f64 - 3.2 * 60.0;
-                let first = app.net.snaps.iter().find(|s| s.tick as f64 >= from && s.players.iter().any(|p| p.id == killer)).map(|s| s.tick as f64);
+                let first =
+                    app.net.snaps.iter().find(|s| s.tick as f64 >= from && s.players.iter().any(|p| p.id == killer)).map(|s| s.tick as f64);
                 if let Some(first) = first.filter(|f| *f < tick as f64 - 40.0) {
-                    app.kc = Some(KillCam { killer, weapon, death_tick: tick, death_now: at, start_now: now, from: first, to: tick as f64 + 20.0, rt: first, fx_tick: first, ads: 0.0 });
+                    app.kc = Some(KillCam {
+                        killer,
+                        weapon,
+                        death_tick: tick,
+                        death_now: at,
+                        start_now: now,
+                        from: first,
+                        to: tick as f64 + 20.0,
+                        rt: first,
+                        fx_tick: first,
+                        ads: 0.0,
+                    });
                     app.last_seen = [-10.0; 64]; // everyone snaps to where they were
                 }
             }
         }
-        let skip = !app.auto && !picked && (app.action_pressed(Action::Jump) || app.action_pressed(Action::Fire) || (!typing() && controller::left_pressed()));
+        let skip = !app.auto
+            && !picked
+            && (app.action_pressed(Action::Jump) || app.action_pressed(Action::Fire) || (!typing() && controller::left_pressed()));
         let mut replayed: Vec<Fx> = Vec::new();
         if let Some(k) = app.kc.as_mut() {
             k.rt = k.from + (now - k.start_now) * 60.0;
@@ -2083,11 +2233,8 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
             // its rising edge. Drawing a weapon only lowers the arms.
             if r.flags2 & flag2::RELOAD != 0 {
                 let ticks = if r.flags & flag::SURGE != 0 { wd.reload / 2 } else { wd.reload }.max(1);
-                app.rreload_phase[i] = if app.rreload_phase[i] < 0.0 || !fresh_pos {
-                    0.0
-                } else {
-                    (app.rreload_phase[i] + dt * 60.0 / ticks as f32).min(1.0)
-                };
+                app.rreload_phase[i] =
+                    if app.rreload_phase[i] < 0.0 || !fresh_pos { 0.0 } else { (app.rreload_phase[i] + dt * 60.0 / ticks as f32).min(1.0) };
             } else {
                 app.rreload_phase[i] = -1.0;
             }
@@ -2249,7 +2396,11 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
             c
         } else {
             // Death cam: pull back and look toward whoever got you.
-            let target = if app.killer != SPECTATOR_ID { app.last_pos[app.killer as usize % 64] } else { app.death_pos + sim::view_dir(app.yaw, 0.0) };
+            let target = if app.killer != SPECTATOR_ID {
+                app.last_pos[app.killer as usize % 64]
+            } else {
+                app.death_pos + sim::view_dir(app.yaw, 0.0)
+            };
             let mut h = target - app.death_pos;
             h.y = 0.0;
             let h = if h.length() > 0.5 { h.normalize() } else { sim::view_dir(app.yaw, 0.0) };
@@ -2285,8 +2436,7 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         let blob = !gpu.shadows();
         // A quiet, positional ambient cue once per gust, behind combat audio.
         // This is cosmetic and never creates a network event or damage.
-        if app.world.map == 2 && app.kc.is_none()
-            && (now / 7.0) as u64 != ((now - dt as f64) / 7.0) as u64 {
+        if app.world.map == 2 && app.kc.is_none() && (now / 7.0) as u64 != ((now - dt as f64) / 7.0) as u64 {
             let panel = vec3(12.0, app.world.height(0.0, 0.0) + 6.3, 6.25);
             if panel.distance(eye) < 42.0 {
                 app.audio.play_at(Sfx::MetalRattle, panel, eye, 0.22, 12.0);
@@ -2349,11 +2499,8 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
                 for (f, fl) in s.flags.iter().enumerate() {
                     let carried = fl.state == 1;
                     // On its carrier's back; not drawn across our own view.
-                    let pos = if !carried {
-                        Some(Vec3::from(fl.pos))
-                    } else {
-                        app.views.iter().find(|v| v.id == fl.carrier).map(|v| v.pos)
-                    };
+                    let pos =
+                        if !carried { Some(Vec3::from(fl.pos)) } else { app.views.iter().find(|v| v.id == fl.carrier).map(|v| v.pos) };
                     if let Some(pos) = pos {
                         scene::flag(&mut opaque, &mut add, pos, f as u8, carried, time);
                     }
@@ -2368,7 +2515,13 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
                 opaque.obox(&m, Vec3::ZERO, Vec3::splat(0.09), gfx::rgb(0.14, 0.16, 0.12));
                 let c = scene::team_col(g.team);
                 let s = 0.2 + 0.1 * (time * 20.0).sin();
-                add.quad(p - cam_right * s - cam_up * s, p + cam_right * s - cam_up * s, p + cam_right * s + cam_up * s, p - cam_right * s + cam_up * s, [c[0], c[1], c[2], 0.8]);
+                add.quad(
+                    p - cam_right * s - cam_up * s,
+                    p + cam_right * s - cam_up * s,
+                    p + cam_right * s + cam_up * s,
+                    p - cam_right * s + cam_up * s,
+                    [c[0], c[1], c[2], 0.8],
+                );
             }
         }
         app.fx.build(&mut opaque, &mut alpha, &mut add, eye, cam_right, cam_up);
@@ -2482,7 +2635,9 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
             gpu.overlay(&over_mesh, mq::screen_width(), sh);
         }
 
-        if !grabbed { controller::draw_cursor(); }
+        if !grabbed {
+            controller::draw_cursor();
+        }
 
         let t = now - app.start;
         if let Some(path) = &args.shot {
@@ -2539,7 +2694,12 @@ async fn play(args: &Args, name: &str, team: u8, choice: menu::Choice, sens: &mu
         s.my_deaths,
         if app.audio.ok { "ok" } else { "unavailable" },
     );
-    println!("triangles: {} static world, {} peak per frame; {:.0} frames a second", gpu.tris, peak_tris, frames as f64 / (mq::get_time() - began).max(0.001));
+    println!(
+        "triangles: {} static world, {} peak per frame; {:.0} frames a second",
+        gpu.tris,
+        peak_tris,
+        frames as f64 / (mq::get_time() - began).max(0.001)
+    );
     if let Some(mut h) = server {
         h.stop();
     }

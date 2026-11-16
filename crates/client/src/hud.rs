@@ -9,8 +9,8 @@ use ferrite_shared::proto::{flag, pickup, SPECTATOR_ID};
 use ferrite_shared::sim;
 use ferrite_shared::{eligible, NEUTRAL, POINT_NAMES, POINT_RADIUS, TEAM_NAMES};
 use macroquad::prelude::{
-    draw_circle, draw_circle_lines, draw_line, draw_poly, draw_rectangle, draw_rectangle_lines, draw_triangle,
-    screen_height, screen_width, Color, Vec2,
+    draw_circle, draw_circle_lines, draw_line, draw_poly, draw_rectangle, draw_rectangle_lines, draw_triangle, screen_height, screen_width,
+    Color, Vec2,
 };
 
 /// Text goes through the UI kit's typeface.
@@ -51,7 +51,13 @@ fn text_r(s: &str, rx: f32, y: f32, size: f32, c: Color) {
 /// A player icon, `s` pixels square.
 fn pic(t: &macroquad::prelude::Texture2D, x: f32, y: f32, s: f32, a: f32) {
     use macroquad::prelude::{draw_texture_ex, vec2, DrawTextureParams};
-    draw_texture_ex(t, x.round(), y.round(), Color::new(1.0, 1.0, 1.0, a), DrawTextureParams { dest_size: Some(vec2(s, s)), ..Default::default() });
+    draw_texture_ex(
+        t,
+        x.round(),
+        y.round(),
+        Color::new(1.0, 1.0, 1.0, a),
+        DrawTextureParams { dest_size: Some(vec2(s, s)), ..Default::default() },
+    );
 }
 
 /// Break `s` into lines: the first at most `first` pixels wide, the rest
@@ -156,7 +162,11 @@ fn draw_chat(app: &App, w: f32, h: f32, now: f64) {
         y -= lh * (lines.len() as f32 - 1.0);
         for (n, line) in lines.iter().enumerate() {
             let ly = y + n as f32 * lh;
-            let (lx, lw) = if n == 0 { (x + iw + hw, iw + hw + crate::ui::width(line, size)) } else { (x + 14.0, 14.0 + crate::ui::width(line, size)) };
+            let (lx, lw) = if n == 0 {
+                (x + iw + hw, iw + hw + crate::ui::width(line, size))
+            } else {
+                (x + 14.0, 14.0 + crate::ui::width(line, size))
+            };
             draw_rectangle(x - 6.0, ly - 15.0, lw + 12.0, lh, col(DARK, 0.5 * a));
             if n == 0 && !m.system {
                 if let Some(t) = &m.icon {
@@ -268,7 +278,12 @@ fn draw_loadout(app: &App, w: f32, h: f32, icons: &mut Vec<GunIcon>) {
     let tc = team_col(app.my_team);
     use crate::bindings::Action;
     let titles = [
-        format!("CLASS   {} / {} / {}", key_hint(app, Action::ClassVanguard), key_hint(app, Action::ClassBreacher), key_hint(app, Action::ClassMarksman)),
+        format!(
+            "CLASS   {} / {} / {}",
+            key_hint(app, Action::ClassVanguard),
+            key_hint(app, Action::ClassBreacher),
+            key_hint(app, Action::ClassMarksman)
+        ),
         format!("PRIMARY   {} next", key_hint(app, Action::NextPrimary)),
         format!("SIDEARM   {} next", key_hint(app, Action::NextSidearm)),
     ];
@@ -312,7 +327,15 @@ fn draw_loadout(app: &App, w: f32, h: f32, icons: &mut Vec<GunIcon>) {
         if c == 1 || c == 2 {
             let id = if c == 1 { kd.prims[r as usize] } else { sim::SIDEARMS[r as usize] };
             draw_rectangle(x + 5.0, y + 2.0, ICON_W, rh - 4.0, col(DARK, 0.45));
-            icons.push(GunIcon { wid: id, skin: app.wskins[id as usize % 20], cx: x + 5.0 + ICON_W / 2.0, cy: y + rh / 2.0, w: ICON_W - 10.0, h: rh - 10.0, turn: false });
+            icons.push(GunIcon {
+                wid: id,
+                skin: app.wskins[id as usize % 20],
+                cx: x + 5.0 + ICON_W / 2.0,
+                cy: y + rh / 2.0,
+                w: ICON_W - 10.0,
+                h: rh - 10.0,
+                turn: false,
+            });
             tx = x + ICON_W + 12.0;
             if over {
                 big[c as usize - 1] = id;
@@ -329,7 +352,17 @@ fn draw_loadout(app: &App, w: f32, h: f32, icons: &mut Vec<GunIcon>) {
         let skin = sim::fix_weapon_skin(id, app.wskins[id as usize % 20]);
         if sim::weapon_skins_for(id).len() > 1 {
             let over = mx >= bx && mx < bx + bw && my >= top + 4.0 && my < top + 88.0;
-            text_r(&format!("{} FINISH   {} or click", sim::weapon_skin(skin).name, key_hint(app, if k == 0 { Action::PrimaryFinish } else { Action::SidearmFinish })), bx + bw - 4.0, top + 20.0, 14.0, col(WHITE, if over { 1.0 } else { 0.7 }));
+            text_r(
+                &format!(
+                    "{} FINISH   {} or click",
+                    sim::weapon_skin(skin).name,
+                    key_hint(app, if k == 0 { Action::PrimaryFinish } else { Action::SidearmFinish })
+                ),
+                bx + bw - 4.0,
+                top + 20.0,
+                14.0,
+                col(WHITE, if over { 1.0 } else { 0.7 }),
+            );
         }
         icons.push(GunIcon { wid: id, skin, cx: bx + bw / 2.0, cy: top + 54.0, w: bw - 30.0, h: 64.0, turn: true });
     }
@@ -386,11 +419,31 @@ fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
     let (mx, my) = crate::controller::mouse_position();
     let hx = (500.0 * crate::ui::art_scale(w, h)).max(x0);
     let soon = snap.phase_secs > 0.05 && snap.phase_secs <= 3.0;
-    let status = if snap.phase_secs > 0.05 { format!("MATCH STARTS IN 00:{:02.0}", snap.phase_secs.ceil()) } else { "WAITING FOR PLAYERS".to_string() };
+    let status = if snap.phase_secs > 0.05 {
+        format!("MATCH STARTS IN 00:{:02.0}", snap.phase_secs.ceil())
+    } else {
+        "WAITING FOR PLAYERS".to_string()
+    };
     text("PRE-MATCH BRIEFING", hx, 36.0, 15.0, Color::new(0.718, 0.863, 1.0, 1.0));
     text(&status, hx, 66.0, 30.0, col(if soon { WARNING } else { WHITE }, 1.0));
-    text("Vote for the map and the game mode, and choose a loadout. It starts early once everyone is ready.", hx, 90.0, 17.0, col(WHITE, 0.75));
-    text(&format!("{} team      R ready      {} chat      Q leave", key_hint(app, crate::bindings::Action::ChangeTeam), key_hint(app, crate::bindings::Action::ChatAll)), x0, 113.0, 17.0, col(WHITE, 0.7));
+    text(
+        "Vote for the map and the game mode, and choose a loadout. It starts early once everyone is ready.",
+        hx,
+        90.0,
+        17.0,
+        col(WHITE, 0.75),
+    );
+    text(
+        &format!(
+            "{} team      R ready      {} chat      Q leave",
+            key_hint(app, crate::bindings::Action::ChangeTeam),
+            key_hint(app, crate::bindings::Action::ChatAll)
+        ),
+        x0,
+        113.0,
+        17.0,
+        col(WHITE, 0.7),
+    );
     if let Some(t) = &app.now_playing {
         text_r(&format!("now playing: {t}"), x0 + pw, 113.0, 17.0, col(WHITE, 0.7));
     }
@@ -407,7 +460,20 @@ fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
         if mine {
             draw_rectangle(x, y, cw, ch, col(tc, 0.3));
         }
-        draw_rectangle_lines(x, y, cw, ch, if next { 3.0 } else { 2.0 }, if next { col(WHITE, 0.95) } else if over { Color::new(0.412, 0.678, 1.0, 1.0) } else { Color::new(0.706, 0.761, 0.882, 0.38) });
+        draw_rectangle_lines(
+            x,
+            y,
+            cw,
+            ch,
+            if next { 3.0 } else { 2.0 },
+            if next {
+                col(WHITE, 0.95)
+            } else if over {
+                Color::new(0.412, 0.678, 1.0, 1.0)
+            } else {
+                Color::new(0.706, 0.761, 0.882, 0.38)
+            },
+        );
         let v = snap.mode_votes[k % 4];
         let label = if cw < 200.0 { def.name.to_string() } else { format!("{}  -  {}", def.name, def.pace) };
         let size = (15.0 * (cw - 70.0) / crate::ui::width(&label, 15.0).max(1.0)).min(15.0);
@@ -429,7 +495,20 @@ fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
         if mine {
             draw_rectangle(x, y, cw, ch, col(tc, 0.3));
         }
-        draw_rectangle_lines(x, y, cw, ch, if next { 3.0 } else { 2.0 }, if next { col(WHITE, 0.95) } else if over { Color::new(0.412, 0.678, 1.0, 1.0) } else { Color::new(0.706, 0.761, 0.882, 0.38) });
+        draw_rectangle_lines(
+            x,
+            y,
+            cw,
+            ch,
+            if next { 3.0 } else { 2.0 },
+            if next {
+                col(WHITE, 0.95)
+            } else if over {
+                Color::new(0.412, 0.678, 1.0, 1.0)
+            } else {
+                Color::new(0.706, 0.761, 0.882, 0.38)
+            },
+        );
         draw_rectangle(x + 12.0, y + ch - 6.0, cw - 24.0, 2.0, col(if mine { tc } else { [0.412, 0.678, 1.0] }, 0.8));
         // Keep all map names inside their cards as the catalogue grows.
         let name_size = (20.0 * (cw - 24.0) / crate::ui::width(def.name, 20.0).max(1.0)).min(20.0);
@@ -470,7 +549,13 @@ fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
             if ny > loadout_top(h) - 14.0 {
                 break;
             }
-            let a = if r.id == app.my_id { 1.0 } else if r.bot { 0.4 } else { 0.9 };
+            let a = if r.id == app.my_id {
+                1.0
+            } else if r.bot {
+                0.4
+            } else {
+                0.9
+            };
             if let Some(tex) = app.icon(r.id) {
                 pic(tex, nx, ny - 13.0, 15.0, 1.0);
                 nx += 19.0;
@@ -511,13 +596,29 @@ fn draw_team_pick(app: &App, w: f32, h: f32) {
         text_c(&format!("{} fighters  -  {} human", total, humans), cx, y + 108.0, 20.0, col(WHITE, 0.85));
         if let Some(s) = app.net.latest() {
             let held = s.points.iter().filter(|p| p.owner as usize == t).count();
-            let line = if s.mode == mode::CONQUEST { format!("{} tickets  -  holds {} of 5", s.tickets[t], held) } else { format!("{} {}", s.tickets[t], score_word(s.mode)) };
+            let line = if s.mode == mode::CONQUEST {
+                format!("{} tickets  -  holds {} of 5", s.tickets[t], held)
+            } else {
+                format!("{} {}", s.tickets[t], score_word(s.mode))
+            };
             text_c(&line, cx, y + 136.0, 20.0, col(WHITE, 0.85));
         }
-        let (label, a) = if mine { ("YOUR TEAM", 0.7) } else if total > humans { ("CLICK TO JOIN", 1.0) } else { ("FULL", 0.5) };
+        let (label, a) = if mine {
+            ("YOUR TEAM", 0.7)
+        } else if total > humans {
+            ("CLICK TO JOIN", 1.0)
+        } else {
+            ("FULL", 0.5)
+        };
         text_c(label, cx, y + ph - 28.0, 24.0, col(WHITE, a));
     }
-    text_c(&format!("Switching sides redeploys you.     {} or ESC to cancel", key_hint(app, crate::bindings::Action::ChangeTeam)), w / 2.0, rects[0].1 + rects[0].3 + 40.0, 20.0, col(WHITE, 0.75));
+    text_c(
+        &format!("Switching sides redeploys you.     {} or ESC to cancel", key_hint(app, crate::bindings::Action::ChangeTeam)),
+        w / 2.0,
+        rects[0].1 + rects[0].3 + 40.0,
+        20.0,
+        col(WHITE, 0.75),
+    );
 }
 
 /// Size of the pause overlay relative to its 1672 x 941 design.
@@ -641,7 +742,8 @@ fn draw_pause(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
     draw_text("MATCH STATUS", ix, py + 32.0 * k, sz(17.0), th::MUTED);
     draw_text(&ferrite_shared::map::map_def(snap.map).name.to_uppercase(), ix, py + 70.0 * k, sz(36.0), th::WHITE);
     let mdef = ferrite_shared::mode_def(snap.mode);
-    let mline = if snap.mode == mode::CONQUEST { "FRONT-LINE CONQUEST".to_string() } else { format!("{}  -  FIRST TO {}", mdef.name, snap.goal) };
+    let mline =
+        if snap.mode == mode::CONQUEST { "FRONT-LINE CONQUEST".to_string() } else { format!("{}  -  FIRST TO {}", mdef.name, snap.goal) };
     draw_text(&mline, ix, py + 96.0 * k, sz(17.0), th::MUTED);
     let cw = (iw - 12.0 * k) / 2.0;
     for t in 0..2usize {
@@ -649,7 +751,14 @@ fn draw_pause(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
         let cy = py + 122.0 * k;
         let tc = team_col(t as u8);
         let mine = app.my_team as usize == t;
-        crate::ui::plate(cx, cy, cw, 72.0 * k, col([tc[0] * 0.22, tc[1] * 0.22, tc[2] * 0.22], 0.95), if mine { col(tc, 1.0) } else { col(tc, 0.4) });
+        crate::ui::plate(
+            cx,
+            cy,
+            cw,
+            72.0 * k,
+            col([tc[0] * 0.22, tc[1] * 0.22, tc[2] * 0.22], 0.95),
+            if mine { col(tc, 1.0) } else { col(tc, 0.4) },
+        );
         pic(&app.art.emblems[t], cx + 10.0 * k, cy + 12.0 * k, 48.0 * k, 48.0 * k);
         draw_text(TEAM_NAMES[t], cx + 70.0 * k, cy + 28.0 * k, sz(17.0), col(tc, 1.0));
         draw_text(&snap.tickets[t].max(0).to_string(), cx + 70.0 * k, cy + 60.0 * k, sz(36.0), th::WHITE);
@@ -695,7 +804,13 @@ fn draw_pause(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
             None => draw_circle(ix + 8.0 * k, ry + 13.0 * k, 5.0 * k, if r.bot { th::QUIET } else { th::SUCCESS }),
         }
         draw_text(&r.name, ix + 30.0 * k, ry + 20.0 * k, sz(19.0), if r.bot { th::MUTED } else { th::WHITE });
-        let tag = if me { "YOU" } else if r.bot { "BOT" } else { "" };
+        let tag = if me {
+            "YOU"
+        } else if r.bot {
+            "BOT"
+        } else {
+            ""
+        };
         crate::ui::text_r(tag, ix + iw, ry + 20.0 * k, sz(15.0), if me { th::EMBER_BRIGHT } else { th::QUIET });
         crate::ui::text_r(&format!("{} / {}", r.kills, r.deaths), ix + iw - 60.0 * k, ry + 20.0 * k, sz(15.0), th::MUTED);
     }
@@ -710,8 +825,20 @@ fn draw_pause(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
     draw_text("CONTROLS", ix, qy + 32.0 * k, sz(17.0), th::MUTED);
     use crate::bindings::Action;
     let keys = [
-        [("ESC".into(), "resume"), (key_hint(app, Action::Loadout), "loadout"), (key_hint(app, Action::ChatAll), "chat"), (key_hint(app, Action::Scoreboard), "scoreboard"), ("Q".into(), "leave (here)")],
-        [(key_hint(app, Action::CycleSight), "change sight"), (key_hint(app, Action::Grenade), "frag grenade"), (key_hint(app, Action::SwapWeapon), "sidearm"), (key_hint(app, Action::Crouch), "crouch / slide"), (key_hint(app, Action::Melee), "melee")],
+        [
+            ("ESC".into(), "resume"),
+            (key_hint(app, Action::Loadout), "loadout"),
+            (key_hint(app, Action::ChatAll), "chat"),
+            (key_hint(app, Action::Scoreboard), "scoreboard"),
+            ("Q".into(), "leave (here)"),
+        ],
+        [
+            (key_hint(app, Action::CycleSight), "change sight"),
+            (key_hint(app, Action::Grenade), "frag grenade"),
+            (key_hint(app, Action::SwapWeapon), "sidearm"),
+            (key_hint(app, Action::Crouch), "crouch / slide"),
+            (key_hint(app, Action::Melee), "melee"),
+        ],
     ];
     for (c, column) in keys.iter().enumerate() {
         for (r, (key, what)) in column.iter().enumerate() {
@@ -746,7 +873,12 @@ fn draw_scoreboard(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h:
     text_c("-", mid, top + 26.0, 22.0, th::MUTED);
     text(&format!("{}  {}", wins[1], TEAM_NAMES[1]), mid + 14.0, top + 26.0, 22.0, col(team_col(1), 1.0));
     let live = match snap.phase {
-        0 => format!("round {} in progress: {} on {}", app.net.rounds.len().max((wins[0] + wins[1]) as usize) + 1, ferrite_shared::mode_def(snap.mode).name.to_lowercase(), ferrite_shared::map::map_def(snap.map).name),
+        0 => format!(
+            "round {} in progress: {} on {}",
+            app.net.rounds.len().max((wins[0] + wins[1]) as usize) + 1,
+            ferrite_shared::mode_def(snap.mode).name.to_lowercase(),
+            ferrite_shared::map::map_def(snap.map).name
+        ),
         1 => "round over".to_string(),
         _ => "in the lobby".to_string(),
     };
@@ -791,7 +923,13 @@ fn draw_scoreboard(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h:
         let right = x + half - 12.0;
         let tc = team_col(t);
         text(TEAM_NAMES[t as usize], x, ty + 22.0, 24.0, col(tc, 1.0));
-        crate::ui::text_r(&format!("{} {}", snap.tickets[t as usize], score_word(snap.mode)), x + 250.0f32.min(half * 0.5), ty + 20.0, 15.0, th::MUTED);
+        crate::ui::text_r(
+            &format!("{} {}", snap.tickets[t as usize], score_word(snap.mode)),
+            x + 250.0f32.min(half * 0.5),
+            ty + 20.0,
+            15.0,
+            th::MUTED,
+        );
         let head = |s: &str, off: f32| crate::ui::text_r(s, right - off, ty + 42.0, 13.0, th::QUIET);
         head("K", c_k);
         head("D", c_d);
@@ -849,11 +987,7 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
         return icons;
     };
     let playing = app.alive && !app.spectator;
-    let my_pos = if app.spectator {
-        app.views.iter().find(|v| v.id == app.spec_target).map_or(Vec3::ZERO, |v| v.pos)
-    } else {
-        app.st.pos
-    };
+    let my_pos = if app.spectator { app.views.iter().find(|v| v.id == app.spec_target).map_or(Vec3::ZERO, |v| v.pos) } else { app.st.pos };
     let owners = [snap.points[0].owner, snap.points[1].owner, snap.points[2].owner, snap.points[3].owner, snap.points[4].owner];
 
     // ---- scope ----
@@ -909,7 +1043,11 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
             let (at, label) = if mine {
                 (app.world.points[ferrite_shared::FLAG_POINT[app.my_team as usize % 2]], "BRING IT HERE")
             } else {
-                let pos = if fl.state == 1 { app.views.iter().find(|v| v.id == fl.carrier).map_or(Vec3::from(fl.pos), |v| v.pos) } else { Vec3::from(fl.pos) };
+                let pos = if fl.state == 1 {
+                    app.views.iter().find(|v| v.id == fl.carrier).map_or(Vec3::from(fl.pos), |v| v.pos)
+                } else {
+                    Vec3::from(fl.pos)
+                };
                 let label = match (fl.state, ours) {
                     (0, true) => "DEFEND",
                     (0, false) => "TAKE",
@@ -1092,7 +1230,14 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
             let c = col(WHITE, 0.9);
             let len = 9.0;
             for (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
-                draw_line(cx + dx * gap + 1.0, cy + dy * gap + 1.0, cx + dx * (gap + len) + 1.0, cy + dy * (gap + len) + 1.0, 2.0, col(DARK, 0.5));
+                draw_line(
+                    cx + dx * gap + 1.0,
+                    cy + dy * gap + 1.0,
+                    cx + dx * (gap + len) + 1.0,
+                    cy + dy * (gap + len) + 1.0,
+                    2.0,
+                    col(DARK, 0.5),
+                );
                 draw_line(cx + dx * gap, cy + dy * gap, cx + dx * (gap + len), cy + dy * (gap + len), 2.0, c);
             }
             draw_circle(cx, cy, 1.5, c);
@@ -1150,7 +1295,13 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
             let pulse = if fl.state != 0 { 0.6 + 0.4 * (now as f32 * 8.0).sin() } else { 1.0 };
             draw_poly(x, top + 14.0, 3, 13.0, 90.0, col(DARK, 0.9));
             draw_poly(x, top + 14.0, 3, 10.0, 90.0, col(c, pulse));
-            text_c(["HOME", "TAKEN", "DOWN"][fl.state as usize % 3], x, top + 40.0, 13.0, col(if fl.state == 0 { WHITE } else { WARNING }, 0.9));
+            text_c(
+                ["HOME", "TAKEN", "DOWN"][fl.state as usize % 3],
+                x,
+                top + 40.0,
+                13.0,
+                col(if fl.state == 0 { WHITE } else { WARNING }, 0.9),
+            );
         }
     }
     for k in 0..5 {
@@ -1205,7 +1356,13 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
     let mut fy = 92.0;
     for k in app.feed.iter().rev() {
         let age = (now - k.at) as f32;
-        let life = if k.mine { 9.0 } else if k.human { 8.0 } else { 4.5 };
+        let life = if k.mine {
+            9.0
+        } else if k.human {
+            8.0
+        } else {
+            4.5
+        };
         if age > life {
             continue;
         }
@@ -1332,7 +1489,9 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
             };
             let sector = if app.world.map == ferrite_shared::map::slag_cathedral::MAP_ID {
                 format!("{} / {}", POINT_NAMES[k], ferrite_shared::map::slag_cathedral::SECTOR_NAMES[k])
-            } else { format!("POINT {}", POINT_NAMES[k]) };
+            } else {
+                format!("POINT {}", POINT_NAMES[k])
+            };
             text_c(&format!("{}  -  {}", sector, status), cx, y - 8.0, 20.0, col(WHITE, 0.95));
             draw_rectangle(cx - bw * 0.5 - 2.0, y - 2.0, bw + 4.0, bh + 4.0, col(DARK, 0.8));
             draw_rectangle(cx - bw * 0.5, y, bw, bh, col(NEUTRAL_COL, 0.25));
@@ -1354,7 +1513,13 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
         let frac = (app.hp as f32 / max).clamp(0.0, 1.0);
         let (x, y) = (24.0, h - 44.0);
         draw_rectangle(x - 4.0, y - 4.0, 248.0, 28.0, col(DARK, 0.6));
-        let hc = if frac > 0.5 { WHITE } else if frac > 0.25 { [1.0, 0.75, 0.2] } else { [1.0, 0.25, 0.15] };
+        let hc = if frac > 0.5 {
+            WHITE
+        } else if frac > 0.25 {
+            [1.0, 0.75, 0.2]
+        } else {
+            [1.0, 0.25, 0.15]
+        };
         draw_rectangle(x, y, 240.0 * frac, 20.0, col(hc, 0.92));
         text(&format!("{}", app.hp), x + 6.0, y + 16.0, 20.0, col(DARK, 1.0));
         // Armour sits over the health it protects.
@@ -1392,10 +1557,28 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
         let low = app.st.ammo as f32 <= wd.mag as f32 * 0.25;
         text_r(&ammo, w - 96.0, h - 26.0, 52.0, if low { Color::new(1.0, 0.35, 0.2, 1.0) } else { col(WHITE, 1.0) });
         text(&format!("/ {}", wd.mag), w - 90.0, h - 28.0, 24.0, col(WHITE, 0.6));
-        text_r(&format!("{}  -  {}", wd.name, crate::scene::SIGHT_NAMES[app.sight() as usize % 6]), w - 24.0, h - 74.0, 20.0, col(WHITE, 0.75));
-        text_r(&format!("[{}] change sight", app.bindings.display(crate::bindings::Action::CycleSight)), w - 24.0, h - 150.0, 18.0, col(WHITE, 0.55));
+        text_r(
+            &format!("{}  -  {}", wd.name, crate::scene::SIGHT_NAMES[app.sight() as usize % 6]),
+            w - 24.0,
+            h - 74.0,
+            20.0,
+            col(WHITE, 0.75),
+        );
+        text_r(
+            &format!("[{}] change sight", app.bindings.display(crate::bindings::Action::CycleSight)),
+            w - 24.0,
+            h - 150.0,
+            18.0,
+            col(WHITE, 0.55),
+        );
         let other = sim::weapon_def(if app.st.slot == 1 { app.st.prim } else { app.st.side }).name;
-        text_r(&format!("[{}] {}  {}", key_hint(app, crate::bindings::Action::SwapWeapon), other, app.st.ammo_alt), w - 24.0, h - 128.0, 18.0, col(WHITE, 0.6));
+        text_r(
+            &format!("[{}] {}  {}", key_hint(app, crate::bindings::Action::SwapWeapon), other, app.st.ammo_alt),
+            w - 24.0,
+            h - 128.0,
+            18.0,
+            col(WHITE, 0.6),
+        );
         for g in 0..app.st.grenades {
             draw_poly(w - 34.0 - g as f32 * 22.0, h - 104.0, 6, 8.0, 0.0, col([0.75, 0.8, 0.5], 0.95));
         }
@@ -1477,7 +1660,13 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
         draw_rectangle(0.0, by, w, 112.0, col(DARK, 0.78));
         let c = team_col(snap.winner);
         text_c(&format!("{} HOLDS THE FIELD", TEAM_NAMES[snap.winner as usize % 2]), cx, by + 52.0, 52.0, col(c, 1.0));
-        let res = if app.spectator { "" } else if snap.winner == app.my_team { "VICTORY" } else { "DEFEAT" };
+        let res = if app.spectator {
+            ""
+        } else if snap.winner == app.my_team {
+            "VICTORY"
+        } else {
+            "DEFEAT"
+        };
         let mut line = format!("{}   next round in {:.0}s", res, snap.phase_secs);
         if let Some((credits, _, _)) = app.award.filter(|_| !app.spectator) {
             line = format!("{res}   +{credits} CREDITS   next round in {:.0}s", snap.phase_secs);

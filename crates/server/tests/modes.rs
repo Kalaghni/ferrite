@@ -246,7 +246,11 @@ fn streaks_are_announced_and_leave_their_reward() {
         }
     }
     assert_eq!(rewards, [pickup::ARMOR, pickup::OVERDRIVE, pickup::OVERCHARGE]);
-    let streaks: Vec<u8> = g.feed.iter().filter_map(|f| if let Feed::Streak { who, n } = f { Some(*n).filter(|_| *who as usize == me) } else { None }).collect();
+    let streaks: Vec<u8> = g
+        .feed
+        .iter()
+        .filter_map(|f| if let Feed::Streak { who, n } = f { Some(*n).filter(|_| *who as usize == me) } else { None })
+        .collect();
     assert_eq!(streaks, [3, 5, 7]);
     assert_eq!(g.snapshot(Some(me), 0, 0).me.unwrap().streak, 7);
 
@@ -331,7 +335,10 @@ fn pickups_do_what_they_say() {
     g.tick();
     let p = &g.players[me];
     let k = ferrite_shared::sim::kit(p.st.kit);
-    assert_eq!((p.st.ammo, p.st.ammo_alt, p.st.grenades), (ferrite_shared::sim::weapon_def(p.st.prim).mag, ferrite_shared::sim::weapon_def(p.st.side).mag, k.grenades));
+    assert_eq!(
+        (p.st.ammo, p.st.ammo_alt, p.st.grenades),
+        (ferrite_shared::sim::weapon_def(p.st.prim).mag, ferrite_shared::sim::weapon_def(p.st.side).mag, k.grenades)
+    );
 
     // Overdrive is the capture surge; overcharge is half again the damage.
     let at = g.players[me].st.pos;
@@ -513,7 +520,8 @@ fn mode_vote_and_credits_cross_the_wire() {
     sock.connect(("127.0.0.1", server.addr.port())).unwrap();
     sock.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
     let mut buf = [0u8; 8192];
-    sock.send(&encode(&C2S::Hello { proto: PROTO, name: "voter".into(), spectator: false, team: 0, uuid: [9; 16], icon: Vec::new() })).unwrap();
+    sock.send(&encode(&C2S::Hello { proto: PROTO, name: "voter".into(), spectator: false, team: 0, uuid: [9; 16], icon: Vec::new() }))
+        .unwrap();
     let start = Instant::now();
     let (mut seq, mut voted, mut played, mut award) = (0u32, false, None, None);
     let mut last = Instant::now() - Duration::from_secs(1);
@@ -522,7 +530,8 @@ fn mode_vote_and_credits_cross_the_wire() {
             last = Instant::now();
             seq += 1;
             let cmd = Cmd { seq, ..Default::default() };
-            sock.send(&encode(&C2S::Cmds { cmds: vec![cmd], ack_feed: 0, kit: 0, prim: 0, side: 4, skin: 0, wskin: [0, 0], ack_chat: 0 })).unwrap();
+            sock.send(&encode(&C2S::Cmds { cmds: vec![cmd], ack_feed: 0, kit: 0, prim: 0, side: 4, skin: 0, wskin: [0, 0], ack_chat: 0 }))
+                .unwrap();
             sock.send(&encode(&C2S::Lobby { vote: 255, ready: true, mode: mode::KOTH })).unwrap();
         }
         let Ok(n) = sock.recv(&mut buf) else { continue };

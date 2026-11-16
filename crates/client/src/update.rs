@@ -122,7 +122,8 @@ fn dev_build() -> bool {
 
 /// Ask GitHub which release is the latest.
 pub fn latest_tag() -> Option<String> {
-    let out = tool("curl").args(["-fsSI", "--max-time", "8", "-A", "ferrite-updater"]).arg(format!("{REPO}/releases/latest")).output().ok()?;
+    let out =
+        tool("curl").args(["-fsSI", "--max-time", "8", "-A", "ferrite-updater"]).arg(format!("{REPO}/releases/latest")).output().ok()?;
     tag_from_headers(&String::from_utf8_lossy(&out.stdout))
 }
 
@@ -159,7 +160,10 @@ pub fn clean_old() {
     let Ok(rd) = std::fs::read_dir(&dir) else { return };
     for e in rd.flatten() {
         let p = e.path();
-        let ours = p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with(".old") && (n.starts_with("ferrite") || n.starts_with("README") || n.starts_with("Quantico")));
+        let ours = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.ends_with(".old") && (n.starts_with("ferrite") || n.starts_with("README") || n.starts_with("Quantico")));
         if ours && p.is_file() {
             let _ = std::fs::remove_file(p);
         }
@@ -178,7 +182,8 @@ pub fn install(tag: &str, dir: &Path) -> Result<(), String> {
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     let result = (|| {
         let archive = tmp.join(format!("ferrite-{tag}-{ASSET}"));
-        let got = tool("curl").args(["-fsSL", "--max-time", "600", "-A", "ferrite-updater", "-o"]).arg(&archive).arg(asset_url(tag)).status();
+        let got =
+            tool("curl").args(["-fsSL", "--max-time", "600", "-A", "ferrite-updater", "-o"]).arg(&archive).arg(asset_url(tag)).status();
         match got {
             Ok(s) if s.success() => {}
             Ok(_) => return Err(format!("could not download {tag} for this system")),
@@ -191,7 +196,12 @@ pub fn install(tag: &str, dir: &Path) -> Result<(), String> {
             return Err("could not unpack the download".to_string());
         }
         // The archive holds one folder, named after the release.
-        let inner = std::fs::read_dir(&unpacked).map_err(|e| e.to_string())?.flatten().map(|e| e.path()).find(|p| p.is_dir()).unwrap_or(unpacked.clone());
+        let inner = std::fs::read_dir(&unpacked)
+            .map_err(|e| e.to_string())?
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| p.is_dir())
+            .unwrap_or(unpacked.clone());
         let exe = if cfg!(windows) { "ferrite.exe" } else { "ferrite" };
         if !inner.join(exe).is_file() {
             return Err("the download does not look like FERRITE".to_string());
@@ -369,10 +379,8 @@ mod tests {
         let mut running_image = installed.clone().into_os_string();
         running_image.push(".old");
         let running_image = PathBuf::from(running_image);
-        let mut updater = Updater {
-            state: State::Installed("v0.8.1".into()), rx: None,
-            current: "0.7.0".into(), restart_exe: Some(installed.clone()),
-        };
+        let mut updater =
+            Updater { state: State::Installed("v0.8.1".into()), rx: None, current: "0.7.0".into(), restart_exe: Some(installed.clone()) };
         assert!(updater.launch_installed([OsString::from("--fullscreen")], |command| {
             assert_eq!(command.get_program(), installed.as_os_str());
             assert_ne!(command.get_program(), running_image.as_os_str());
@@ -384,8 +392,10 @@ mod tests {
     #[test]
     fn restart_failure_keeps_the_launcher_open_with_an_error() {
         let mut updater = Updater {
-            state: State::Installed("v0.8.1".into()), rx: None,
-            current: "0.7.0".into(), restart_exe: Some(installed_executable(Path::new("installed"))),
+            state: State::Installed("v0.8.1".into()),
+            rx: None,
+            current: "0.7.0".into(),
+            restart_exe: Some(installed_executable(Path::new("installed"))),
         };
         assert!(!updater.launch_installed([], |_| Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "blocked executable"))));
         let State::Failed(message) = &updater.state else { panic!("restart failure was not shown") };
@@ -402,7 +412,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&new).unwrap();
         std::fs::create_dir_all(&live).unwrap();
-        for (name, text) in [("ferrite.exe", "new game"), ("README.txt", "new readme"), ("start-server.bat", "new bat"), ("extra.txt", "extra")] {
+        for (name, text) in
+            [("ferrite.exe", "new game"), ("README.txt", "new readme"), ("start-server.bat", "new bat"), ("extra.txt", "extra")]
+        {
             std::fs::write(new.join(name), text).unwrap();
         }
         for (name, text) in [("ferrite.exe", "old game"), ("start-server.bat", "my own options"), ("ferrite-client.txt", "name=me")] {

@@ -131,7 +131,12 @@ pub enum Scene {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum MusicTarget { Silence, Rotation, Lobby, Cathedral }
+enum MusicTarget {
+    Silence,
+    Rotation,
+    Lobby,
+    Cathedral,
+}
 
 impl Scene {
     fn target(self, on: bool, in_match: bool) -> MusicTarget {
@@ -167,7 +172,18 @@ pub struct Music {
 
 impl Music {
     pub fn silent() -> Music {
-        Music { enabled: false, on: false, in_match: false, vol: 0.0, songs: Vec::new(), cur: 0, deck: Deck::default(), lobby: Deck::default(), cathedral: Deck::default(), target: MusicTarget::Silence }
+        Music {
+            enabled: false,
+            on: false,
+            in_match: false,
+            vol: 0.0,
+            songs: Vec::new(),
+            cur: 0,
+            deck: Deck::default(),
+            lobby: Deck::default(),
+            cathedral: Deck::default(),
+            target: MusicTarget::Silence,
+        }
     }
 
     pub fn new(vol: f32) -> Music {
@@ -186,7 +202,18 @@ impl Music {
             }
         }
         let lobby = Deck { loading: Some(decode_in_background(&Source::Built(LOBBY_SONG.1))), ..Default::default() };
-        Music { enabled: true, on: true, in_match: false, vol, songs, cur: 0, deck: Deck::default(), lobby, cathedral: Deck::default(), target: MusicTarget::Rotation }
+        Music {
+            enabled: true,
+            on: true,
+            in_match: false,
+            vol,
+            songs,
+            cur: 0,
+            deck: Deck::default(),
+            lobby,
+            cathedral: Deck::default(),
+            target: MusicTarget::Rotation,
+        }
     }
 
     pub fn available(&self) -> bool {
@@ -409,22 +436,25 @@ fn noise(dur: f32, decay: f32, lp: f32, seed: u64) -> Vec<f32> {
 fn metal_rattle() -> Vec<f32> {
     let mut rng = Rng::new(0xFA11_EA);
     let mut filtered = 0.0;
-    (0..(1.4 * SR) as usize).map(|i| {
-        let t = i as f32 / SR;
-        filtered += (rng.range(-1.0, 1.0) - filtered) * 0.65;
-        let mut sample = 0.0;
-        for (at, gain) in [(0.0, 0.8), (0.11, 0.55), (0.29, 0.7), (0.52, 0.35), (0.81, 0.2)] {
-            let age = t - at;
-            if age < 0.0 { continue; }
-            let attack = (age * 1800.0).min(1.0);
-            let ring = (age * 431.0 * std::f32::consts::TAU).sin()
-                + (age * 937.0 * std::f32::consts::TAU).sin() * 0.45
-                + (age * 1693.0 * std::f32::consts::TAU).sin() * 0.23;
-            sample += gain * attack * (ring * (-age / 0.085).exp() * 0.2
-                + filtered * (-age / 0.018).exp() * 0.35);
-        }
-        sample.tanh() * 0.6
-    }).collect()
+    (0..(1.4 * SR) as usize)
+        .map(|i| {
+            let t = i as f32 / SR;
+            filtered += (rng.range(-1.0, 1.0) - filtered) * 0.65;
+            let mut sample = 0.0;
+            for (at, gain) in [(0.0, 0.8), (0.11, 0.55), (0.29, 0.7), (0.52, 0.35), (0.81, 0.2)] {
+                let age = t - at;
+                if age < 0.0 {
+                    continue;
+                }
+                let attack = (age * 1800.0).min(1.0);
+                let ring = (age * 431.0 * std::f32::consts::TAU).sin()
+                    + (age * 937.0 * std::f32::consts::TAU).sin() * 0.45
+                    + (age * 1693.0 * std::f32::consts::TAU).sin() * 0.23;
+                sample += gain * attack * (ring * (-age / 0.085).exp() * 0.2 + filtered * (-age / 0.018).exp() * 0.35);
+            }
+            sample.tanh() * 0.6
+        })
+        .collect()
 }
 
 /// A boot on dirt: a dull thud with a little grit, nothing sharp.
@@ -504,7 +534,18 @@ impl Audio {
         let mut sounds: Vec<[Option<Sound>; 3]> = (0..Sfx::Count as usize).map(|_| [None, None, None]).collect();
         let mut ok = true;
         // Only sounds that come from a place in the world need the panned copies.
-        let placed = [Sfx::Carbine, Sfx::Scatter, Sfx::Long, Sfx::Pistol, Sfx::Boom, Sfx::Step, Sfx::Crate, Sfx::Throw, Sfx::Whizz, Sfx::MetalRattle];
+        let placed = [
+            Sfx::Carbine,
+            Sfx::Scatter,
+            Sfx::Long,
+            Sfx::Pistol,
+            Sfx::Boom,
+            Sfx::Step,
+            Sfx::Crate,
+            Sfx::Throw,
+            Sfx::Whizz,
+            Sfx::MetalRattle,
+        ];
         for (id, samples) in defs {
             for (k, gain) in PANS.iter().enumerate() {
                 if k > 0 && !placed.contains(&id) {
@@ -554,7 +595,6 @@ impl Audio {
         self.play_pan(s, vol / (1.0 + (d / reach) * (d / reach)), pan);
     }
 }
-
 
 #[cfg(test)]
 mod music_tests {

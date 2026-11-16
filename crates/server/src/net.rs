@@ -32,7 +32,10 @@ fn roster_msgs(game: &Game) -> Vec<Vec<u8>> {
     if r.is_empty() {
         return vec![encode(&S2C::Roster { at: 0, total: 0, entries: Vec::new() })];
     }
-    r.chunks(ROSTER_PART).enumerate().map(|(k, c)| encode(&S2C::Roster { at: (k * ROSTER_PART) as u8, total, entries: c.to_vec() })).collect()
+    r.chunks(ROSTER_PART)
+        .enumerate()
+        .map(|(k, c)| encode(&S2C::Roster { at: (k * ROSTER_PART) as u8, total, entries: c.to_vec() }))
+        .collect()
 }
 
 /// The address this machine uses on its local network, if it has one.
@@ -110,7 +113,8 @@ fn serve(mut game: Game, sock: UdpSocket, stop: Arc<AtomicBool>) {
     let log = game.cfg.log;
     sock.set_nonblocking(true).expect("nonblocking socket");
     let mut conns: HashMap<SocketAddr, Conn> = HashMap::new();
-    let instance = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32) ^ std::process::id();
+    let instance = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32)
+        ^ std::process::id();
     let game_port = sock.local_addr().map(|a| a.port()).unwrap_or(game.cfg.port);
     let disc = if game.cfg.discover {
         match discovery_socket() {

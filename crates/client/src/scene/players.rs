@@ -223,20 +223,9 @@ fn hot(c: [f32; 3], k: f32) -> [f32; 3] {
 pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: f32, blob: bool) {
     let tc = team_col(p.team);
     let shield = p.flags & flag::SHIELD != 0;
-    let glow = if p.flags & flag::SURGE != 0 {
-        0.35 + 0.25 * (time * 9.0).sin()
-    } else {
-        0.0
-    };
+    let glow = if p.flags & flag::SURGE != 0 { 0.35 + 0.25 * (time * 9.0).sin() } else { 0.0 };
     let h = p.hurt.clamp(0.0, 1.0) * 0.6;
-    let tint = |c: [f32; 3], e: f32| -> Col {
-        [
-            c[0] + (1.0 - c[0]) * h,
-            c[1] + (1.0 - c[1]) * h,
-            c[2] + (1.0 - c[2]) * h,
-            e.max(h * 0.5),
-        ]
-    };
+    let tint = |c: [f32; 3], e: f32| -> Col { [c[0] + (1.0 - c[0]) * h, c[1] + (1.0 - c[1]) * h, c[2] + (1.0 - c[2]) * h, e.max(h * 0.5)] };
     let main = tint(tc, glow);
     let look = p.skin % 6;
     let rare = p.skin as usize % ferrite_shared::sim::SKINS.len() >= 6;
@@ -275,10 +264,7 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
     // visor; everyone else's glows in their team colour.
     let glass = if rare && matches!(look, 0 | 2) { tint(hot(pal.4, 0.2), 0.9) } else { tint(hot(tc, 0.35), 0.95) };
     // Gear on the pack and belt: a shade between suit and webbing.
-    let gear = tint(
-        [(pal.0[0] + pal.2[0]) * 0.6, (pal.0[1] + pal.2[1]) * 0.6, (pal.0[2] + pal.2[2]) * 0.6],
-        0.0,
-    );
+    let gear = tint([(pal.0[0] + pal.2[0]) * 0.6, (pal.0[1] + pal.2[1]) * 0.6, (pal.0[2] + pal.2[2]) * 0.6], 0.0);
 
     let sl = p.slide.clamp(0.0, 1.0);
     let c = p.crouch.clamp(0.0, 1.0).max(sl);
@@ -310,11 +296,7 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
         _ => 1.0,
     };
     let phase = p.phase * 2.2;
-    let walk_dir = if speed > 0.1 {
-        vec3(-p.vel.1 / speed, 0.0, p.vel.0 / speed)
-    } else {
-        Vec3::Z
-    };
+    let walk_dir = if speed > 0.1 { vec3(-p.vel.1 / speed, 0.0, p.vel.0 / speed) } else { Vec3::Z };
     let hip_y = 0.84 - 0.44 * c;
     let bounce = (phase * 2.0).cos() * 0.014 * locomotion * (1.0 - c);
 
@@ -397,13 +379,9 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
     // Rotation is about the hips. Weight shifts toward the supporting leg;
     // breathing and counter-rotation disappear as a body comes to rest.
     let idle = (time * 1.7 + p.id as f32).sin() * 0.006 * (1.0 - fall);
-    let lean = (0.075 * (p.vel.0 / 5.6).clamp(-1.0, 1.0) + 0.18 * sprint) * (1.0 - sl)
-        + 0.17 * kneel
-        - 0.58 * sl
-        + 0.09 * air
-        - 0.04 * p.fire;
-    let roll = (p.vel.1 / 5.6).clamp(-1.0, 1.0) * 0.08 * (1.0 - c)
-        + phase.sin() * 0.025 * locomotion * (1.0 - c);
+    let lean =
+        (0.075 * (p.vel.0 / 5.6).clamp(-1.0, 1.0) + 0.18 * sprint) * (1.0 - sl) + 0.17 * kneel - 0.58 * sl + 0.09 * air - 0.04 * p.fire;
+    let roll = (p.vel.1 / 5.6).clamp(-1.0, 1.0) * 0.08 * (1.0 - c) + phase.sin() * 0.025 * locomotion * (1.0 - c);
     let body = root
         * Mat4::from_translation(vec3(0.0, idle + bounce - 0.56 * c + 0.84, 0.0))
         * Mat4::from_rotation_x(lean)
@@ -427,15 +405,7 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
     }
     // The cuirass: wide over the chest, cut in at the waist.
     let chest_col = if look == 1 { shade(armor, 0.82) } else { armor };
-    slab(
-        m,
-        &body,
-        vec3(0.0, 1.245, 0.02),
-        vec3(0.245 * b * plated.max(0.9), 0.165, 0.132 * b),
-        1.12,
-        0.38,
-        chest_col,
-    );
+    slab(m, &body, vec3(0.0, 1.245, 0.02), vec3(0.245 * b * plated.max(0.9), 0.165, 0.132 * b), 1.12, 0.38, chest_col);
     // A team tab on the chest, and a second plate layer for the heavy.
     slab(m, &body, vec3(-0.115 * b, 1.3, chest_front(b) + 0.002), vec3(0.048, 0.03, 0.01), 1.0, 0.3, main);
     if look == 2 {
@@ -597,15 +567,11 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
     // ---- arms and gun ----
     // Third person, first person and the picker share exactly the same
     // gun. Hand targets come from that model rather than a generic rifle.
-    let relaxed = (0.5 * sprint + 0.25 * air) * (1.0 - p.fire) * (1.0 - p.melee)
-        + 0.42 * p.reload
-        + 1.0 * fall;
+    let relaxed = (0.5 * sprint + 0.25 * air) * (1.0 - p.fire) * (1.0 - p.melee) + 0.42 * p.reload + 1.0 * fall;
     let aim = -p.pitch * (1.0 - 0.6 * sprint) * (1.0 - fall) - lean + relaxed - 0.065 * p.fire;
     let arms = Mat4::from_translation(vec3(0.0, 1.34, -0.035 * p.fire + 0.2 * p.melee))
         * Mat4::from_rotation_x(aim)
-        * Mat4::from_rotation_y(
-            0.38 * sprint * (1.0 - p.fire) * (1.0 - p.melee) + 0.2 * p.reload + 0.55 * p.melee,
-        );
+        * Mat4::from_rotation_y(0.38 * sprint * (1.0 - p.fire) * (1.0 - p.melee) + 0.2 * p.reload + 0.55 * p.melee);
     // A long gun is held out far enough that its butt sits against the
     // front of the chest plate, at the shoulder, and not inside it.
     let long = ferrite_shared::sim::weapon_def(p.wid).arch != 4;
@@ -622,11 +588,7 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
         support.z = support.z.max(-0.25);
     }
     // Hands follow the moving fore-end and bolt as well as the weapon root.
-    let action = if p.reload_phase < 0.0 {
-        (smooth(0.22, 0.72, 1.0 - p.cycle) * std::f32::consts::PI).sin()
-    } else {
-        0.0
-    };
+    let action = if p.reload_phase < 0.0 { (smooth(0.22, 0.72, 1.0 - p.cycle) * std::f32::consts::PI).sin() } else { 0.0 };
     if matches!(p.wid, 1 | 13) {
         support.z += action * 0.085;
     }
@@ -667,18 +629,10 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
     }
     if shield {
         let a = 0.25 + 0.15 * (time * 12.0).sin();
-        alpha.cuboid(
-            p.pos + vec3(-0.5, 0.0, -0.5),
-            p.pos + vec3(0.5, 1.95 - 0.56 * c, 0.5),
-            [1.0, 1.0, 1.0, a * 0.25],
-        );
+        alpha.cuboid(p.pos + vec3(-0.5, 0.0, -0.5), p.pos + vec3(0.5, 1.95 - 0.56 * c, 0.5), [1.0, 1.0, 1.0, a * 0.25]);
     }
     if blob {
-        let gy = if p.flags & flag::GROUND != 0 {
-            p.pos.y
-        } else {
-            w.height(p.pos.x, p.pos.z)
-        } + 0.04;
+        let gy = if p.flags & flag::GROUND != 0 { p.pos.y } else { w.height(p.pos.x, p.pos.z) } + 0.04;
         let r = 0.55;
         alpha.quad(
             vec3(p.pos.x - r, gy, p.pos.z - r),
@@ -787,10 +741,7 @@ mod tests {
                         for v in v {
                             let pos = Vec3::from_array(v.pos);
                             assert!(pos.is_finite() && Vec3::from_array(v.nrm).is_finite());
-                            assert!(
-                                (pos - p.pos).length() < 3.0,
-                                "look {look}, weapon {wid}, pose {pose}: {pos:?}"
-                            );
+                            assert!((pos - p.pos).length() < 3.0, "look {look}, weapon {wid}, pose {pose}: {pos:?}");
                         }
                     }
                 }

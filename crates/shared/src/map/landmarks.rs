@@ -18,75 +18,23 @@ pub struct Site {
 
 impl Site {
     pub fn mirrored(self) -> Self {
-        Self {
-            x: -self.x,
-            z: -self.z,
-            ..self
-        }
+        Self { x: -self.x, z: -self.z, ..self }
     }
 }
 
 pub const WORKSHOPS: [Site; 4] = [
-    Site {
-        x: -88.0,
-        z: -65.0,
-        hx: 9.0,
-        hz: 6.0,
-        height: 5.0,
-    },
-    Site {
-        x: -102.0,
-        z: 52.0,
-        hx: 8.0,
-        hz: 5.0,
-        height: 4.8,
-    },
-    Site {
-        x: -90.0,
-        z: -64.0,
-        hx: 7.0,
-        hz: 5.0,
-        height: 4.2,
-    },
-    Site {
-        x: -103.0,
-        z: 53.0,
-        hx: 11.0,
-        hz: 7.0,
-        height: 6.0,
-    },
+    Site { x: -88.0, z: -65.0, hx: 9.0, hz: 6.0, height: 5.0 },
+    Site { x: -102.0, z: 52.0, hx: 8.0, hz: 5.0, height: 4.8 },
+    Site { x: -90.0, z: -64.0, hx: 7.0, hz: 5.0, height: 4.2 },
+    Site { x: -103.0, z: 53.0, hx: 11.0, hz: 7.0, height: 6.0 },
 ];
 
 /// Open along X, with entrances at x +/- hx. Each has a mirrored partner.
 pub const PASSAGES: [Site; 4] = [
-    Site {
-        x: -26.0,
-        z: 49.0,
-        hx: 13.0,
-        hz: 3.4,
-        height: 3.6,
-    },
-    Site {
-        x: -43.0,
-        z: -52.0,
-        hx: 15.0,
-        hz: 4.0,
-        height: 4.2,
-    },
-    Site {
-        x: -12.0,
-        z: -39.0,
-        hx: 15.0,
-        hz: 4.0,
-        height: 4.2,
-    },
-    Site {
-        x: -83.0,
-        z: -58.0,
-        hx: 12.0,
-        hz: 3.4,
-        height: 3.8,
-    },
+    Site { x: -26.0, z: 49.0, hx: 13.0, hz: 3.4, height: 3.6 },
+    Site { x: -43.0, z: -52.0, hx: 15.0, hz: 4.0, height: 4.2 },
+    Site { x: -12.0, z: -39.0, hx: 15.0, hz: 4.0, height: 4.2 },
+    Site { x: -83.0, z: -58.0, hx: 12.0, hz: 3.4, height: 3.8 },
 ];
 
 pub const CRANE_HALF_X: f32 = 26.0;
@@ -99,13 +47,7 @@ pub fn floor(w: &World, site: Site) -> f32 {
 
 pub fn walkway_site(map: u8) -> Site {
     let s = WORKSHOPS[map as usize % WORKSHOPS.len()];
-    Site {
-        x: s.x,
-        z: s.z + s.hz + 10.0,
-        hx: 8.2,
-        hz: 2.0,
-        height: 1.8,
-    }
+    Site { x: s.x, z: s.z + s.hz + 10.0, hx: 8.2, hz: 2.0, height: 1.8 }
 }
 
 /// A level approach is part of a destination, not just its room interior.
@@ -114,15 +56,9 @@ pub(super) fn settle(x: f32, z: f32, map: u8, mut h: f32, target: impl Fn(f32, f
     if map > 3 {
         return h;
     }
-    for s in [
-        WORKSHOPS[map as usize],
-        PASSAGES[map as usize],
-        walkway_site(map),
-    ] {
+    for s in [WORKSHOPS[map as usize], PASSAGES[map as usize], walkway_site(map)] {
         for s in [s, s.mirrored()] {
-            let d = ((x - s.x).abs() - s.hx)
-                .max((z - s.z).abs() - s.hz)
-                .max(0.0);
+            let d = ((x - s.x).abs() - s.hx).max((z - s.z).abs() - s.hz).max(0.0);
             let w = 1.0 - smooth(5.0, 11.0, d);
             if w > 0.0 {
                 h += (target(s.x, s.z) - h) * w;
@@ -137,17 +73,9 @@ pub(super) fn reserved(map: u8, x: f32, z: f32, hx: f32, hz: f32) -> bool {
     if map > 3 {
         return false;
     }
-    [
-        WORKSHOPS[map as usize],
-        PASSAGES[map as usize],
-        walkway_site(map),
-    ]
-    .iter()
-    .any(|&s| {
-        [s, s.mirrored()]
-            .iter()
-            .any(|s| (x - s.x).abs() < s.hx + hx + 5.0 && (z - s.z).abs() < s.hz + hz + 5.0)
-    })
+    [WORKSHOPS[map as usize], PASSAGES[map as usize], walkway_site(map)]
+        .iter()
+        .any(|&s| [s, s.mirrored()].iter().any(|s| (x - s.x).abs() < s.hx + hx + 5.0 && (z - s.z).abs() < s.hz + hz + 5.0))
 }
 
 pub(super) fn build(w: &mut World) {
@@ -175,17 +103,7 @@ fn feature(w: &mut World, kind: FeatureKind, pos: Vec3) -> u8 {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn fragile(
-    w: &mut World,
-    bit: u8,
-    x: f32,
-    z: f32,
-    hx: f32,
-    hz: f32,
-    y0: f32,
-    y1: f32,
-    kind: BlockKind,
-) {
+fn fragile(w: &mut World, bit: u8, x: f32, z: f32, hx: f32, hz: f32, y0: f32, y1: f32, kind: BlockKind) {
     w.add_abs(x, z, hx, hz, y0, y1, kind, 2);
     w.blocks.last_mut().unwrap().dest = Some(bit);
 }
@@ -203,12 +121,7 @@ fn breakable_features(w: &mut World) {
         let mut wall = Vec::new();
         w.blocks.retain(|b| {
             let c = (b.min + b.max) * 0.5;
-            if b.kind != Concrete
-                || (c.z - z).abs() > 0.01
-                || b.max.x <= x - 1.5
-                || b.min.x >= x + 1.5
-                || b.min.y >= g + 2.6
-            {
+            if b.kind != Concrete || (c.z - z).abs() > 0.01 || b.max.x <= x - 1.5 || b.min.x >= x + 1.5 || b.min.y >= g + 2.6 {
                 return true;
             }
             let (left, right) = (b.min.x.max(x - 1.5), b.max.x.min(x + 1.5));
@@ -239,26 +152,12 @@ fn breakable_features(w: &mut World) {
     for s in [bridge, bridge.mirrored()] {
         let g = floor(w, s);
         let side = if s.x < 0.0 { 1.0 } else { -1.0 };
-        let bit = feature(
-            w,
-            FeatureKind::Walkway,
-            vec3(s.x, g + 0.7, s.z - 1.2 * side),
-        );
+        let bit = feature(w, FeatureKind::Walkway, vec3(s.x, g + 0.7, s.z - 1.2 * side));
         let top = g + 1.8;
         fragile(w, bit, s.x, s.z, 5.0, 1.5, top - 0.24, top, Metal);
         for dx in [-4.4, 0.0, 4.4] {
             for dz in [-1.2, 1.2] {
-                fragile(
-                    w,
-                    bit,
-                    s.x + dx,
-                    s.z + dz,
-                    0.18,
-                    0.18,
-                    g - 0.4,
-                    top - 0.24,
-                    Metal,
-                );
+                fragile(w, bit, s.x + dx, s.z + dz, 0.18, 0.18, g - 0.4, top - 0.24, Metal);
             }
         }
         for dz in [-1.5, 1.5] {
@@ -267,17 +166,7 @@ fn breakable_features(w: &mut World) {
         for dir in [-1.0, 1.0] {
             for i in 0..6 {
                 let x = s.x + dir * (5.0 + (5 - i) as f32 * 0.5 + 0.25);
-                fragile(
-                    w,
-                    bit,
-                    x,
-                    s.z,
-                    0.25,
-                    1.2,
-                    g - 0.4,
-                    g + (i + 1) as f32 * 0.3,
-                    Step,
-                );
+                fragile(w, bit, x, s.z, 0.25, 1.2, g - 0.4, g + (i + 1) as f32 * 0.3, Step);
             }
         }
     }
@@ -300,51 +189,15 @@ fn workshop(w: &mut World, s: Site) {
     let g = floor(w, s);
     let roof = if w.map == 2 { Concrete } else { Metal };
     w.building(s.x, s.z, s.hx, s.hz, s.height, 0b1111, w.map, roof);
-    w.sym_abs(
-        s.x,
-        s.z,
-        s.hx - 0.43,
-        s.hz - 0.43,
-        g - 0.18,
-        g + 0.06,
-        Step,
-        1,
-    );
+    w.sym_abs(s.x, s.z, s.hx - 0.43, s.hz - 0.43, g - 0.18, g + 0.06, Step, 1);
     // Storage counters and a workbench hug the walls; both crossing axes
     // stay open, so the building can be used to traverse or hold a flank.
     for dx in [-s.hx + 1.1, s.hx - 1.1] {
-        w.sym_abs(
-            s.x + dx,
-            s.z + s.hz - 1.1,
-            0.55,
-            1.3,
-            g + 0.06,
-            g + 1.15,
-            Metal,
-            1,
-        );
+        w.sym_abs(s.x + dx, s.z + s.hz - 1.1, 0.55, 1.3, g + 0.06, g + 1.15, Metal, 1);
     }
-    w.sym_abs(
-        s.x - s.hx + 1.2,
-        s.z - s.hz + 1.15,
-        0.8,
-        0.7,
-        g + 0.06,
-        g + 1.0,
-        Concrete,
-        2,
-    );
+    w.sym_abs(s.x - s.hx + 1.2, s.z - s.hz + 1.15, 0.8, 0.7, g + 0.06, g + 1.0, Concrete, 2);
     // A raised clerestory gives every room a second readable roof tier.
-    w.sym_abs(
-        s.x,
-        s.z,
-        s.hx * 0.56,
-        s.hz * 0.42,
-        g + s.height + 0.3,
-        g + s.height + 1.0,
-        Metal,
-        1,
-    );
+    w.sym_abs(s.x, s.z, s.hx * 0.56, s.hz * 0.42, g + s.height + 0.3, g + s.height + 1.0, Metal, 1);
 }
 
 fn passage(w: &mut World, s: Site) {
@@ -358,64 +211,24 @@ fn passage(w: &mut World, s: Site) {
     for z in [s.z - s.hz - thick * 0.5, s.z + s.hz + thick * 0.5] {
         w.sym_abs(s.x, z, s.hx, thick * 0.5, g - 0.8, g + s.height, kind, 1);
     }
-    w.sym_abs(
-        s.x,
-        s.z,
-        s.hx,
-        s.hz + thick,
-        g + s.height,
-        g + s.height + thick,
-        kind,
-        2,
-    );
+    w.sym_abs(s.x, s.z, s.hx, s.hz + thick, g + s.height, g + s.height + thick, kind, 2);
     if matches!(w.map, 1 | 2) {
         // A second irregular stratum and shoulders make these rock masses
         // read as a mine/cave, rather than a concrete shed painted grey.
-        w.sym_abs(
-            s.x - 1.3,
-            s.z,
-            s.hx - 2.0,
-            s.hz + 0.7,
-            g + s.height + thick,
-            g + s.height + thick + 1.7,
-            Rock,
-            3,
-        );
+        w.sym_abs(s.x - 1.3, s.z, s.hx - 2.0, s.hz + 0.7, g + s.height + thick, g + s.height + thick + 1.7, Rock, 3);
         for dz in [-s.hz - 3.0, s.hz + 3.0] {
-            w.sym_abs(
-                s.x + 1.0,
-                s.z + dz,
-                s.hx - 2.0,
-                1.1,
-                g - 0.8,
-                g + 2.8,
-                Rock,
-                0,
-            );
+            w.sym_abs(s.x + 1.0, s.z + dz, s.hx - 2.0, 1.1, g - 0.8, g + 2.8, Rock, 0);
         }
     }
     // Repeated portal frames, side posts clear of the five-metre-wide
     // walking line, carry the same collision as their visible supports.
-    let frame_kind = if w.map == 1 || w.map == 2 {
-        BlockKind::Trunk
-    } else {
-        Metal
-    };
+    let frame_kind = if w.map == 1 || w.map == 2 { BlockKind::Trunk } else { Metal };
     for i in 0..=4 {
         let x = s.x - s.hx + 0.35 + (2.0 * s.hx - 0.7) * i as f32 / 4.0;
         for z in [s.z - s.hz + 0.22, s.z + s.hz - 0.22] {
             w.sym_abs(x, z, 0.16, 0.16, g - 0.1, g + s.height, frame_kind, 0);
         }
-        w.sym_abs(
-            x,
-            s.z,
-            0.16,
-            s.hz,
-            g + s.height - 0.24,
-            g + s.height,
-            Metal,
-            0,
-        );
+        w.sym_abs(x, s.z, 0.16, s.hz, g + s.height - 0.24, g + s.height, Metal, 0);
     }
 }
 
@@ -429,16 +242,7 @@ fn foundry(w: &mut World) {
         w.sym_abs(x, z, 1.2, 1.2, g - 1.0, g + 22.0, Metal, 1);
         w.sym_abs(x, z, 1.55, 1.55, g + 21.6, g + 22.2, Metal, 0);
     }
-    w.sym_abs(
-        s.x + 12.0,
-        s.z - s.hz - 3.0,
-        2.4,
-        1.6,
-        g - 1.0,
-        g + 3.8,
-        Metal,
-        0,
-    );
+    w.sym_abs(s.x + 12.0, s.z - s.hz - 3.0, 2.4, 1.6, g - 1.0, g + 3.8, Metal, 0);
 }
 
 fn headframe(w: &mut World) {
@@ -448,16 +252,7 @@ fn headframe(w: &mut World) {
     let (x, z) = (s.x - 8.0, s.z + 9.0);
     for dx in [-2.4, 2.4] {
         for dz in [-2.0, 2.0] {
-            w.sym_abs(
-                x + dx,
-                z + dz,
-                0.34,
-                0.34,
-                w.height(x + dx, z + dz) - 0.8,
-                g + 18.0,
-                Metal,
-                0,
-            );
+            w.sym_abs(x + dx, z + dz, 0.34, 0.34, w.height(x + dx, z + dz) - 0.8, g + 18.0, Metal, 0);
         }
     }
     w.sym_abs(x, z, 3.2, 2.7, g + 17.6, g + 18.2, Metal, 1);
@@ -482,41 +277,14 @@ fn gantry(w: &mut World) {
     for x in [-CRANE_HALF_X, CRANE_HALF_X] {
         for z in [-CRANE_HALF_Z, CRANE_HALF_Z] {
             w.add_abs(x, z, 0.95, 1.45, w.height(x, z) - 0.7, top, Metal, 1);
-            w.add_abs(
-                x,
-                z,
-                1.6,
-                2.6,
-                w.height(x, z) - 0.1,
-                w.height(x, z) + 1.15,
-                Metal,
-                0,
-            );
+            w.add_abs(x, z, 1.6, 2.6, w.height(x, z) - 0.1, w.height(x, z) + 1.15, Metal, 0);
         }
         w.add_abs(x, 0.0, 1.2, CRANE_HALF_Z + 3.0, top, top + 1.8, Metal, 1);
     }
     // The bridge is static collision; the trolley and suspended spreader
     // animate beneath it, well above the accessible play space.
-    w.add_abs(
-        0.0,
-        0.0,
-        CRANE_HALF_X + 1.8,
-        1.5,
-        top + 1.8,
-        top + 3.1,
-        Metal,
-        1,
-    );
-    w.sym_abs(
-        -CRANE_HALF_X,
-        -CRANE_HALF_Z + 2.5,
-        1.8,
-        2.2,
-        top - 4.6,
-        top - 1.6,
-        Metal,
-        2,
-    );
+    w.add_abs(0.0, 0.0, CRANE_HALF_X + 1.8, 1.5, top + 1.8, top + 3.1, Metal, 1);
+    w.sym_abs(-CRANE_HALF_X, -CRANE_HALF_Z + 2.5, 1.8, 2.2, top - 4.6, top - 1.6, Metal, 2);
 }
 
 #[cfg(test)]
@@ -534,17 +302,10 @@ mod tests {
                 assert_eq!(w.features.len(), 6);
                 let mut feature_mask = 0u64;
                 for f in &w.features {
-                    assert_eq!(
-                        feature_mask & (1u64 << f.bit),
-                        0,
-                        "feature destruction bits must be unique"
-                    );
+                    assert_eq!(feature_mask & (1u64 << f.bit), 0, "feature destruction bits must be unique");
                     feature_mask |= 1u64 << f.bit;
                     assert!(f.pos.is_finite() && (f.bit as usize) < w.n_crates);
-                    assert!(
-                        w.blocks.iter().any(|b| b.dest == Some(f.bit)),
-                        "feature has no grouped collision"
-                    );
+                    assert!(w.blocks.iter().any(|b| b.dest == Some(f.bit)), "feature has no grouped collision");
                 }
                 let nav = Nav::build(&w);
                 for s in [WORKSHOPS[map as usize], PASSAGES[map as usize]] {
@@ -552,23 +313,11 @@ mod tests {
                         let g = floor(&w, s);
                         for i in -20..=20 {
                             let x = s.x + i as f32 * (s.hx + 3.0) / 20.0;
-                            assert!(
-                                (w.height(x, s.z) - g).abs() < 0.03,
-                                "map {map} uneven destination floor"
-                            );
-                            assert!(
-                                !nav.is_blocked(x, s.z),
-                                "map {map}, seed {seed:x}: blocked entrance at {x},{}",
-                                s.z
-                            );
+                            assert!((w.height(x, s.z) - g).abs() < 0.03, "map {map} uneven destination floor");
+                            assert!(!nav.is_blocked(x, s.z), "map {map}, seed {seed:x}: blocked entrance at {x},{}", s.z);
                         }
                         let hit = w
-                            .raycast(
-                                vec3(s.x, g + 1.6, s.z),
-                                crate::glam::Vec3::Y,
-                                s.height + 1.0,
-                                0,
-                            )
+                            .raycast(vec3(s.x, g + 1.6, s.z), crate::glam::Vec3::Y, s.height + 1.0, 0)
                             .expect("destination must have a solid roof");
                         assert!(hit.t > 1.4, "destination must have standing headroom");
                     }
@@ -605,11 +354,7 @@ mod tests {
                 for mask in [0, broken] {
                     let nav = Nav::build_mask(&w, mask);
                     for goal in 0..NAV_GOALS {
-                        let target = if goal < 5 {
-                            w.points[goal]
-                        } else {
-                            w.bases[goal - 5]
-                        };
+                        let target = if goal < 5 { w.points[goal] } else { w.bases[goal - 5] };
                         for start in w.bases.iter().chain(w.points.iter()) {
                             for lane in 0..NAV_LANES {
                                 // Objective centres can contain the original
@@ -621,19 +366,14 @@ mod tests {
                                     .filter_map(|(dx, dz)| {
                                         let x = cx as isize + dx;
                                         let z = cz as isize + dz;
-                                        if x < 0
-                                            || z < 0
-                                            || x >= nav.w as isize
-                                            || z >= nav.h as isize
-                                        {
+                                        if x < 0 || z < 0 || x >= nav.w as isize || z >= nav.h as isize {
                                             return None;
                                         }
                                         let p = nav.center(x as usize, z as usize);
                                         (!nav.is_blocked(p.x, p.y)).then_some(p)
                                     })
                                     .min_by(|a, b| {
-                                        a.distance_squared(vec2(start.x, start.z))
-                                            .total_cmp(&b.distance_squared(vec2(start.x, start.z)))
+                                        a.distance_squared(vec2(start.x, start.z)).total_cmp(&b.distance_squared(vec2(start.x, start.z)))
                                     })
                                     .expect("objective must have open deployment ground");
                                 for _ in 0..1600 {
@@ -642,8 +382,10 @@ mod tests {
                                     }
                                     p += nav.dir(goal, lane, p.x, p.y) * 0.6;
                                 }
-                                assert!(p.distance(vec2(target.x, target.z)) < 6.5,
-                                "map {map}, seed {seed:x}: lane {lane} from {start:?} to goal {goal} stopped at {p:?}");
+                                assert!(
+                                    p.distance(vec2(target.x, target.z)) < 6.5,
+                                    "map {map}, seed {seed:x}: lane {lane} from {start:?} to goal {goal} stopped at {p:?}"
+                                );
                             }
                         }
                     }

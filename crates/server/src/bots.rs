@@ -2,10 +2,10 @@
 //! and goes through the same validation and simulation path.
 
 use crate::Game;
+use ferrite_shared::proto::pickup;
 use ferrite_shared::proto::{btn, btn2, Cmd};
 use ferrite_shared::rng::Rng;
 use ferrite_shared::sim;
-use ferrite_shared::proto::pickup;
 use ferrite_shared::{eligible, mode, vec2, vec3, wrap_angle, Vec2, Vec3, FLAG_POINT, NUM_POINTS};
 
 pub struct Bot {
@@ -121,7 +121,13 @@ fn choose_goal(g: &Game, team: u8, pos: Vec3, b: &mut Bot) -> usize {
         mode::TDM => {
             let (theirs, ours) = if team == 0 { (NUM_POINTS - 2, 1) } else { (1, NUM_POINTS - 2) };
             let r = b.rng.f32();
-            return if r < 0.55 { NUM_POINTS / 2 } else if r < 0.85 { theirs } else { ours };
+            return if r < 0.55 {
+                NUM_POINTS / 2
+            } else if r < 0.85 {
+                theirs
+            } else {
+                ours
+            };
         }
         mode::KOTH => return NUM_POINTS / 2,
         // A few stay by their own flag; the rest go for the other.
@@ -462,7 +468,11 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
 
     // --- Squad sense ---
     let enemy = 1 - me.team as usize;
-    let assaulting = matches!(g.mode, mode::CONQUEST | mode::KOTH) && !engaged && b.target.is_none() && t >= b.hunt_until && g.points[b.goal].owner != me.team;
+    let assaulting = matches!(g.mode, mode::CONQUEST | mode::KOTH)
+        && !engaged
+        && b.target.is_none()
+        && t >= b.hunt_until
+        && g.points[b.goal].owner != me.team;
     let mut holding = false;
     if assaulting && kit == 2 && (7.0..26.0).contains(&dgoal) && g.points[b.goal].n[enemy] > 0 {
         // Long rifles cover the assault from outside the point.
@@ -545,8 +555,20 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
     let (sy, cy) = b.yaw.sin_cos();
     let f = mv.dot(vec2(sy, cy));
     let r = mv.dot(vec2(-cy, sy));
-    cmd.mz = if f > 0.35 { 1 } else if f < -0.35 { -1 } else { 0 };
-    cmd.mx = if r > 0.35 { 1 } else if r < -0.35 { -1 } else { 0 };
+    cmd.mz = if f > 0.35 {
+        1
+    } else if f < -0.35 {
+        -1
+    } else {
+        0
+    };
+    cmd.mx = if r > 0.35 {
+        1
+    } else if r < -0.35 {
+        -1
+    } else {
+        0
+    };
     if ((!engaged && dgoal > 14.0) || fleeing || carrying) && cmd.mz > 0 {
         if carrying {
             fire = false; // run

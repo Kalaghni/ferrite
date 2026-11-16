@@ -3,22 +3,21 @@
 //! settings. Saved servers and settings live in `ferrite-client.txt` next
 //! to the executable.
 
-use ferrite_shared::map::{map_by_name, MAPS};
-use ferrite_shared::sim;
-use ferrite_shared::MODES;
-use ferrite_shared::proto::{decode_info, ServerInfo, DEFAULT_PORT, DISCOVERY_GROUP, DISCOVERY_PORT, DISCOVERY_QUERY, PROTO};
 use crate::audio::{Music, Scene};
+use crate::bindings::{Action, Bindings, Input};
+use crate::ui::{self, color as th};
 use crate::update::{self, State as Up};
 use crate::{controller, gfx, ident, scene};
-use crate::bindings::{Action, Bindings, Input};
-use std::cell::Cell;
-use ferrite_shared::proto::{icon_hash, uuid_parse, uuid_text};
 use ferrite_shared::glam::{vec3, Mat4, Vec3};
 use ferrite_shared::map::World;
-use crate::ui::{self, color as th};
+use ferrite_shared::map::{map_by_name, MAPS};
+use ferrite_shared::proto::{decode_info, ServerInfo, DEFAULT_PORT, DISCOVERY_GROUP, DISCOVERY_PORT, DISCOVERY_QUERY, PROTO};
+use ferrite_shared::proto::{icon_hash, uuid_parse, uuid_text};
+use ferrite_shared::sim;
+use ferrite_shared::MODES;
 use macroquad::prelude as mq;
+use std::cell::Cell;
 use std::path::PathBuf;
-
 
 /// Video and control settings a match needs.
 #[derive(Clone)]
@@ -66,18 +65,27 @@ impl Profile {
     pub fn bank(&mut self, credits: u32, won: bool) {
         self.credits = self.credits.saturating_add(credits);
         self.earned = self.earned.saturating_add(credits);
-        if won { self.wins += 1 } else { self.losses += 1 }
+        if won {
+            self.wins += 1
+        } else {
+            self.losses += 1
+        }
     }
     /// Buy a look (`finish` false) or a weapon finish. False if it is
     /// already owned, does not exist, or costs more than there is.
     pub fn buy(&mut self, finish: bool, id: u8) -> bool {
-        let (owned, price) = if finish { (self.owns_finish(id), sim::weapon_skin_price(id)) } else { (self.owns_look(id), sim::skin_price(id)) };
+        let (owned, price) =
+            if finish { (self.owns_finish(id), sim::weapon_skin_price(id)) } else { (self.owns_look(id), sim::skin_price(id)) };
         let exists = (id as usize) < if finish { sim::WEAPON_SKINS.len() } else { sim::SKINS.len() };
         if owned || !exists || price > self.credits {
             return false;
         }
         self.credits -= price;
-        if finish { self.finishes |= 1 << id } else { self.looks |= 1 << id }
+        if finish {
+            self.finishes |= 1 << id
+        } else {
+            self.looks |= 1 << id
+        }
         true
     }
 }
@@ -95,7 +103,17 @@ pub fn shop_weapons() -> Vec<u8> {
 
 impl Default for Prefs {
     fn default() -> Prefs {
-        Prefs { fov: 66.0, fullscreen: false, shadows: 4096, show_fps: false, invert_y: false, toggle_aim: false, bindings: Bindings::default(), controller: controller::Settings::default(), touch: false }
+        Prefs {
+            fov: 66.0,
+            fullscreen: false,
+            shadows: 4096,
+            show_fps: false,
+            invert_y: false,
+            toggle_aim: false,
+            bindings: Bindings::default(),
+            controller: controller::Settings::default(),
+            touch: false,
+        }
     }
 }
 
@@ -313,7 +331,13 @@ fn big_button(x: f32, y: f32, w: f32, h: f32, title: &str, sub: &str, primary: b
     let lift = if over { 1.0 } else { 0.0 };
     let (ink, quiet) = if primary {
         let k = if over { 1.07 } else { 1.0 };
-        mq::draw_rectangle(x, y - lift, w, h, mq::Color::new((th::EMBER.r * k).min(1.0), (th::EMBER.g * k).min(1.0), (th::EMBER.b * k).min(1.0), 1.0));
+        mq::draw_rectangle(
+            x,
+            y - lift,
+            w,
+            h,
+            mq::Color::new((th::EMBER.r * k).min(1.0), (th::EMBER.g * k).min(1.0), (th::EMBER.b * k).min(1.0), 1.0),
+        );
         (th::INK, ui::fade(th::INK, 0.75))
     } else {
         ui::plate(x, y - lift, w, h, th::GLASS_STRONG, if over { th::COBALT } else { th::STROKE });
@@ -403,13 +427,23 @@ impl Menu {
                     "music_in_match" => m.music_in_match = v == "1",
                     "fov" => m.prefs.fov = v.parse::<f32>().unwrap_or(66.0).clamp(56.0, 90.0),
                     "fullscreen" => m.prefs.fullscreen = v == "1",
-                    "shadows" => m.prefs.shadows = match v { "0" => 0, "2048" => 2048, _ => 4096 },
+                    "shadows" => {
+                        m.prefs.shadows = match v {
+                            "0" => 0,
+                            "2048" => 2048,
+                            _ => 4096,
+                        }
+                    }
                     "show_fps" => m.prefs.show_fps = v == "1",
                     "invert_y" => m.prefs.invert_y = v == "1",
                     "toggle_aim" => m.prefs.toggle_aim = v == "1",
                     "controller_enabled" => m.prefs.controller.enabled = v != "0",
-                    "controller_sensitivity" => m.prefs.controller.sensitivity = v.parse::<f32>().ok().filter(|n| n.is_finite()).unwrap_or(2.8).clamp(0.4, 7.0),
-                    "controller_deadzone" => m.prefs.controller.deadzone = v.parse::<f32>().ok().filter(|n| n.is_finite()).unwrap_or(0.18).clamp(0.05, 0.4),
+                    "controller_sensitivity" => {
+                        m.prefs.controller.sensitivity = v.parse::<f32>().ok().filter(|n| n.is_finite()).unwrap_or(2.8).clamp(0.4, 7.0)
+                    }
+                    "controller_deadzone" => {
+                        m.prefs.controller.deadzone = v.parse::<f32>().ok().filter(|n| n.is_finite()).unwrap_or(0.18).clamp(0.05, 0.4)
+                    }
                     "controller_invert_y" => m.prefs.controller.invert_y = v == "1",
                     "audio_device" if !v.is_empty() => m.audio_device = Some(v.to_string()),
                     "loadout" => {
@@ -446,7 +480,9 @@ impl Menu {
                     "icon" => m.icon_kind = v.parse::<u8>().unwrap_or(0),
                     "icon_colour" => m.icon_colour = v.parse::<u8>().unwrap_or(0) % ident::COLOURS.len() as u8,
                     "icon_data" => m.custom = ident::from_hex(v),
-                    _ => { m.prefs.bindings.read_entry(k.trim(), v); }
+                    _ => {
+                        m.prefs.bindings.read_entry(k.trim(), v);
+                    }
                 }
             }
         }
@@ -512,7 +548,13 @@ impl Menu {
         ui::text("PLAYER ICON", ix, y - 8.0, 18.0, th::MUTED);
         ui::plate(ix, y, 38.0, 38.0, th::GLASS_STRONG, th::STROKE);
         match self.icon_texture() {
-            Some(t) => mq::draw_texture_ex(&t, ix + 3.0, y + 3.0, mq::WHITE, mq::DrawTextureParams { dest_size: Some(mq::vec2(32.0, 32.0)), ..Default::default() }),
+            Some(t) => mq::draw_texture_ex(
+                &t,
+                ix + 3.0,
+                y + 3.0,
+                mq::WHITE,
+                mq::DrawTextureParams { dest_size: Some(mq::vec2(32.0, 32.0)), ..Default::default() },
+            ),
             None => ui::text_c("-", ix + 19.0, y + 26.0, 20.0, th::QUIET),
         }
         let kinds = self.icon_kinds();
@@ -553,7 +595,8 @@ impl Menu {
     fn take_dropped(&mut self) {
         use macroquad::miniquad::window as win;
         let n = win::dropped_file_count();
-        let drop: Vec<(Option<std::path::PathBuf>, Option<Vec<u8>>)> = (0..n).map(|i| (win::dropped_file_path(i), win::dropped_file_bytes(i))).collect();
+        let drop: Vec<(Option<std::path::PathBuf>, Option<Vec<u8>>)> =
+            (0..n).map(|i| (win::dropped_file_path(i), win::dropped_file_bytes(i))).collect();
         let key: Vec<(Option<std::path::PathBuf>, usize, u32)> =
             drop.iter().map(|(p, b)| (p.clone(), b.as_ref().map_or(0, |b| b.len()), b.as_ref().map_or(0, |b| icon_hash(b)))).collect();
         if key == self.last_drop {
@@ -576,26 +619,47 @@ impl Menu {
 
     fn save(&self) {
         let map = MAPS[self.map as usize % MAPS.len()].name.to_lowercase();
-        let mut out = format!("name={}\nbots={}\nsens={}\nmap={}\nrotate={}\n", self.f[F_NAME], self.f[F_BOTS], self.sens, map, self.rotate as u8);
-        out += &format!("difficulty={}\nvolume={:.2}\nmusic_volume={:.2}\nmusic={}\nmusic_in_match={}\n", self.difficulty, self.volume, self.music_vol, self.music_on as u8, self.music_in_match as u8);
+        let mut out =
+            format!("name={}\nbots={}\nsens={}\nmap={}\nrotate={}\n", self.f[F_NAME], self.f[F_BOTS], self.sens, map, self.rotate as u8);
+        out += &format!(
+            "difficulty={}\nvolume={:.2}\nmusic_volume={:.2}\nmusic={}\nmusic_in_match={}\n",
+            self.difficulty, self.volume, self.music_vol, self.music_on as u8, self.music_in_match as u8
+        );
         let p = &self.prefs;
-        out += &format!("fov={}\nfullscreen={}\nshadows={}\nshow_fps={}\ninvert_y={}\ntoggle_aim={}\n", p.fov, p.fullscreen as u8, p.shadows, p.show_fps as u8, p.invert_y as u8, p.toggle_aim as u8);
+        out += &format!(
+            "fov={}\nfullscreen={}\nshadows={}\nshow_fps={}\ninvert_y={}\ntoggle_aim={}\n",
+            p.fov, p.fullscreen as u8, p.shadows, p.show_fps as u8, p.invert_y as u8, p.toggle_aim as u8
+        );
         out += &p.bindings.write_config();
-        out += &format!("controller_enabled={}\ncontroller_sensitivity={}\ncontroller_deadzone={}\ncontroller_invert_y={}\n", p.controller.enabled as u8, p.controller.sensitivity, p.controller.deadzone, p.controller.invert_y as u8);
+        out += &format!(
+            "controller_enabled={}\ncontroller_sensitivity={}\ncontroller_deadzone={}\ncontroller_invert_y={}\n",
+            p.controller.enabled as u8, p.controller.sensitivity, p.controller.deadzone, p.controller.invert_y as u8
+        );
         if let Some(d) = &self.audio_device {
-            out += &format!("audio_device={d}
-");
+            out += &format!(
+                "audio_device={d}
+"
+            );
         }
         let l = self.loadout;
         out += &format!("loadout={},{},{},{},{},{}\n", l[0], l[1], l[2], l[3], l[4], l[5]);
         out += &format!("weapon_skins={}\n", self.wskins.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(","));
         out += &format!("sights={}\n", self.sights.iter().map(|s| s.to_string()).collect::<Vec<_>>().join(","));
-        out += &format!("id={}\nicon={}\nicon_colour={}\nupdates={}\n", uuid_text(&self.uuid), self.icon_kind, self.icon_colour, self.updates as u8);
+        out += &format!(
+            "id={}\nicon={}\nicon_colour={}\nupdates={}\n",
+            uuid_text(&self.uuid),
+            self.icon_kind,
+            self.icon_colour,
+            self.updates as u8
+        );
         if let Some(px) = &self.custom {
             out += &format!("icon_data={}\n", ident::to_hex(px));
         }
         let pr = &self.profile;
-        out += &format!("credits={}\nowned_looks={}\nowned_finishes={}\nwins={}\nlosses={}\nearned={}\nonboarded={}\n", pr.credits, pr.looks, pr.finishes, pr.wins, pr.losses, pr.earned, pr.onboarded as u8);
+        out += &format!(
+            "credits={}\nowned_looks={}\nowned_finishes={}\nwins={}\nlosses={}\nearned={}\nonboarded={}\n",
+            pr.credits, pr.looks, pr.finishes, pr.wins, pr.losses, pr.earned, pr.onboarded as u8
+        );
         out += &format!("touch={}\nmode={}\n", p.touch as u8, self.mode);
         if !self.f[F_MAXBOTS].is_empty() {
             out += &format!("max_bots={}\n", self.f[F_MAXBOTS]);
@@ -624,7 +688,11 @@ impl Menu {
 
     pub fn name(&self) -> String {
         let n = self.f[F_NAME].trim();
-        if n.is_empty() { "Player".to_string() } else { n.to_string() }
+        if n.is_empty() {
+            "Player".to_string()
+        } else {
+            n.to_string()
+        }
     }
 
     /// Put a server we actually joined at the top of the saved list.
@@ -767,7 +835,13 @@ impl Menu {
             self.drop_map();
             let world = World::with_map(self.seed, map);
             let bounds = scene::shadow_bounds(world.map);
-            let gpu = gfx::Gpu::new(scene::build_world(&world), scene::build_sky_for(world.map), self.prefs.shadows.min(2048), scene::sun_for(world.map).normalize(), bounds);
+            let gpu = gfx::Gpu::new(
+                scene::build_world(&world),
+                scene::build_sky_for(world.map),
+                self.prefs.shadows.min(2048),
+                scene::sun_for(world.map).normalize(),
+                bounds,
+            );
             self.preview = Some((map, world, gpu));
         }
         let Some((_, world, gpu)) = &mut self.preview else { return };
@@ -838,7 +912,11 @@ impl Menu {
             kit,
             gun: sim::weapon_def(prim).arch,
             wid,
-            flags: if side { ferrite_shared::proto::flag::SIDEARM | ferrite_shared::proto::flag::GROUND } else { ferrite_shared::proto::flag::GROUND },
+            flags: if side {
+                ferrite_shared::proto::flag::SIDEARM | ferrite_shared::proto::flag::GROUND
+            } else {
+                ferrite_shared::proto::flag::GROUND
+            },
             hp: 100,
             skin: if self.shop_tab == 1 { self.shop_sel[1] } else { self.loadout[5] },
             wskin: if self.shop_tab == 0 { self.shop_sel[0] } else { self.wskins[wid as usize % 20] },
@@ -883,11 +961,7 @@ impl Menu {
             self.binding_note = Some(format!("{} is now unbound.", action.label()));
             self.save();
         } else if let Some(input) = Input::capture() {
-            let result = if self.binding_add {
-                self.prefs.bindings.add(action, input)
-            } else {
-                self.prefs.bindings.replace(action, input)
-            };
+            let result = if self.binding_add { self.prefs.bindings.add(action, input) } else { self.prefs.bindings.replace(action, input) };
             match result {
                 Ok(()) => {
                     self.binding_capture = None;
@@ -923,13 +997,21 @@ impl Menu {
         };
         if self.controls_page == 0 {
             let d = setting_row("MOUSE SENSITIVITY", format!("{:.2}", self.sens * 1000.0), y);
-            if d != 0 { self.sens = (self.sens * if d > 0 { 1.1 } else { 1.0 / 1.1 }).clamp(0.0004, 0.01); }
+            if d != 0 {
+                self.sens = (self.sens * if d > 0 { 1.1 } else { 1.0 / 1.1 }).clamp(0.0004, 0.01);
+            }
             y += 50.0;
-            if setting_row("INVERT MOUSE Y", if self.prefs.invert_y { "ON" } else { "OFF" }.into(), y) != 0 { self.prefs.invert_y = !self.prefs.invert_y; }
+            if setting_row("INVERT MOUSE Y", if self.prefs.invert_y { "ON" } else { "OFF" }.into(), y) != 0 {
+                self.prefs.invert_y = !self.prefs.invert_y;
+            }
             y += 50.0;
-            if setting_row("AIM", if self.prefs.toggle_aim { "TOGGLE" } else { "HOLD" }.into(), y) != 0 { self.prefs.toggle_aim = !self.prefs.toggle_aim; }
+            if setting_row("AIM", if self.prefs.toggle_aim { "TOGGLE" } else { "HOLD" }.into(), y) != 0 {
+                self.prefs.toggle_aim = !self.prefs.toggle_aim;
+            }
             y += 50.0;
-            if setting_row("TOUCH CONTROLS", if self.prefs.touch { "ON" } else { "OFF" }.into(), y) != 0 { self.prefs.touch = !self.prefs.touch; }
+            if setting_row("TOUCH CONTROLS", if self.prefs.touch { "ON" } else { "OFF" }.into(), y) != 0 {
+                self.prefs.touch = !self.prefs.touch;
+            }
             ui::text("On-screen stick and buttons. They switch themselves on at the first touch", x, y + 124.0, 15.0, th::QUIET);
             ui::text("of a touch screen; with a mouse, the left button stands in for a finger.", x, y + 144.0, 15.0, th::QUIET);
             ui::text("MOVE, FIGHT, UI and KIT contain keyboard and mouse bindings.", x, y + 76.0, 17.0, th::MUTED);
@@ -938,18 +1020,25 @@ impl Menu {
         }
         if self.controls_page == 1 {
             let mut status = controller::status();
-            while ui::width(&status, 17.0) > w && status.len() > 4 { status.pop(); }
+            while ui::width(&status, 17.0) > w && status.len() > 4 {
+                status.pop();
+            }
             ui::text(&status, x, y + 16.0, 17.0, th::COBALT_BRIGHT);
             y += 28.0;
-            if setting_row("CONTROLLER", if self.prefs.controller.enabled { "ON" } else { "OFF" }.into(), y) != 0 { self.prefs.controller.enabled = !self.prefs.controller.enabled; }
+            if setting_row("CONTROLLER", if self.prefs.controller.enabled { "ON" } else { "OFF" }.into(), y) != 0 {
+                self.prefs.controller.enabled = !self.prefs.controller.enabled;
+            }
             y += 50.0;
             let d = setting_row("LOOK SENSITIVITY", format!("{:.1}", self.prefs.controller.sensitivity), y);
-            self.prefs.controller.sensitivity = ((self.prefs.controller.sensitivity * 10.0).round() + d as f32 * 2.0).clamp(4.0, 70.0) / 10.0;
+            self.prefs.controller.sensitivity =
+                ((self.prefs.controller.sensitivity * 10.0).round() + d as f32 * 2.0).clamp(4.0, 70.0) / 10.0;
             y += 50.0;
             let d = setting_row("STICK DEADZONE", format!("{:.0}%", self.prefs.controller.deadzone * 100.0), y);
             self.prefs.controller.deadzone = ((self.prefs.controller.deadzone * 100.0).round() + d as f32).clamp(5.0, 40.0) / 100.0;
             y += 50.0;
-            if setting_row("INVERT STICK Y", if self.prefs.controller.invert_y { "ON" } else { "OFF" }.into(), y) != 0 { self.prefs.controller.invert_y = !self.prefs.controller.invert_y; }
+            if setting_row("INVERT STICK Y", if self.prefs.controller.invert_y { "ON" } else { "OFF" }.into(), y) != 0 {
+                self.prefs.controller.invert_y = !self.prefs.controller.invert_y;
+            }
             ui::text("LS move / press sprint. RS look. LT aim. RT fire. START pause.", x, y + 70.0, 15.0, th::MUTED);
             ui::text("A jump. B crouch. X reload. Y swap. LB grenade. RB / RS melee.", x, y + 92.0, 15.0, th::MUTED);
             ui::text("D-pad: sight / loadout / team / stats. BACK shows the scoreboard.", x, y + 114.0, 15.0, th::QUIET);
@@ -971,9 +1060,15 @@ impl Menu {
             ui::text(action.label(), x + 10.0, by + row_h * 0.67, 17.0, th::WHITE);
             let bx = x + w * 0.43;
             let bw = w * 0.57 - 94.0;
-            let value = if active { if self.binding_add { "ADD KEY / MOUSE..." } else { "PRESS KEY / MOUSE..." }.to_string() } else { self.prefs.bindings.display(action) };
+            let value = if active {
+                if self.binding_add { "ADD KEY / MOUSE..." } else { "PRESS KEY / MOUSE..." }.to_string()
+            } else {
+                self.prefs.bindings.display(action)
+            };
             let mut size = 17.0;
-            while size > 12.0 && ui::width(&value, size) > bw - 12.0 { size -= 1.0; }
+            while size > 12.0 && ui::width(&value, size) > bw - 12.0 {
+                size -= 1.0;
+            }
             if button(bx, by + 2.0, bw, row_h - 7.0, &value, active.then_some(th::EMBER), size) {
                 self.binding_capture = Some(action);
                 self.binding_add = false;
@@ -994,9 +1089,12 @@ impl Menu {
             }
         }
         let note_y = y + actions.len() as f32 * row_h + 18.0;
-        let note = self.binding_note.as_deref().unwrap_or("Click to replace; + adds another input. X / right-click clears. Escape cancels.");
+        let note =
+            self.binding_note.as_deref().unwrap_or("Click to replace; + adds another input. X / right-click clears. Escape cancels.");
         let mut note_size = 16.0;
-        while note_size > 12.0 && ui::width(note, note_size) > w { note_size -= 1.0; }
+        while note_size > 12.0 && ui::width(note, note_size) > w {
+            note_size -= 1.0;
+        }
         ui::text(note, x, note_y, note_size, if self.binding_capture.is_some() { th::WARNING } else { th::MUTED });
         ui::text("Duplicates are rejected. Delete / Backspace clears during assignment.", x, note_y + 21.0, 15.0, th::QUIET);
         let cancel = (x + w - 132.0, sh - 72.0, 132.0, 32.0);
@@ -1153,7 +1251,9 @@ impl Menu {
                     self.field(F_HOST, x, y, host_w, "ADDRESS", "hostname or IP", now);
                     self.field(F_PORT, x + host_w + 12.0, y, port_w, "PORT", &DEFAULT_PORT.to_string(), now);
                     let can_join = self.join_addr().is_some();
-                    if (button(x + w - btn_w, y, btn_w, 38.0, "JOIN", Some(if can_join { th::COBALT } else { th::QUIET }), 22.0) || enter) && can_join {
+                    if (button(x + w - btn_w, y, btn_w, 38.0, "JOIN", Some(if can_join { th::COBALT } else { th::QUIET }), 22.0) || enter)
+                        && can_join
+                    {
                         out = self.join_addr().map(Choice::Join);
                     }
                     let mut ry = y + 58.0;
@@ -1167,7 +1267,14 @@ impl Menu {
                         let i = &f.info;
                         let ok = i.proto == PROTO;
                         let over = hit(x, ry, w, 40.0);
-                        ui::plate(x, ry, w, 40.0, if over { th::PANEL_RAISED } else { th::GLASS_STRONG }, if over { th::COBALT } else { th::STROKE });
+                        ui::plate(
+                            x,
+                            ry,
+                            w,
+                            40.0,
+                            if over { th::PANEL_RAISED } else { th::GLASS_STRONG },
+                            if over { th::COBALT } else { th::STROKE },
+                        );
                         let name: String = i.name.chars().filter(|c| !c.is_control()).take(22).collect();
                         ui::text(&name, x + 12.0, ry + 27.0, 20.0, th::WHITE);
                         let state = match i.phase {
@@ -1176,7 +1283,14 @@ impl Menu {
                             _ => "in game",
                         };
                         let detail = if ok {
-                            format!("{}   {}   {}/{} players   {}", MAPS[i.map as usize % MAPS.len()].name, MODES[i.mode as usize % MODES.len()].key.to_uppercase(), i.humans, i.slots, state)
+                            format!(
+                                "{}   {}   {}/{} players   {}",
+                                MAPS[i.map as usize % MAPS.len()].name,
+                                MODES[i.mode as usize % MODES.len()].key.to_uppercase(),
+                                i.humans,
+                                i.slots,
+                                state
+                            )
                         } else {
                             "different game version".to_string()
                         };
@@ -1198,7 +1312,14 @@ impl Menu {
                             break;
                         }
                         let over = hit(x, ry, w, 40.0);
-                        ui::plate(x, ry, w, 40.0, if over { th::PANEL_RAISED } else { th::GLASS_STRONG }, if over { th::COBALT } else { th::STROKE });
+                        ui::plate(
+                            x,
+                            ry,
+                            w,
+                            40.0,
+                            if over { th::PANEL_RAISED } else { th::GLASS_STRONG },
+                            if over { th::COBALT } else { th::STROKE },
+                        );
                         ui::text(s, x + 12.0, ry + 27.0, 20.0, th::WHITE);
                         if button(x + w - 42.0, ry + 5.0, 36.0, 30.0, "X", None, 18.0) {
                             remove = Some(i);
@@ -1253,7 +1374,14 @@ impl Menu {
                         let on = self.mode as usize == i;
                         let bx = x + i as f32 * (mw + 8.0);
                         let over = hit(bx, y, mw, 34.0);
-                        ui::plate(bx, y, mw, 34.0, if on { th::EMBER } else { th::GLASS_STRONG }, if on || over { th::WHITE } else { th::STROKE });
+                        ui::plate(
+                            bx,
+                            y,
+                            mw,
+                            34.0,
+                            if on { th::EMBER } else { th::GLASS_STRONG },
+                            if on || over { th::WHITE } else { th::STROKE },
+                        );
                         ui::text_c(label, bx + mw / 2.0, y + 23.0, 15.0, if on { th::INK } else { th::MUTED });
                         if over && clicked() {
                             self.mode = i as u8;
@@ -1264,7 +1392,9 @@ impl Menu {
                         None => "A different mode every round, unless the lobby votes for one.".to_string(),
                     };
                     let mut msize = 16.0;
-                    while msize > 12.0 && ui::width(&mn, msize) > w { msize -= 1.0; }
+                    while msize > 12.0 && ui::width(&mn, msize) > w {
+                        msize -= 1.0;
+                    }
                     ui::text(&mn, x, y + 54.0, msize, th::WHITE);
                     y += 84.0;
 
@@ -1274,13 +1404,24 @@ impl Menu {
                         let on = self.rotate == (i == 0);
                         let bx = x + i as f32 * 78.0;
                         let over = hit(bx, y, 70.0, 34.0);
-                        ui::plate(bx, y, 70.0, 34.0, if on { th::COBALT } else { th::GLASS_STRONG }, if on || over { th::WHITE } else { th::STROKE });
+                        ui::plate(
+                            bx,
+                            y,
+                            70.0,
+                            34.0,
+                            if on { th::COBALT } else { th::GLASS_STRONG },
+                            if on || over { th::WHITE } else { th::STROKE },
+                        );
                         ui::text_c(label, bx + 35.0, y + 23.0, 18.0, if on { th::INK } else { th::MUTED });
                         if over && clicked() {
                             self.rotate = i == 0;
                         }
                     }
-                    let rn = if self.rotate { "Rounds move to the next map, unless the lobby votes." } else { "Rounds stay on this map, unless the lobby votes." };
+                    let rn = if self.rotate {
+                        "Rounds move to the next map, unless the lobby votes."
+                    } else {
+                        "Rounds stay on this map, unless the lobby votes."
+                    };
                     ui::text(rn, x + 170.0, y + 22.0, 18.0, th::MUTED);
                     y += 58.0;
 
@@ -1331,7 +1472,14 @@ impl Menu {
                         let bx = x + i as f32 * (tw + 8.0);
                         let on = self.shop_tab as usize == i;
                         let over = hit(bx, y, tw, 34.0);
-                        ui::plate(bx, y, tw, 34.0, if on { th::COBALT } else { th::GLASS_STRONG }, if on || over { th::WHITE } else { th::STROKE });
+                        ui::plate(
+                            bx,
+                            y,
+                            tw,
+                            34.0,
+                            if on { th::COBALT } else { th::GLASS_STRONG },
+                            if on || over { th::WHITE } else { th::STROKE },
+                        );
                         ui::text_c(label, bx + tw / 2.0, y + 23.0, 18.0, if on { th::INK } else { th::MUTED });
                         if over && clicked() {
                             self.shop_tab = i as u8;
@@ -1364,20 +1512,44 @@ impl Menu {
                     for id in 0..n as u8 {
                         let (bx, by) = (x + (id % 2) as f32 * (cw + 8.0), y + (id / 2) as f32 * rh);
                         let (owned, price, worn, name) = if fin {
-                            (self.profile.owns_finish(id), sim::weapon_skin_price(id), self.wskins[wid as usize % 20] == id, sim::weapon_skin(id).name)
+                            (
+                                self.profile.owns_finish(id),
+                                sim::weapon_skin_price(id),
+                                self.wskins[wid as usize % 20] == id,
+                                sim::weapon_skin(id).name,
+                            )
                         } else {
                             (self.profile.owns_look(id), sim::skin_price(id), self.loadout[5] == id, sim::SKINS[id as usize].0)
                         };
                         let sel = self.shop_sel[tab] == id;
                         let over = hit(bx, by, cw, rh - 4.0);
-                        ui::plate(bx, by, cw, rh - 4.0, if sel { th::PANEL_RAISED } else { th::GLASS_STRONG }, if sel { th::WHITE } else if over { th::COBALT } else { th::STROKE });
+                        ui::plate(
+                            bx,
+                            by,
+                            cw,
+                            rh - 4.0,
+                            if sel { th::PANEL_RAISED } else { th::GLASS_STRONG },
+                            if sel {
+                                th::WHITE
+                            } else if over {
+                                th::COBALT
+                            } else {
+                                th::STROKE
+                            },
+                        );
                         let mut tx = bx + 10.0;
                         if fin {
                             // Its colours: body, pattern, accent.
                             let d = sim::weapon_skin(id);
                             for (k, c) in [d.body, d.pattern_color, d.accent].into_iter().enumerate() {
                                 let c = c.unwrap_or([0.33, 0.35, 0.37]);
-                                mq::draw_rectangle(bx + 8.0 + k as f32 * 12.0, by + 6.0, 10.0, rh - 16.0, mq::Color::new(c[0], c[1], c[2], 1.0));
+                                mq::draw_rectangle(
+                                    bx + 8.0 + k as f32 * 12.0,
+                                    by + 6.0,
+                                    10.0,
+                                    rh - 16.0,
+                                    mq::Color::new(c[0], c[1], c[2], 1.0),
+                                );
                             }
                             tx = bx + 52.0;
                         }
@@ -1399,24 +1571,48 @@ impl Menu {
                     // The one being looked at: what it is, and buy or wear it.
                     let id = self.shop_sel[tab].min(n as u8 - 1);
                     let (owned, price, worn, name, blurb) = if fin {
-                        (self.profile.owns_finish(id), sim::weapon_skin_price(id), self.wskins[wid as usize % 20] == id, sim::weapon_skin(id).name, sim::weapon_skin(id).blurb)
+                        (
+                            self.profile.owns_finish(id),
+                            sim::weapon_skin_price(id),
+                            self.wskins[wid as usize % 20] == id,
+                            sim::weapon_skin(id).name,
+                            sim::weapon_skin(id).blurb,
+                        )
                     } else {
-                        (self.profile.owns_look(id), sim::skin_price(id), self.loadout[5] == id, sim::SKINS[id as usize].0, sim::SKINS[id as usize].1)
+                        (
+                            self.profile.owns_look(id),
+                            sim::skin_price(id),
+                            self.loadout[5] == id,
+                            sim::SKINS[id as usize].0,
+                            sim::SKINS[id as usize].1,
+                        )
                     };
                     ui::text(name, x, y, 22.0, th::WHITE);
                     ui::text(blurb, x + ui::width(name, 22.0) + 14.0, y, 16.0, th::MUTED);
                     y += 12.0;
                     if !owned {
                         if price <= self.profile.credits {
-                            if button(x, y, w, 44.0, &format!("BUY FOR {price} CREDITS"), Some(th::EMBER), 22.0) && self.profile.buy(fin, id) {
+                            if button(x, y, w, 44.0, &format!("BUY FOR {price} CREDITS"), Some(th::EMBER), 22.0)
+                                && self.profile.buy(fin, id)
+                            {
                                 // Bought to be worn.
-                                if fin { self.wskins[wid as usize % 20] = id } else { self.loadout[5] = id }
+                                if fin {
+                                    self.wskins[wid as usize % 20] = id
+                                } else {
+                                    self.loadout[5] = id
+                                }
                                 self.shop_note = Some(format!("{name} is yours. {} credits left.", self.profile.credits));
                                 self.save();
                             }
                         } else {
                             ui::plate(x, y, w, 44.0, th::GLASS_STRONG, th::STROKE);
-                            ui::text_c(&format!("{price} CREDITS  -  {} MORE TO GO", price - self.profile.credits), x + w / 2.0, y + 29.0, 19.0, th::DANGER);
+                            ui::text_c(
+                                &format!("{price} CREDITS  -  {} MORE TO GO", price - self.profile.credits),
+                                x + w / 2.0,
+                                y + 29.0,
+                                19.0,
+                                th::DANGER,
+                            );
                         }
                     } else if fin {
                         let hw = (w - 8.0) / 2.0;
@@ -1432,13 +1628,18 @@ impl Menu {
                             self.shop_note = Some(format!("Every gun now wears {name}."));
                             self.save();
                         }
-                    } else if button(x, y, w, 44.0, if worn { "WEARING IT" } else { "WEAR THIS LOOK" }, (!worn).then_some(th::COBALT), 20.0) && !worn {
+                    } else if button(x, y, w, 44.0, if worn { "WEARING IT" } else { "WEAR THIS LOOK" }, (!worn).then_some(th::COBALT), 20.0)
+                        && !worn
+                    {
                         self.loadout[5] = id;
                         self.save();
                     }
                     y += 64.0;
                     let pr = &self.profile;
-                    let line = self.shop_note.clone().unwrap_or_else(|| format!("ROUNDS WON {}   LOST {}   CREDITS EARNED {}", pr.wins, pr.losses, pr.earned));
+                    let line = self
+                        .shop_note
+                        .clone()
+                        .unwrap_or_else(|| format!("ROUNDS WON {}   LOST {}   CREDITS EARNED {}", pr.wins, pr.losses, pr.earned));
                     ui::text(&line, x, y, 16.0, if self.shop_note.is_some() { th::SUCCESS } else { th::MUTED });
                     ui::text("A round won pays 120 to 240 credits, a round lost 45 to 165: the better", x, sh - 40.0, 15.0, th::QUIET);
                     ui::text("your score, the more. Standard-issue looks and finishes are free.", x, sh - 22.0, 15.0, th::QUIET);
@@ -1447,8 +1648,24 @@ impl Menu {
                         let (gw, gh) = (360.0, 132.0);
                         let (gx, gy) = (sw - gw - 40.0, 92.0);
                         ui::plate(gx, gy, gw, gh, th::GLASS, th::STROKE);
-                        ui::text(&format!("{}  /  {}", sim::weapon_def(wid).name.to_uppercase(), name), gx + 12.0, gy + 22.0, 15.0, th::MUTED);
-                        scene::gun_icon(&mut over_mesh, wid, 0, id, gx + gw / 2.0, sh - (gy + gh / 2.0 + 10.0), gw - 50.0, gh - 46.0, (now as f32 * 0.8).sin() * 0.6);
+                        ui::text(
+                            &format!("{}  /  {}", sim::weapon_def(wid).name.to_uppercase(), name),
+                            gx + 12.0,
+                            gy + 22.0,
+                            15.0,
+                            th::MUTED,
+                        );
+                        scene::gun_icon(
+                            &mut over_mesh,
+                            wid,
+                            0,
+                            id,
+                            gx + gw / 2.0,
+                            sh - (gy + gh / 2.0 + 10.0),
+                            gw - 50.0,
+                            gh - 46.0,
+                            (now as f32 * 0.8).sin() * 0.6,
+                        );
                     }
                 }
                 5 => {
@@ -1460,7 +1677,13 @@ impl Menu {
                     ui::text(title, x, y + 34.0, 34.0, th::WHITE);
                     mq::draw_line(x, y + 48.0, x + w, y + 48.0, 1.0, th::STROKE);
                     for k in 0..4 {
-                        mq::draw_rectangle(x + w - 150.0 + k as f32 * 38.0, y - 2.0, 30.0, 5.0, if k <= step as usize { th::EMBER } else { th::STROKE });
+                        mq::draw_rectangle(
+                            x + w - 150.0 + k as f32 * 38.0,
+                            y - 2.0,
+                            30.0,
+                            5.0,
+                            if k <= step as usize { th::EMBER } else { th::STROKE },
+                        );
                     }
                     y += 84.0;
                     let para = |lines: &[&str], y: &mut f32, c: mq::Color| {
@@ -1472,13 +1695,27 @@ impl Menu {
                     let mut start_practice = false;
                     match step {
                         0 => {
-                            para(&["Two teams, EMBER and COBALT, twelve a side. Bots fill every seat", "a person does not take, so there is always a fight to join."], &mut y, th::WHITE);
+                            para(
+                                &[
+                                    "Two teams, EMBER and COBALT, twelve a side. Bots fill every seat",
+                                    "a person does not take, so there is always a fight to join.",
+                                ],
+                                &mut y,
+                                th::WHITE,
+                            );
                             y += 26.0;
                             self.focus = F_NAME;
                             self.field(F_NAME, x, y, 190.0, "YOUR CALLSIGN", "Player", now);
                             self.icon_picker(x + 206.0, y);
                             y += 92.0;
-                            para(&["Your callsign and icon show in the kill feed, the scoreboard and chat.", "Both can be changed on the home screen whenever you like."], &mut y, th::MUTED);
+                            para(
+                                &[
+                                    "Your callsign and icon show in the kill feed, the scoreboard and chat.",
+                                    "Both can be changed on the home screen whenever you like.",
+                                ],
+                                &mut y,
+                                th::MUTED,
+                            );
                         }
                         1 => {
                             self.focus = usize::MAX;
@@ -1489,16 +1726,38 @@ impl Menu {
                                 ui::text(m.name, x + 16.0, by + 26.0, 22.0, th::WHITE);
                                 ui::text_r(&format!("{} PACE", m.pace), x + w - 14.0, by + 24.0, 14.0, th::WARNING);
                                 let mut size = 16.0;
-                                while size > 12.0 && ui::width(m.blurb, size) > w - 32.0 { size -= 1.0; }
+                                while size > 12.0 && ui::width(m.blurb, size) > w - 32.0 {
+                                    size -= 1.0;
+                                }
                                 ui::text(m.blurb, x + 16.0, by + 50.0, size, th::MUTED);
                             }
                             y += 4.0 * 74.0 + 14.0;
-                            para(&["The host picks a mode, or MIXED for a new one each round;", "the lobby before every round can vote for another."], &mut y, th::MUTED);
+                            para(
+                                &[
+                                    "The host picks a mode, or MIXED for a new one each round;",
+                                    "the lobby before every round can vote for another.",
+                                ],
+                                &mut y,
+                                th::MUTED,
+                            );
                         }
                         2 => {
                             self.focus = usize::MAX;
                             use Action::*;
-                            let keys = [(Forward, "move (with the three beside it)"), (Sprint, "sprint"), (Jump, "jump, and climb a ledge"), (Crouch, "crouch; slide at a sprint"), (Fire, "fire"), (Aim, "aim down the sight"), (Reload, "reload"), (SwapWeapon, "swap to the sidearm"), (Grenade, "frag grenade"), (Melee, "melee strike"), (Loadout, "loadout"), (Scoreboard, "scoreboard")];
+                            let keys = [
+                                (Forward, "move (with the three beside it)"),
+                                (Sprint, "sprint"),
+                                (Jump, "jump, and climb a ledge"),
+                                (Crouch, "crouch; slide at a sprint"),
+                                (Fire, "fire"),
+                                (Aim, "aim down the sight"),
+                                (Reload, "reload"),
+                                (SwapWeapon, "swap to the sidearm"),
+                                (Grenade, "frag grenade"),
+                                (Melee, "melee strike"),
+                                (Loadout, "loadout"),
+                                (Scoreboard, "scoreboard"),
+                            ];
                             for (i, (a, what)) in keys.iter().enumerate() {
                                 let (kx, ky) = (x + (i % 2) as f32 * (w / 2.0), y + (i / 2) as f32 * 34.0);
                                 let label = self.prefs.bindings.inputs(*a).first().map(|i| i.label()).unwrap_or_else(|| "-".into());
@@ -1510,23 +1769,62 @@ impl Menu {
                             y += 6.0 * 34.0 + 16.0;
                             ui::plate(x, y, w, 42.0, th::GLASS_STRONG, th::STROKE);
                             ui::text("TOUCH CONTROLS", x + 12.0, y + 28.0, 18.0, th::WHITE);
-                            if button(x + w - 108.0, y + 5.0, 100.0, 32.0, if self.prefs.touch { "ON" } else { "OFF" }, self.prefs.touch.then_some(th::COBALT), 18.0) {
+                            if button(
+                                x + w - 108.0,
+                                y + 5.0,
+                                100.0,
+                                32.0,
+                                if self.prefs.touch { "ON" } else { "OFF" },
+                                self.prefs.touch.then_some(th::COBALT),
+                                18.0,
+                            ) {
                                 self.prefs.touch = !self.prefs.touch;
                             }
                             y += 66.0;
-                            para(&["A controller works as soon as it is plugged in. Every key can be", "changed under SETTINGS > CONTROLS."], &mut y, th::MUTED);
+                            para(
+                                &["A controller works as soon as it is plugged in. Every key can be", "changed under SETTINGS > CONTROLS."],
+                                &mut y,
+                                th::MUTED,
+                            );
                         }
                         _ => {
                             self.focus = usize::MAX;
-                            para(&["Every round you finish pays credits: 120 to 240 for a win and", "45 to 165 for a loss, more the better your score."], &mut y, th::WHITE);
+                            para(
+                                &[
+                                    "Every round you finish pays credits: 120 to 240 for a win and",
+                                    "45 to 165 for a loss, more the better your score.",
+                                ],
+                                &mut y,
+                                th::WHITE,
+                            );
                             y += 10.0;
-                            para(&["Spend them in the ARMORY on soldier looks and weapon finishes.", "They are for show only: nothing bought changes how a gun shoots."], &mut y, th::MUTED);
+                            para(
+                                &[
+                                    "Spend them in the ARMORY on soldier looks and weapon finishes.",
+                                    "They are for show only: nothing bought changes how a gun shoots.",
+                                ],
+                                &mut y,
+                                th::MUTED,
+                            );
                             y += 10.0;
-                            para(&["Kill streaks leave rewards where your target fell: armour at 3,", "overdrive at 5, overcharge at 7. Other kills may drop health or ammo."], &mut y, th::MUTED);
+                            para(
+                                &[
+                                    "Kill streaks leave rewards where your target fell: armour at 3,",
+                                    "overdrive at 5, overcharge at 7. Other kills may drop health or ammo.",
+                                ],
+                                &mut y,
+                                th::MUTED,
+                            );
                             y += 16.0;
                             if !self.profile.onboarded {
                                 ui::plate(x, y, w, 50.0, th::GLASS_STRONG, th::WARNING);
-                                ui::text_c(&format!("WELCOME BONUS   +{} CREDITS", sim::WELCOME_CREDITS), x + w / 2.0, y + 33.0, 22.0, th::WARNING);
+                                ui::text_c(
+                                    &format!("WELCOME BONUS   +{} CREDITS", sim::WELCOME_CREDITS),
+                                    x + w / 2.0,
+                                    y + 33.0,
+                                    22.0,
+                                    th::WARNING,
+                                );
                                 y += 66.0;
                             }
                             if button(x, y, w, 54.0, "PLAY A PRACTICE MATCH", Some(th::EMBER), 26.0) {
@@ -1540,15 +1838,31 @@ impl Menu {
                         self.ob_step = step - 1;
                     }
                     let last = step == 3;
-                    if button(x + w - 200.0, by, 200.0, 40.0, if last { "TO THE LAUNCHER" } else { "NEXT >" }, Some(th::COBALT), 20.0) || (enter && !last) {
-                        if last { self.finish_onboarding() } else { self.ob_step = step + 1 }
+                    if button(x + w - 200.0, by, 200.0, 40.0, if last { "TO THE LAUNCHER" } else { "NEXT >" }, Some(th::COBALT), 20.0)
+                        || (enter && !last)
+                    {
+                        if last {
+                            self.finish_onboarding()
+                        } else {
+                            self.ob_step = step + 1
+                        }
                     }
                     if !last && (button(x + w - 330.0, by, 120.0, 40.0, "SKIP", None, 18.0) || esc) {
                         self.finish_onboarding();
                     }
                     if start_practice {
                         self.finish_onboarding();
-                        out = Some(Choice::Host { port: 0, per_team: 6, max_bots: 64, map: 0, rotate: false, lobby: 0, skill: ferrite_server::DIFFICULTIES[0].1, mode: ferrite_shared::mode::TDM, mode_rotate: false });
+                        out = Some(Choice::Host {
+                            port: 0,
+                            per_team: 6,
+                            max_bots: 64,
+                            map: 0,
+                            rotate: false,
+                            lobby: 0,
+                            skill: ferrite_server::DIFFICULTIES[0].1,
+                            mode: ferrite_shared::mode::TDM,
+                            mode_rotate: false,
+                        });
                     }
                 }
                 _ => {
@@ -1563,7 +1877,14 @@ impl Menu {
                         let bx = x + i as f32 * (tw + 8.0);
                         let on = self.tab as usize == i;
                         let over = hit(bx, y, tw, 36.0);
-                        ui::plate(bx, y, tw, 36.0, if on { th::COBALT } else { th::GLASS_STRONG }, if on || over { th::WHITE } else { th::STROKE });
+                        ui::plate(
+                            bx,
+                            y,
+                            tw,
+                            36.0,
+                            if on { th::COBALT } else { th::GLASS_STRONG },
+                            if on || over { th::WHITE } else { th::STROKE },
+                        );
                         ui::text_c(label, bx + tw / 2.0, y + 25.0, 20.0, if on { th::INK } else { th::MUTED });
                         if over && clicked() {
                             self.tab = i as u8;
@@ -1602,7 +1923,8 @@ impl Menu {
                                 }
                                 ui::text_c(&name, x + 130.0 + 48.0 + room / 2.0, y + 29.0, 16.0, th::COBALT_BRIGHT);
                                 let n = self.devices.len() as i32 + 1;
-                                let step = button(x + w - 48.0, y + 6.0, 40.0, 34.0, ">", None, 22.0) as i32 - button(x + 130.0, y + 6.0, 40.0, 34.0, "<", None, 22.0) as i32;
+                                let step = button(x + w - 48.0, y + 6.0, 40.0, 34.0, ">", None, 22.0) as i32
+                                    - button(x + 130.0, y + 6.0, 40.0, 34.0, "<", None, 22.0) as i32;
                                 if step != 0 && (n > 1 || self.audio_device.is_some()) {
                                     // Slot 0 is the system default, then the devices.
                                     let cur = at.map_or(0, |i| i as i32 + 1);
@@ -1673,7 +1995,9 @@ impl Menu {
             {
                 let (line, c, act) = match &self.updater.state {
                     Up::Available(tag) => (format!("UPDATE AVAILABLE   {tag}"), th::WARNING, true),
-                    Up::Installing(tag) => (format!("DOWNLOADING {tag}{}", [".", "..", "..."][(now * 2.0) as usize % 3]), th::COBALT_BRIGHT, false),
+                    Up::Installing(tag) => {
+                        (format!("DOWNLOADING {tag}{}", [".", "..", "..."][(now * 2.0) as usize % 3]), th::COBALT_BRIGHT, false)
+                    }
                     Up::Failed(e) => (format!("UPDATE FAILED: {e}"), th::DANGER, false),
                     _ => (String::new(), th::WHITE, false),
                 };
@@ -1713,7 +2037,10 @@ impl Menu {
             controller::draw_cursor();
             self.frames += 1;
             // (a picture waits for the music, so it shows what is playing)
-            if self.frames >= 20 && self.shot.is_some() && (!music.available() || !self.music_on || music.now_playing().is_some() || self.frames > 900) {
+            if self.frames >= 20
+                && self.shot.is_some()
+                && (!music.available() || !self.music_on || music.now_playing().is_some() || self.frames > 900)
+            {
                 if let Some(p) = &self.shot {
                     mq::get_screen_data().export_png(p);
                     self.drop_map();

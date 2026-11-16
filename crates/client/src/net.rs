@@ -236,7 +236,16 @@ impl Net {
                 self.sent.pop_front();
             }
         }
-        let _ = self.sock.send(&encode(&C2S::Cmds { cmds: cmds.to_vec(), ack_feed: self.ack_feed, kit, prim, side, skin, wskin, ack_chat: self.ack_chat }));
+        let _ = self.sock.send(&encode(&C2S::Cmds {
+            cmds: cmds.to_vec(),
+            ack_feed: self.ack_feed,
+            kit,
+            prim,
+            side,
+            skin,
+            wskin,
+            ack_chat: self.ack_chat,
+        }));
     }
 
     /// Ask the server to move us to `team`. Sent a few times because the
@@ -277,7 +286,14 @@ impl Net {
                 break;
             }
         }
-        let mk = |p: &NetPlayer| Remote { pos: Vec3::from(p.pos), yaw: p.yaw_f(), pitch: p.pitch_f(), flags: p.flags, flags2: p.flags2, hp: p.hp };
+        let mk = |p: &NetPlayer| Remote {
+            pos: Vec3::from(p.pos),
+            yaw: p.yaw_f(),
+            pitch: p.pitch_f(),
+            flags: p.flags,
+            flags2: p.flags2,
+            hp: p.hp,
+        };
         match (prev, next) {
             (Some((s0, a)), Some((s1, b))) => {
                 let f = ((rt - s0.tick as f64) / (s1.tick - s0.tick).max(1) as f64).clamp(0.0, 1.0) as f32;

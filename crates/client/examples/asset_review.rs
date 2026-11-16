@@ -75,43 +75,25 @@ async fn main() {
     let skins = mode == "skins";
     let sights = mode == "sights";
     let gallery = models || weapons || skins || sights;
-    let mut stage = if gallery {
-        gfx::Mesh::default()
-    } else {
-        scene::build_world(&w)
-    };
+    let mut stage = if gallery { gfx::Mesh::default() } else { scene::build_world(&w) };
     if models {
-        stage.cuboid(
-            vec3(-8.0, -0.2, -4.0),
-            vec3(8.0, -0.08, 4.0),
-            gfx::rgb(0.17, 0.19, 0.23),
-        );
+        stage.cuboid(vec3(-8.0, -0.2, -4.0), vec3(8.0, -0.08, 4.0), gfx::rgb(0.17, 0.19, 0.23));
         for k in 0..6 {
             let x = (k as f32 - 2.5) * 2.2;
             for z in [-1.8, 1.8] {
-                stage.cuboid(
-                    vec3(x - 0.75, -0.08, z - 0.75),
-                    vec3(x + 0.75, 0.0, z + 0.75),
-                    gfx::rgb(0.26, 0.29, 0.32),
-                );
+                stage.cuboid(vec3(x - 0.75, -0.08, z - 0.75), vec3(x + 0.75, 0.0, z + 0.75), gfx::rgb(0.26, 0.29, 0.32));
             }
         }
     }
     let bounds = if gallery { (vec3(-HALF_X, -14.0, -HALF_Z), vec3(HALF_X, 40.0, HALF_Z)) } else { scene::shadow_bounds(map) };
     let mut gpu = gfx::Gpu::new(
         stage,
-        if gallery {
-            gfx::Mesh::default()
-        } else {
-            scene::build_sky_for(map)
-        },
+        if gallery { gfx::Mesh::default() } else { scene::build_sky_for(map) },
         if gallery { 0 } else { 2048 },
         scene::sun_for(map).normalize(),
         bounds,
     );
-    let ids: Vec<u8> = (0..sim::WEAPONS.len() as u8)
-        .filter(|id| !matches!(*id, 3 | 17))
-        .collect();
+    let ids: Vec<u8> = (0..sim::WEAPONS.len() as u8).filter(|id| !matches!(*id, 3 | 17)).collect();
     let empty = gfx::Mesh::default();
     let mut frames = 0;
     loop {
@@ -133,11 +115,7 @@ async fn main() {
                     let mut p = scene::PlayerView {
                         id: team * 6 + skin,
                         pos: vec3(x, 0.0, if team == 0 { 1.8 } else { -1.8 }),
-                        yaw: if team == 0 {
-                            -0.3
-                        } else {
-                            std::f32::consts::PI - 0.3
-                        },
+                        yaw: if team == 0 { -0.3 } else { std::f32::consts::PI - 0.3 },
                         flags: flag::GROUND,
                         hp: 100,
                         team,
@@ -189,13 +167,7 @@ async fn main() {
                 &mut alpha,
                 &mut add,
                 &w,
-                &[
-                    (0, 0.0, false),
-                    (0, 0.0, false),
-                    (2, 0.0, false),
-                    (1, 0.0, false),
-                    (1, 0.0, false),
-                ],
+                &[(0, 0.0, false), (0, 0.0, false), (2, 0.0, false), (1, 0.0, false), (1, 0.0, false)],
                 time,
                 dmask,
             );
@@ -247,10 +219,7 @@ async fn main() {
                 "approach" => (vec3(-57.0, 3.2, -7.0), vec3(0.0, 15.0, 0.0)),
                 // "ex,ey,ez,tx,ty,tz": an arbitrary camera for art review.
                 custom if custom.contains(',') => {
-                    let v: Vec<f32> = custom
-                        .split(',')
-                        .filter_map(|s| s.trim().parse().ok())
-                        .collect();
+                    let v: Vec<f32> = custom.split(',').filter_map(|s| s.trim().parse().ok()).collect();
                     if v.len() == 6 {
                         (vec3(v[0], v[1], v[2]), vec3(v[3], v[4], v[5]))
                     } else {
@@ -260,10 +229,7 @@ async fn main() {
                 _ => (vec3(96.0, 59.0, -99.0), vec3(0.0, 9.0, 0.0)),
             }
         } else {
-            let v: Vec<f32> = pose
-                .split(',')
-                .filter_map(|s| s.trim().parse().ok())
-                .collect();
+            let v: Vec<f32> = pose.split(',').filter_map(|s| s.trim().parse().ok()).collect();
             if !gallery && v.len() == 6 {
                 (vec3(v[0], v[1], v[2]), vec3(v[3], v[4], v[5]))
             } else {
@@ -283,11 +249,7 @@ async fn main() {
             sun: scene::sun_for(map).normalize(),
             tone: scene::tone_for(map),
             time,
-            fog: if gallery {
-                [0.055, 0.07, 0.1, 0.0]
-            } else {
-                scene::fog_for(map)
-            },
+            fog: if gallery { [0.055, 0.07, 0.1, 0.0] } else { scene::fog_for(map) },
             lights: if gallery { [gfx::Light::default(); 4] } else { scene::map_lights(&w, eye, [gfx::Light::default(); 4]) },
             opaque: &opaque,
             alpha: &alpha,
@@ -300,13 +262,7 @@ async fn main() {
         });
         if gallery || (map != ferrite_shared::map::slag_cathedral::MAP_ID && !pose.contains(',')) {
             label("FERRITE / ASSET REVIEW", 40.0, 48.0, 30.0, mq::WHITE);
-            label(
-                &format!("{} / {}", mode.to_uppercase(), pose.to_uppercase()),
-                40.0,
-                77.0,
-                20.0,
-                mq::LIGHTGRAY,
-            );
+            label(&format!("{} / {}", mode.to_uppercase(), pose.to_uppercase()), 40.0, 77.0, 20.0, mq::LIGHTGRAY);
         }
         if weapons {
             let cw = (mq::screen_width() - 80.0) / 4.0;
@@ -314,20 +270,8 @@ async fn main() {
             for (k, &id) in ids.iter().enumerate() {
                 let x = 40.0 + k as f32 % 4.0 * cw;
                 let y = 110.0 + (k / 4) as f32 * ch;
-                mq::draw_rectangle(
-                    x + 3.0,
-                    y + 3.0,
-                    cw - 6.0,
-                    ch - 6.0,
-                    mq::Color::new(0.1, 0.125, 0.17, 1.0),
-                );
-                label(
-                    sim::weapon_def(id).name,
-                    x + 16.0,
-                    y + 29.0,
-                    21.0,
-                    mq::WHITE,
-                );
+                mq::draw_rectangle(x + 3.0, y + 3.0, cw - 6.0, ch - 6.0, mq::Color::new(0.1, 0.125, 0.17, 1.0));
+                label(sim::weapon_def(id).name, x + 16.0, y + 29.0, 21.0, mq::WHITE);
                 let mut gun = gfx::Mesh::default();
                 scene::gun_icon(
                     &mut gun,
@@ -348,28 +292,14 @@ async fn main() {
             for k in 0..6 {
                 let x = 40.0 + (k % 3) as f32 * cw;
                 let y = 110.0 + (k / 3) as f32 * ch;
-                mq::draw_rectangle(
-                    x + 3.0,
-                    y + 3.0,
-                    cw - 6.0,
-                    ch - 6.0,
-                    mq::Color::new(0.1, 0.125, 0.17, 1.0),
-                );
+                mq::draw_rectangle(x + 3.0, y + 3.0, cw - 6.0, ch - 6.0, mq::Color::new(0.1, 0.125, 0.17, 1.0));
                 let mut mesh = gfx::Mesh::default();
                 if skins {
                     let skin = (k + 1) as u8;
                     let finish = sim::weapon_skin(skin);
                     label(finish.name, x + 20.0, y + 32.0, 24.0, mq::WHITE);
                     label(finish.blurb, x + 20.0, y + 58.0, 16.0, mq::LIGHTGRAY);
-                    for (slot, c) in [
-                        finish.body,
-                        finish.furniture,
-                        finish.accent,
-                        finish.pattern_color,
-                    ]
-                    .iter()
-                    .enumerate()
-                    {
+                    for (slot, c) in [finish.body, finish.furniture, finish.accent, finish.pattern_color].iter().enumerate() {
                         if let Some(c) = c {
                             mq::draw_rectangle(
                                 x + cw - 107.0 + slot as f32 * 20.0,
@@ -380,48 +310,14 @@ async fn main() {
                             );
                         }
                     }
-                    scene::gun_icon(
-                        &mut mesh,
-                        0,
-                        1,
-                        skin,
-                        x + cw * 0.5,
-                        mq::screen_height() - y - ch * 0.40,
-                        cw - 44.0,
-                        ch * 0.30,
-                        0.3,
-                    );
-                    scene::gun_icon(
-                        &mut mesh,
-                        4,
-                        1,
-                        skin,
-                        x + cw * 0.52,
-                        mq::screen_height() - y - ch * 0.78,
-                        cw * 0.42,
-                        ch * 0.30,
-                        0.3,
-                    );
+                    scene::gun_icon(&mut mesh, 0, 1, skin, x + cw * 0.5, mq::screen_height() - y - ch * 0.40, cw - 44.0, ch * 0.30, 0.3);
+                    scene::gun_icon(&mut mesh, 4, 1, skin, x + cw * 0.52, mq::screen_height() - y - ch * 0.78, cw * 0.42, ch * 0.30, 0.3);
                 } else {
                     let sight = k as u8;
                     let wid = if sight >= scene::SCOPE4 { 2 } else { 0 };
                     label(scene::SIGHT_NAMES[k], x + 20.0, y + 32.0, 24.0, mq::WHITE);
-                    label(
-                        "ATTACHMENT / MOUNTED PROFILE",
-                        x + 20.0,
-                        y + 55.0,
-                        16.0,
-                        mq::LIGHTGRAY,
-                    );
-                    sight_icon(
-                        &mut mesh,
-                        wid,
-                        sight,
-                        x + cw * 0.5,
-                        mq::screen_height() - y - ch * 0.40,
-                        cw * 0.65,
-                        ch * 0.35,
-                    );
+                    label("ATTACHMENT / MOUNTED PROFILE", x + 20.0, y + 55.0, 16.0, mq::LIGHTGRAY);
+                    sight_icon(&mut mesh, wid, sight, x + cw * 0.5, mq::screen_height() - y - ch * 0.40, cw * 0.65, ch * 0.35);
                     scene::gun_icon_sighted(
                         &mut mesh,
                         wid,
@@ -439,21 +335,9 @@ async fn main() {
             }
         } else if models {
             for (k, (name, _)) in SKINS.iter().enumerate() {
-                label(
-                    name,
-                    120.0 + k as f32 * 238.0,
-                    mq::screen_height() - 58.0,
-                    22.0,
-                    mq::LIGHTGRAY,
-                );
+                label(name, 120.0 + k as f32 * 238.0, mq::screen_height() - 58.0, 22.0, mq::LIGHTGRAY);
             }
-            label(
-                "EMBER / FRONT     COBALT / BACK",
-                40.0,
-                mq::screen_height() - 22.0,
-                18.0,
-                mq::LIGHTGRAY,
-            );
+            label("EMBER / FRONT     COBALT / BACK", 40.0, mq::screen_height() - 22.0, 18.0, mq::LIGHTGRAY);
         }
         frames += 1;
         if frames == 24 {

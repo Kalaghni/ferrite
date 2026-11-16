@@ -33,8 +33,7 @@ pub const GALLERY_RAIL_OUTER_Z: f32 = 16.8;
 pub const GALLERY_RAIL_HALF: f32 = 0.055;
 pub const GALLERY_RAIL_HEIGHTS: [f32; 2] = [GALLERY_Y + 0.5, GALLERY_Y + 1.0];
 /// Open inner gates beside the ribs; all four stair-end entries stay clear.
-pub const GALLERY_INNER_RAIL_SPANS: [(f32, f32); 5] =
-    [(-26.0, -19.2), (-16.8, -7.2), (-4.8, 4.8), (7.2, 16.8), (19.2, 26.0)];
+pub const GALLERY_INNER_RAIL_SPANS: [(f32, f32); 5] = [(-26.0, -19.2), (-16.8, -7.2), (-4.8, 4.8), (7.2, 16.8), (19.2, 26.0)];
 pub const STAIR_START_X: f32 = 34.4;
 pub const STAIR_TREAD: f32 = 0.7;
 pub const STAIR_RISE: f32 = 0.3;
@@ -68,7 +67,8 @@ pub const BELL_GANTRY_BEAM: f32 = 0.6;
 pub const MOULD_FRAGMENTS: [(f32, f32, f32, f32, f32); 3] =
     [(-118.5, -62.5, 1.6, 0.5, 0.9), (-133.0, -63.0, 0.5, 1.7, 1.1), (-120.4, -68.9, 1.4, 0.5, 0.7)];
 /// Exterior service blocks (west half): low cover in the yards.
-pub const SERVICE_BLOCKS: [(f32, f32); 4] = [(-89.0 * SPREAD, 35.0 * SPREAD), (-67.0 * SPREAD, -44.0 * SPREAD), (-52.0 * SPREAD, 48.0 * SPREAD), (-6.0 * SPREAD, -52.0 * SPREAD)];
+pub const SERVICE_BLOCKS: [(f32, f32); 4] =
+    [(-89.0 * SPREAD, 35.0 * SPREAD), (-67.0 * SPREAD, -44.0 * SPREAD), (-52.0 * SPREAD, 48.0 * SPREAD), (-6.0 * SPREAD, -52.0 * SPREAD)];
 /// How far the west base's buildings, the stockyard at A and the boiler
 /// court at B moved when the map was spread out.
 pub const BASE_SHIFT: (f32, f32) = shift(-106.0, 0.0);
@@ -91,8 +91,7 @@ pub const LAVA_DPS: f32 = 40.0;
 
 /// Whether (x, z) lies in molten lava, with the footprint grown by `margin`.
 pub fn in_lava(x: f32, z: f32, margin: f32) -> bool {
-    (z.abs() - LAVA_Z).abs() < LAVA_HALF_W + margin
-        && LAVA_SPANS.iter().any(|&(x0, x1)| x > x0 - margin && x < x1 + margin)
+    (z.abs() - LAVA_Z).abs() < LAVA_HALF_W + margin && LAVA_SPANS.iter().any(|&(x0, x1)| x > x0 - margin && x < x1 + margin)
 }
 
 pub(super) fn build(w: &mut World, rng: &mut crate::rng::Rng) {
@@ -162,11 +161,18 @@ pub(super) fn build(w: &mut World, rng: &mut crate::rng::Rng) {
     // Physical mid/top rail beams, never a full invisible wall. Gates in
     // the inner edge line up with the visible openings beside the ribs.
     for y in GALLERY_RAIL_HEIGHTS {
-        w.sym_abs(0.0, GALLERY_RAIL_OUTER_Z, GALLERY_HALF_X, GALLERY_RAIL_HALF,
-            y - GALLERY_RAIL_HALF, y + GALLERY_RAIL_HALF, Metal, 0);
+        w.sym_abs(0.0, GALLERY_RAIL_OUTER_Z, GALLERY_HALF_X, GALLERY_RAIL_HALF, y - GALLERY_RAIL_HALF, y + GALLERY_RAIL_HALF, Metal, 0);
         for (x0, x1) in GALLERY_INNER_RAIL_SPANS {
-            w.sym_abs((x0 + x1) * 0.5, GALLERY_RAIL_INNER_Z, (x1 - x0) * 0.5, GALLERY_RAIL_HALF,
-                y - GALLERY_RAIL_HALF, y + GALLERY_RAIL_HALF, Metal, 0);
+            w.sym_abs(
+                (x0 + x1) * 0.5,
+                GALLERY_RAIL_INNER_Z,
+                (x1 - x0) * 0.5,
+                GALLERY_RAIL_HALF,
+                y - GALLERY_RAIL_HALF,
+                y + GALLERY_RAIL_HALF,
+                Metal,
+                0,
+            );
         }
     }
     // Gallery supports lie on the outside edge, preserving the aisle below.

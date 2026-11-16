@@ -10,9 +10,7 @@ mod sights;
 use sights::{front_sight, optic, rear_sight};
 // The game and the review example consume different parts of this facade.
 #[allow(unused_imports)]
-pub use sights::{
-    sight_fov, sight_model, sights_for, HOLO, IRON, OPTIC, RED_DOT, SCOPE4, SCOPE8, SIGHT_NAMES,
-};
+pub use sights::{sight_fov, sight_model, sights_for, HOLO, IRON, OPTIC, RED_DOT, SCOPE4, SCOPE8, SIGHT_NAMES};
 
 #[path = "finishes.rs"]
 mod finishes;
@@ -58,23 +56,10 @@ pub struct ViewModel {
 /// Gun space is in metres, with the muzzle toward -Z and +Y up.
 pub fn gun_grips(wid: u8) -> (Vec3, Vec3) {
     match weapon_def(wid).arch {
-        1 => (
-            vec3(0.0, -0.06, 0.1),
-            vec3(0.0, -0.075, if wid == 14 { -0.26 } else { -0.32 }),
-        ),
+        1 => (vec3(0.0, -0.06, 0.1), vec3(0.0, -0.075, if wid == 14 { -0.26 } else { -0.32 })),
         2 => (vec3(0.0, -0.065, 0.13), vec3(0.0, -0.06, -0.3)),
-        4 => (
-            vec3(0.0, -0.085, 0.02),
-            if wid == 11 {
-                vec3(0.0, -0.075, -0.17)
-            } else {
-                vec3(-0.03, -0.1, 0.005)
-            },
-        ),
-        _ => (
-            vec3(0.0, -0.085, 0.1),
-            vec3(0.0, -0.05, if wid == 8 { -0.25 } else { -0.36 }),
-        ),
+        4 => (vec3(0.0, -0.085, 0.02), if wid == 11 { vec3(0.0, -0.075, -0.17) } else { vec3(-0.03, -0.1, 0.005) }),
+        _ => (vec3(0.0, -0.085, 0.1), vec3(0.0, -0.05, if wid == 8 { -0.25 } else { -0.36 })),
     }
 }
 
@@ -91,11 +76,7 @@ pub fn gun_model_pose(m: &mut Mesh, wid: u8, team: u8, skin: u8, g: Mat4, reload
 
 /// Review a supported attachment using the same model as first person.
 pub fn gun_model_sighted(m: &mut Mesh, wid: u8, team: u8, skin: u8, sight: u8, g: Mat4) {
-    let sight = if sights_for(wid).contains(&sight) {
-        sight
-    } else {
-        sights_for(wid)[0]
-    };
+    let sight = if sights_for(wid).contains(&sight) { sight } else { sights_for(wid)[0] };
     if sight == sights_for(wid)[0] {
         gun_model(m, wid, team, skin, g);
     } else {
@@ -104,16 +85,7 @@ pub fn gun_model_sighted(m: &mut Mesh, wid: u8, team: u8, skin: u8, sight: u8, g
 }
 
 #[allow(clippy::too_many_arguments)]
-fn gun_model_state(
-    m: &mut Mesh,
-    wid: u8,
-    team: u8,
-    skin: u8,
-    sight: u8,
-    g: Mat4,
-    reload: f32,
-    cycle: f32,
-) {
+fn gun_model_state(m: &mut Mesh, wid: u8, team: u8, skin: u8, sight: u8, g: Mat4, reload: f32, cycle: f32) {
     let mut add = Mesh::default();
     let v = ViewModel {
         sight,
@@ -148,37 +120,15 @@ fn gun_model_state(
 /// by `turn` radians, and scaled so its profile fits a `w` x `h` box
 /// centred on (`cx`, `cy`).
 #[allow(clippy::too_many_arguments)]
-pub fn gun_icon(
-    m: &mut Mesh,
-    wid: u8,
-    team: u8,
-    skin: u8,
-    cx: f32,
-    cy: f32,
-    w: f32,
-    h: f32,
-    turn: f32,
-) {
+pub fn gun_icon(m: &mut Mesh, wid: u8, team: u8, skin: u8, cx: f32, cy: f32, w: f32, h: f32, turn: f32) {
     gun_icon_sighted(m, wid, team, skin, sights_for(wid)[0], cx, cy, w, h, turn);
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn gun_icon_sighted(
-    m: &mut Mesh,
-    wid: u8,
-    team: u8,
-    skin: u8,
-    sight: u8,
-    cx: f32,
-    cy: f32,
-    w: f32,
-    h: f32,
-    turn: f32,
-) {
+pub fn gun_icon_sighted(m: &mut Mesh, wid: u8, team: u8, skin: u8, sight: u8, cx: f32, cy: f32, w: f32, h: f32, turn: f32) {
     let mut probe = Mesh::default();
     gun_model_sighted(&mut probe, wid, team, skin, sight, Mat4::IDENTITY);
-    let rotation =
-        Mat4::from_rotation_x(0.14) * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2 + turn);
+    let rotation = Mat4::from_rotation_x(0.14) * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2 + turn);
     let (mut lo, mut hi) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
     for v in &probe.v {
         let p = rotation.transform_point3(Vec3::from(v.pos));
@@ -189,10 +139,8 @@ pub fn gun_icon_sighted(
         return;
     }
     let s = (w / (hi.x - lo.x).max(0.01)).min(h / (hi.y - lo.y).max(0.01));
-    let g = Mat4::from_translation(vec3(cx, cy, 0.0))
-        * Mat4::from_scale(Vec3::splat(s))
-        * Mat4::from_translation(-(lo + hi) * 0.5)
-        * rotation;
+    let g =
+        Mat4::from_translation(vec3(cx, cy, 0.0)) * Mat4::from_scale(Vec3::splat(s)) * Mat4::from_translation(-(lo + hi) * 0.5) * rotation;
     gun_model_sighted(m, wid, team, skin, sight, g);
 }
 
@@ -213,23 +161,12 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
     let metal = pick(rgb(0.2, 0.2, 0.23), fin.body);
     let dark = pick(rgb(0.11, 0.11, 0.13), fin.detail);
     // The self-loaders wear polymer where the older guns wear wood.
-    let wood = pick(
-        if matches!(v.wid, 7 | 9 | 14) {
-            rgb(0.17, 0.18, 0.17)
-        } else {
-            rgb(0.45, 0.3, 0.17)
-        },
-        fin.furniture,
-    );
+    let wood = pick(if matches!(v.wid, 7 | 9 | 14) { rgb(0.17, 0.18, 0.17) } else { rgb(0.45, 0.3, 0.17) }, fin.furniture);
     let grip_wood = pick(rgb(0.45, 0.3, 0.17), fin.furniture);
     let sleeve = rgb(tc[0] * 0.45, tc[1] * 0.45, tc[2] * 0.48);
     let cuff = rgb(tc[0] * 0.3, tc[1] * 0.3, tc[2] * 0.33);
     let glove = rgb(0.42, 0.34, 0.25);
-    let hip = if kit == 4 {
-        vec3(0.15, -0.13, -0.5)
-    } else {
-        vec3(0.19, -0.165, -0.7)
-    };
+    let hip = if kit == 4 { vec3(0.15, -0.13, -0.5) } else { vec3(0.19, -0.165, -0.7) };
     let iron = v.sight == IRON;
     let scope = v.sight >= SCOPE4;
     let sight_y = sights::sight_axis(v.wid, v.sight).y;
@@ -256,54 +193,29 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
         (0.0, 0.0, 0.0, 0.0)
     };
     // Working the action between shots.
-    let cyc = if reloading {
-        0.0
-    } else {
-        (seg(1.0 - v.cycle, 0.22, 0.72) * PI).sin()
-    };
+    let cyc = if reloading { 0.0 } else { (seg(1.0 - v.cycle, 0.22, 0.72) * PI).sin() };
     let pump = if matches!(v.wid, 1 | 13) { cyc } else { 0.0 };
     let bolt = if matches!(v.wid, 2 | 15) { cyc } else { 0.0 };
     let draw = ease(v.draw.clamp(0.0, 1.0));
     // Melee: the weapon is driven forward and across, then brought back.
-    let strike = if v.melee > 0.0 {
-        ((1.0 - v.melee) / 0.62).clamp(0.0, 1.0)
-    } else {
-        1.0
-    };
+    let strike = if v.melee > 0.0 { ((1.0 - v.melee) / 0.62).clamp(0.0, 1.0) } else { 1.0 };
     let jab = (seg(strike, 0.0, 0.3) * (1.0 - seg(strike, 0.36, 1.0))).min(1.0);
 
     let k = 1.0 - v.ads * 0.85;
     let mut pos = hip + (aim - hip) * v.ads;
-    pos += vec3((v.bob).sin() * 0.012, v.bob.sin().abs() * -0.014, 0.0)
-        * v.bob_amt
-        * (1.0 + 0.6 * v.sprint)
-        * k;
+    pos += vec3((v.bob).sin() * 0.012, v.bob.sin().abs() * -0.014, 0.0) * v.bob_amt * (1.0 + 0.6 * v.sprint) * k;
     pos += vec3(v.sway.0, v.sway.1, 0.0) * k;
-    pos += vec3(
-        (v.time * 0.9).sin() * 0.0018,
-        (v.time * 1.7).sin() * 0.003,
-        0.0,
-    ) * k;
+    pos += vec3((v.time * 0.9).sin() * 0.0018, (v.time * 1.7).sin() * 0.003, 0.0) * k;
     pos.z += v.recoil * 0.07 + pump * 0.012;
     pos.x -= tilt * 0.05;
-    pos.y -= -tilt * 0.06 + v.sprint * 0.06 + draw * 0.34 + v.land * 0.05 * k + v.mantle * 0.3
-        - seat * 0.014
-        - v.air * 0.012 * k;
+    pos.y -= -tilt * 0.06 + v.sprint * 0.06 + draw * 0.34 + v.land * 0.05 * k + v.mantle * 0.3 - seat * 0.014 - v.air * 0.012 * k;
     pos.x += (v.slide * 0.03 - bolt * 0.012) * k;
     pos += vec3(-0.1, 0.1, -0.3) * jab;
     let rot = Mat4::from_rotation_x(
-        v.recoil * 0.09 + tilt * 0.36
-            - v.sprint * 0.25 * (1.0 - jab)
-            - draw * 0.9
-            - v.mantle * 0.8
-            - v.land * 0.05 * k
-            + pump * 0.03
+        v.recoil * 0.09 + tilt * 0.36 - v.sprint * 0.25 * (1.0 - jab) - draw * 0.9 - v.mantle * 0.8 - v.land * 0.05 * k + pump * 0.03
             - jab * 0.25,
-    ) * Mat4::from_rotation_y(
-        v.sprint * 0.5 * (1.0 - jab) + tilt * 0.22 + draw * 0.3 + bolt * 0.04 + jab * 1.15,
-    ) * Mat4::from_rotation_z(
-        -tilt * 0.55 - v.strafe * 0.05 * k + v.slide * 0.28 * k - bolt * 0.16 * k + jab * 0.7,
-    );
+    ) * Mat4::from_rotation_y(v.sprint * 0.5 * (1.0 - jab) + tilt * 0.22 + draw * 0.3 + bolt * 0.04 + jab * 1.15)
+        * Mat4::from_rotation_z(-tilt * 0.55 - v.strafe * 0.05 * k + v.slide * 0.28 * k - bolt * 0.16 * k + jab * 0.7);
     let g = v.preview.unwrap_or(Mat4::from_translation(pos) * rot);
 
     // Different feed systems keep their own reload instead of a universal box.
@@ -337,61 +249,24 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
             let barrel_back = -0.19;
             receiver(m, &g, vec3(0.0, 0.0, -0.04), vec3(0.038, 0.05, 0.19), metal);
             // One bore above the tube magazine, not two overlapping side-by-side barrels.
-            m.tube(
-                &g,
-                vec3(0.0, 0.014, (barrel_end + barrel_back) * 0.5),
-                0.021,
-                0.014,
-                (barrel_back - barrel_end) * 0.5,
-                16,
-                dark,
-            );
-            m.tube(
-                &g,
-                vec3(0.0, 0.014, barrel_end + 0.012),
-                0.023,
-                0.014,
-                0.012,
-                16,
-                metal,
-            );
+            m.tube(&g, vec3(0.0, 0.014, (barrel_end + barrel_back) * 0.5), 0.021, 0.014, (barrel_back - barrel_end) * 0.5, 16, dark);
+            m.tube(&g, vec3(0.0, 0.014, barrel_end + 0.012), 0.023, 0.014, 0.012, 16, metal);
             if v.wid != 14 {
                 m.tube(&g, vec3(0.0, -0.038, -0.375), 0.014, 0.0, 0.17, 12, metal);
             }
             // The Rattler's fixed handguard does not pump; the Slugger does.
             let fore_len = if v.wid == 14 { 0.075 } else { 0.1 };
             let fore_z = if v.wid == 14 { -0.26 } else { -0.32 };
-            receiver(
-                m,
-                &g,
-                vec3(0.0, -0.045, fore_z) + slide_back,
-                vec3(0.035, 0.03, fore_len),
-                wood,
-            );
+            receiver(m, &g, vec3(0.0, -0.045, fore_z) + slide_back, vec3(0.035, 0.03, fore_len), wood);
             for dz in [-0.06f32, 0.0, 0.06] {
-                m.obox(
-                    &g,
-                    vec3(0.0, -0.045, fore_z + dz) + slide_back,
-                    vec3(0.036, 0.025, 0.005),
-                    shade(wood, 0.72),
-                );
+                m.obox(&g, vec3(0.0, -0.045, fore_z + dz) + slide_back, vec3(0.036, 0.025, 0.005), shade(wood, 0.72));
             }
             receiver(m, &g, vec3(0.0, -0.03, 0.22), vec3(0.03, 0.05, 0.1), wood);
             m.obox(&g, vec3(0.0, -0.045, 0.34), vec3(0.031, 0.065, 0.02), dark);
             m.obox(&g, vec3(0.0, -0.065, 0.06), vec3(0.006, 0.02, 0.05), dark);
             m.obox(&g, vec3(0.0, 0.055, -0.1), vec3(0.036, 0.008, 0.06), accent);
-            m.obox(
-                &g,
-                vec3(0.0385, 0.01, -0.02),
-                vec3(0.002, 0.016, 0.045),
-                dark,
-            );
-            m.obox(
-                &g,
-                vec3(0.045, 0.008, 0.0 + v.recoil * 0.025),
-                vec3(0.01, 0.006, 0.012),
-                metal,
-            );
+            m.obox(&g, vec3(0.0385, 0.01, -0.02), vec3(0.002, 0.016, 0.045), dark);
+            m.obox(&g, vec3(0.045, 0.008, 0.0 + v.recoil * 0.025), vec3(0.01, 0.006, 0.012), metal);
             if iron {
                 front_sight(m, &g, barrel_end + 0.035, 0.034, 0.078, accent, dark);
                 rear_sight(m, &g, 0.1, 0.05, 0.078, 0.012, dark);
@@ -404,87 +279,30 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
                 }
             }
             if v.wid == 14 {
-                m.obox(
-                    &g,
-                    vec3(0.0, -0.055, -0.06),
-                    vec3(0.025, 0.018, 0.027),
-                    metal,
-                );
+                m.obox(&g, vec3(0.0, -0.055, -0.06), vec3(0.025, 0.018, 0.027), metal);
             }
             muzzle_z = barrel_end - 0.005;
         }
         4 => {
             // Shared grip/guard; each action owns its receiver and barrels.
-            let grip_col = if matches!(v.wid, 10 | 16) {
-                grip_wood
-            } else {
-                dark
-            };
-            receiver(
-                m,
-                &(g * Mat4::from_rotation_x(-0.25)),
-                vec3(0.0, -0.075, 0.0),
-                vec3(0.022, 0.06, 0.031),
-                grip_col,
-            );
-            m.obox(
-                &g,
-                vec3(0.0, -0.055, -0.07),
-                vec3(0.008, 0.004, 0.04),
-                metal,
-            );
-            m.obox(
-                &g,
-                vec3(0.0, -0.038, -0.108),
-                vec3(0.008, 0.02, 0.004),
-                metal,
-            );
-            m.obox(
-                &g,
-                vec3(0.0, -0.033, -0.045),
-                vec3(0.004, 0.014, 0.004),
-                dark,
-            );
+            let grip_col = if matches!(v.wid, 10 | 16) { grip_wood } else { dark };
+            receiver(m, &(g * Mat4::from_rotation_x(-0.25)), vec3(0.0, -0.075, 0.0), vec3(0.022, 0.06, 0.031), grip_col);
+            m.obox(&g, vec3(0.0, -0.055, -0.07), vec3(0.008, 0.004, 0.04), metal);
+            m.obox(&g, vec3(0.0, -0.038, -0.108), vec3(0.008, 0.02, 0.004), metal);
+            m.obox(&g, vec3(0.0, -0.033, -0.045), vec3(0.004, 0.014, 0.004), dark);
             match v.wid {
                 10 => {
                     // Swing-out cylinder: a revolver never inherits the pistol slide.
-                    receiver(
-                        m,
-                        &g,
-                        vec3(0.0, -0.01, -0.025),
-                        vec3(0.025, 0.025, 0.07),
-                        metal,
-                    );
-                    m.obox(
-                        &g,
-                        vec3(0.0, 0.051, -0.035),
-                        vec3(0.012, 0.007, 0.06),
-                        accent,
-                    );
+                    receiver(m, &g, vec3(0.0, -0.01, -0.025), vec3(0.025, 0.025, 0.07), metal);
+                    m.obox(&g, vec3(0.0, 0.051, -0.035), vec3(0.012, 0.007, 0.06), accent);
                     let cylinder = g
                         * Mat4::from_translation(vec3(-0.065 * to_mag, 0.014, -0.04))
                         * Mat4::from_rotation_z(v.cycle * std::f32::consts::TAU / 6.0);
-                    m.tube(
-                        &cylinder,
-                        Vec3::ZERO,
-                        0.033,
-                        0.0,
-                        0.041,
-                        12,
-                        shade(metal, 1.15),
-                    );
+                    m.tube(&cylinder, Vec3::ZERO, 0.033, 0.0, 0.041, 12, shade(metal, 1.15));
                     for chamber in 0..6 {
                         let angle = chamber as f32 * std::f32::consts::TAU / 6.0;
                         let c = vec3(angle.cos() * 0.022, angle.sin() * 0.022, 0.043);
-                        m.tube(
-                            &cylinder,
-                            c,
-                            0.007,
-                            0.0,
-                            0.0015,
-                            8,
-                            if mag_out > 0.5 { dark } else { grip_wood },
-                        );
+                        m.tube(&cylinder, c, 0.007, 0.0, 0.0015, 8, if mag_out > 0.5 { dark } else { grip_wood });
                     }
                     m.tube(&g, vec3(0.0, 0.027, -0.23), 0.017, 0.008, 0.145, 12, metal);
                     m.obox(&g, vec3(0.0, 0.048, -0.235), vec3(0.008, 0.008, 0.14), dark);
@@ -497,53 +315,17 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
                 }
                 16 => {
                     // Two real bores on a hinged breech, with shells visible while open.
-                    receiver(
-                        m,
-                        &g,
-                        vec3(0.0, 0.012, -0.025),
-                        vec3(0.037, 0.028, 0.048),
-                        metal,
-                    );
+                    receiver(m, &g, vec3(0.0, 0.012, -0.025), vec3(0.037, 0.028, 0.048), metal);
                     let hinge = vec3(0.0, -0.015, -0.075);
-                    let barrels = g
-                        * Mat4::from_translation(hinge)
-                        * Mat4::from_rotation_x(-0.7 * to_mag)
-                        * Mat4::from_translation(-hinge);
+                    let barrels = g * Mat4::from_translation(hinge) * Mat4::from_rotation_x(-0.7 * to_mag) * Mat4::from_translation(-hinge);
                     for x in [-0.019f32, 0.019] {
-                        m.tube(
-                            &barrels,
-                            vec3(x, 0.026, -0.2),
-                            0.018,
-                            0.012,
-                            0.12,
-                            12,
-                            metal,
-                        );
+                        m.tube(&barrels, vec3(x, 0.026, -0.2), 0.018, 0.012, 0.12, 12, metal);
                         if to_mag > 0.25 && mag_out < 0.6 {
-                            m.tube(
-                                &barrels,
-                                vec3(x, 0.026, -0.075 + mag_out * 0.035),
-                                0.011,
-                                0.0,
-                                0.025,
-                                8,
-                                rgb(0.63, 0.2, 0.12),
-                            );
+                            m.tube(&barrels, vec3(x, 0.026, -0.075 + mag_out * 0.035), 0.011, 0.0, 0.025, 8, rgb(0.63, 0.2, 0.12));
                         }
                     }
-                    receiver(
-                        m,
-                        &barrels,
-                        vec3(0.0, -0.007, -0.16),
-                        vec3(0.035, 0.018, 0.055),
-                        grip_wood,
-                    );
-                    m.obox(
-                        &g,
-                        vec3(0.0, 0.046, -0.025),
-                        vec3(0.012, 0.005, 0.014),
-                        accent,
-                    );
+                    receiver(m, &barrels, vec3(0.0, -0.007, -0.16), vec3(0.035, 0.018, 0.055), grip_wood);
+                    m.obox(&g, vec3(0.0, 0.046, -0.025), vec3(0.012, 0.005, 0.014), accent);
                     if iron {
                         front_sight(m, &barrels, -0.3, 0.043, 0.064, accent, dark);
                         rear_sight(m, &g, -0.025, 0.05, 0.064, 0.013, dark);
@@ -552,20 +334,9 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
                 }
                 _ => {
                     let kick = vec3(0.0, 0.0, v.recoil * 0.035);
-                    receiver(
-                        m,
-                        &g,
-                        vec3(0.0, 0.025, -0.12) + kick,
-                        vec3(0.022, 0.026, 0.13),
-                        metal,
-                    );
+                    receiver(m, &g, vec3(0.0, 0.025, -0.12) + kick, vec3(0.022, 0.026, 0.13), metal);
                     for z in [-0.02f32, -0.035, -0.05] {
-                        m.obox(
-                            &g,
-                            vec3(0.0, 0.025, z) + kick,
-                            vec3(0.023, 0.019, 0.003),
-                            dark,
-                        );
+                        m.obox(&g, vec3(0.0, 0.025, z) + kick, vec3(0.023, 0.019, 0.003), dark);
                     }
                     m.obox(&g, vec3(0.0, -0.012, -0.1), vec3(0.02, 0.014, 0.11), dark);
                     m.tube(&g, vec3(0.0, 0.03, -0.252), 0.012, 0.007, 0.006, 12, dark);
@@ -574,26 +345,10 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
                         front_sight(m, &slide, -0.23, 0.05, 0.064, accent, dark);
                         rear_sight(m, &slide, -0.01, 0.05, 0.064, 0.013, dark);
                     }
-                    m.obox(
-                        &g,
-                        vec3(0.0, 0.025, 0.0) + kick,
-                        vec3(0.024, 0.02, 0.012),
-                        accent,
-                    );
+                    m.obox(&g, vec3(0.0, 0.025, 0.0) + kick, vec3(0.024, 0.02, 0.012), accent);
                     if v.wid == 11 {
-                        receiver(
-                            m,
-                            &g,
-                            vec3(0.0, 0.028, -0.275),
-                            vec3(0.025, 0.028, 0.022),
-                            dark,
-                        );
-                        m.obox(
-                            &g,
-                            vec3(0.0, -0.065, -0.17),
-                            vec3(0.014, 0.035, 0.016),
-                            dark,
-                        );
+                        receiver(m, &g, vec3(0.0, 0.028, -0.275), vec3(0.025, 0.028, 0.022), dark);
+                        m.obox(&g, vec3(0.0, -0.065, -0.17), vec3(0.014, 0.035, 0.016), dark);
                     }
                     muzzle_z = if v.wid == 11 { -0.3 } else { -0.26 };
                 }
@@ -601,13 +356,7 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
         }
         2 => {
             receiver(m, &g, vec3(0.0, -0.008, -0.1), vec3(0.03, 0.037, 0.3), wood);
-            receiver(
-                m,
-                &g,
-                vec3(0.0, 0.022, -0.02),
-                vec3(0.026, 0.026, 0.15),
-                metal,
-            );
+            receiver(m, &g, vec3(0.0, 0.022, -0.02), vec3(0.026, 0.026, 0.15), metal);
             m.obox(&g, vec3(0.0, 0.05, -0.12), vec3(0.022, 0.003, 0.15), dark);
             let heavy = v.wid == 15;
             let barrel_end = if heavy {
@@ -628,104 +377,40 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
             );
             if v.wid == 9 {
                 // Ranger: a self-loading action, fixed handguard and charging handle.
-                m.obox(
-                    &g,
-                    vec3(0.029, 0.024, 0.02),
-                    vec3(0.002, 0.013, 0.055),
-                    dark,
-                );
-                m.obox(
-                    &g,
-                    vec3(0.038, 0.025, 0.055 + v.recoil * 0.04),
-                    vec3(0.014, 0.007, 0.009),
-                    metal,
-                );
+                m.obox(&g, vec3(0.029, 0.024, 0.02), vec3(0.002, 0.013, 0.055), dark);
+                m.obox(&g, vec3(0.038, 0.025, 0.055 + v.recoil * 0.04), vec3(0.014, 0.007, 0.009), metal);
                 for z in [-0.35f32, -0.3, -0.25] {
                     m.obox(&g, vec3(0.0, 0.008, z), vec3(0.031, 0.004, 0.008), dark);
                 }
             } else {
                 let bz = 0.07 + bolt * 0.075;
-                m.tube(
-                    &g,
-                    vec3(0.0, 0.022, bz),
-                    0.011,
-                    0.0,
-                    0.05,
-                    12,
-                    shade(metal, 1.3),
-                );
-                let handle = g
-                    * Mat4::from_translation(vec3(0.026, 0.022, bz + 0.03))
-                    * Mat4::from_rotation_z(-0.9 + bolt * 0.9);
-                m.obox(
-                    &handle,
-                    vec3(0.022, 0.0, 0.0),
-                    vec3(0.022, 0.005, 0.005),
-                    metal,
-                );
-                m.obox(
-                    &handle,
-                    vec3(0.046, 0.0, 0.0),
-                    vec3(0.009, 0.009, 0.009),
-                    dark,
-                );
+                m.tube(&g, vec3(0.0, 0.022, bz), 0.011, 0.0, 0.05, 12, shade(metal, 1.3));
+                let handle = g * Mat4::from_translation(vec3(0.026, 0.022, bz + 0.03)) * Mat4::from_rotation_z(-0.9 + bolt * 0.9);
+                m.obox(&handle, vec3(0.022, 0.0, 0.0), vec3(0.022, 0.005, 0.005), metal);
+                m.obox(&handle, vec3(0.046, 0.0, 0.0), vec3(0.009, 0.009, 0.009), dark);
             }
             m.obox(&g, vec3(0.0, -0.055, 0.03), vec3(0.006, 0.016, 0.04), dark);
             receiver(m, &g, vec3(0.0, -0.03, 0.25), vec3(0.028, 0.055, 0.1), wood);
             m.obox(&g, vec3(0.0, -0.035, 0.37), vec3(0.03, 0.065, 0.02), dark);
             if heavy {
-                receiver(
-                    m,
-                    &g,
-                    vec3(0.0, 0.015, -0.92),
-                    vec3(0.037, 0.022, 0.035),
-                    metal,
-                );
+                receiver(m, &g, vec3(0.0, 0.015, -0.92), vec3(0.037, 0.022, 0.035), metal);
                 for z in [-0.935f32, -0.905] {
                     m.obox(&g, vec3(0.0, 0.015, z), vec3(0.038, 0.012, 0.006), dark);
                 }
             } else {
-                m.tube(
-                    &g,
-                    vec3(0.0, 0.015, barrel_end),
-                    0.019,
-                    0.008,
-                    0.018,
-                    16,
-                    metal,
-                );
+                m.tube(&g, vec3(0.0, 0.015, barrel_end), 0.019, 0.008, 0.018, 16, metal);
             }
             if iron {
-                front_sight(
-                    m,
-                    &g,
-                    barrel_end + 0.02,
-                    if heavy { 0.034 } else { 0.028 },
-                    0.071,
-                    accent,
-                    dark,
-                );
+                front_sight(m, &g, barrel_end + 0.02, if heavy { 0.034 } else { 0.028 }, 0.071, accent, dark);
                 rear_sight(m, &g, 0.1, 0.048, 0.071, 0.014, dark);
             }
             muzzle_z = if heavy { -0.96 } else { barrel_end - 0.022 };
         }
         _ => {
-            receiver(
-                m,
-                &g,
-                vec3(0.0, 0.0, -0.06),
-                vec3(0.032, 0.05, if v.wid == 8 { 0.2 } else { 0.22 }),
-                metal,
-            );
+            receiver(m, &g, vec3(0.0, 0.0, -0.06), vec3(0.032, 0.05, if v.wid == 8 { 0.2 } else { 0.22 }), metal);
             let front = if v.wid == 8 { -0.29 } else { -0.35 };
             let handguard = if v.wid == 5 { wood } else { dark };
-            receiver(
-                m,
-                &g,
-                vec3(0.0, 0.0, front),
-                vec3(0.029, 0.033, if v.wid == 8 { 0.055 } else { 0.085 }),
-                handguard,
-            );
+            receiver(m, &g, vec3(0.0, 0.0, front), vec3(0.029, 0.033, if v.wid == 8 { 0.055 } else { 0.085 }), handguard);
             for z in [front - 0.045, front, front + 0.045] {
                 m.obox(&g, vec3(0.03, 0.01, z), vec3(0.0015, 0.01, 0.009), metal);
             }
@@ -755,22 +440,11 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
             match v.wid {
                 5 => {
                     // Warden: continuous wooden furniture and a long exposed barrel.
-                    receiver(
-                        m,
-                        &g,
-                        vec3(0.0, -0.02, 0.245),
-                        vec3(0.03, 0.047, 0.093),
-                        wood,
-                    );
+                    receiver(m, &g, vec3(0.0, -0.02, 0.245), vec3(0.03, 0.047, 0.093), wood);
                 }
                 12 => {
                     // Lancer's ribbed fore-end and angular gas block.
-                    m.obox(
-                        &g,
-                        vec3(0.0, 0.034, -0.37),
-                        vec3(0.027, 0.005, 0.075),
-                        accent,
-                    );
+                    m.obox(&g, vec3(0.0, 0.034, -0.37), vec3(0.027, 0.005, 0.075), accent);
                     for z in [-0.41f32, -0.37, -0.33] {
                         m.obox(&g, vec3(0.0, -0.032, z), vec3(0.03, 0.005, 0.008), metal);
                     }
@@ -788,53 +462,19 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
                 }
                 _ => {}
             }
-            receiver(
-                m,
-                &(g * Mat4::from_rotation_x(-0.3)),
-                vec3(0.0, -0.09, 0.07),
-                vec3(0.02, 0.05, 0.026),
-                dark,
-            );
+            receiver(m, &(g * Mat4::from_rotation_x(-0.3)), vec3(0.0, -0.09, 0.07), vec3(0.02, 0.05, 0.026), dark);
             m.obox(&g, vec3(0.0, -0.062, 0.04), vec3(0.005, 0.004, 0.045), dark);
             if v.wid != 5 {
                 // Open gap below the stock strut reads clearly from the side.
                 m.obox(&g, vec3(0.0, 0.002, 0.23), vec3(0.018, 0.018, 0.08), metal);
-                receiver(
-                    m,
-                    &g,
-                    vec3(0.0, -0.035, 0.3),
-                    vec3(0.026, 0.042, 0.036),
-                    dark,
-                );
+                receiver(m, &g, vec3(0.0, -0.035, 0.3), vec3(0.026, 0.042, 0.036), dark);
             }
             m.obox(&g, vec3(0.0, -0.03, 0.34), vec3(0.03, 0.06, 0.012), dark);
-            m.obox(
-                &g,
-                vec3(0.0325, 0.012, -0.03),
-                vec3(0.0015, 0.014, 0.04),
-                dark,
-            );
-            m.obox(
-                &g,
-                vec3(0.0, 0.052, 0.13 + v.recoil * 0.03),
-                vec3(0.014, 0.006, 0.02),
-                dark,
-            );
+            m.obox(&g, vec3(0.0325, 0.012, -0.03), vec3(0.0015, 0.014, 0.04), dark);
+            m.obox(&g, vec3(0.0, 0.052, 0.13 + v.recoil * 0.03), vec3(0.014, 0.006, 0.02), dark);
             m.obox(&g, vec3(0.0, 0.058, -0.02), vec3(0.031, 0.008, 0.1), accent);
             if iron {
-                front_sight(
-                    m,
-                    &g,
-                    front - 0.05,
-                    if matches!(v.wid, 8 | 12) {
-                        0.038
-                    } else {
-                        0.032
-                    },
-                    0.087,
-                    accent,
-                    dark,
-                );
+                front_sight(m, &g, front - 0.05, if matches!(v.wid, 8 | 12) { 0.038 } else { 0.032 }, 0.087, accent, dark);
                 rear_sight(m, &g, 0.08, 0.064, 0.087, 0.018, dark);
             }
             muzzle_z = match v.wid {
@@ -847,27 +487,15 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
     }
     if mag_h != Vec3::ZERO && mag_out < 0.97 {
         if v.wid == 14 {
-            let drum = g
-                * Mat4::from_translation(mag_c + mag_off)
-                * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2);
+            let drum = g * Mat4::from_translation(mag_c + mag_off) * Mat4::from_rotation_y(std::f32::consts::FRAC_PI_2);
             m.tube(&drum, Vec3::ZERO, 0.057, 0.0, 0.035, 16, dark);
             m.tube(&drum, vec3(0.0, 0.0, 0.036), 0.03, 0.0, 0.002, 12, metal);
         } else {
             receiver(m, &g, mag_c + mag_off, mag_h, dark);
-            m.obox(
-                &g,
-                mag_c + mag_off - vec3(0.0, mag_h.y, 0.0),
-                vec3(mag_h.x * 1.05, 0.005, mag_h.z * 1.02),
-                metal,
-            );
+            m.obox(&g, mag_c + mag_off - vec3(0.0, mag_h.y, 0.0), vec3(mag_h.x * 1.05, 0.005, mag_h.z * 1.02), metal);
             if kit == 0 && v.wid != 6 {
                 for x in [-1.0f32, 1.0] {
-                    m.obox(
-                        &g,
-                        mag_c + mag_off + vec3(x * (mag_h.x + 0.0008), 0.0, 0.0),
-                        vec3(0.001, mag_h.y * 0.7, mag_h.z * 0.3),
-                        metal,
-                    );
+                    m.obox(&g, mag_c + mag_off + vec3(x * (mag_h.x + 0.0008), 0.0, 0.0), vec3(0.001, mag_h.y * 0.7, mag_h.z * 0.3), metal);
                 }
             }
         }
@@ -910,21 +538,11 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
         limb(m, &cam, wrist, hand + d * 0.03, 0.036, false, glove);
         // thumb wrapped over the top
         let side = d.cross(Vec3::Y).normalize_or_zero();
-        m.obox(
-            &cam,
-            hand + side * (0.034 * thumb_x) + vec3(0.0, 0.022, 0.0),
-            vec3(0.012, 0.013, 0.03),
-            shade(glove, 1.2),
-        );
+        m.obox(&cam, hand + side * (0.034 * thumb_x) + vec3(0.0, 0.022, 0.0), vec3(0.012, 0.013, 0.03), shade(glove, 1.2));
     }
     if kit == 1 && v.wid != 14 && reloading && to_mag > 0.6 {
         // the shell going in
-        m.obox(
-            &g,
-            l_gun + vec3(0.0, 0.03, -0.01),
-            vec3(0.011, 0.011, 0.028),
-            rgb(0.75, 0.2, 0.15),
-        );
+        m.obox(&g, l_gun + vec3(0.0, 0.03, -0.01), vec3(0.011, 0.011, 0.028), rgb(0.75, 0.2, 0.15));
     }
 
     if v.flash > 0.0 {
@@ -943,13 +561,7 @@ pub fn viewmodel(m: &mut Mesh, add: &mut Mesh, v: &ViewModel) {
             let a = a0 + j as f32 * PI / 3.0;
             let (u, w2) = (vec3(a.cos(), a.sin(), 0.0), vec3(-a.sin(), a.cos(), 0.0));
             let len = s * (1.7 + 0.8 * hash01(v.seq, 9 + j));
-            add.quad(
-                c - u * len,
-                c - w2 * s * 0.35,
-                c + u * len,
-                c + w2 * s * 0.35,
-                col,
-            );
+            add.quad(c - u * len, c - w2 * s * 0.35, c + u * len, c + w2 * s * 0.35, col);
         }
     }
 }
@@ -959,8 +571,7 @@ mod tests {
     use super::*;
 
     fn carried() -> impl Iterator<Item = u8> {
-        (0..sim::WEAPONS.len() as u8)
-            .filter(|&wid| wid != sim::GRENADE_WEAPON && wid != sim::MELEE_WEAPON)
+        (0..sim::WEAPONS.len() as u8).filter(|&wid| wid != sim::GRENADE_WEAPON && wid != sim::MELEE_WEAPON)
     }
 
     #[test]
@@ -968,49 +579,27 @@ mod tests {
         let mut largest = (0, 0);
         for wid in carried() {
             for skin in sim::weapon_skins_for(wid) {
-                for (reload, cycle) in [
-                    (-1.0, 0.0),
-                    (-1.0, 0.5),
-                    (0.25, 0.0),
-                    (0.6, 0.0),
-                    (1.0, 0.0),
-                ] {
+                for (reload, cycle) in [(-1.0, 0.0), (-1.0, 0.5), (0.25, 0.0), (0.6, 0.0), (1.0, 0.0)] {
                     let mut mesh = Mesh::default();
                     gun_model_pose(&mut mesh, wid, 0, skin, Mat4::IDENTITY, reload, cycle);
                     assert!(!mesh.v.is_empty(), "{} has no model", weapon_def(wid).name);
                     assert!(mesh.chunks.is_empty(), "one weapon exceeded a mesh page");
                     assert!(mesh.i.iter().all(|&i| (i as usize) < mesh.v.len()));
-                    assert!(mesh.v.iter().all(|v| v
-                        .pos
-                        .iter()
-                        .chain(&v.nrm)
-                        .chain(&v.col)
-                        .all(|x| x.is_finite())));
+                    assert!(mesh.v.iter().all(|v| v.pos.iter().chain(&v.nrm).chain(&v.col).all(|x| x.is_finite())));
                     assert!(
-                        mesh.v
-                            .iter()
-                            .all(|v| Vec3::from(v.pos).abs().max_element() < 1.1),
+                        mesh.v.iter().all(|v| Vec3::from(v.pos).abs().max_element() < 1.1),
                         "{} outside weapon bounds",
                         weapon_def(wid).name
                     );
                     // Detailed guns are shared by every remote soldier: keep each inexpensive.
-                    assert!(
-                        mesh.v.len() < 13000,
-                        "{}: {} vertices",
-                        weapon_def(wid).name,
-                        mesh.v.len()
-                    );
+                    assert!(mesh.v.len() < 13000, "{}: {} vertices", weapon_def(wid).name, mesh.v.len());
                     if mesh.v.len() > largest.1 {
                         largest = (wid, mesh.v.len());
                     }
                 }
             }
         }
-        eprintln!(
-            "largest weapon: {} ({} vertices)",
-            weapon_def(largest.0).name,
-            largest.1
-        );
+        eprintln!("largest weapon: {} ({} vertices)", weapon_def(largest.0).name, largest.1);
     }
 
     #[test]
@@ -1020,10 +609,7 @@ mod tests {
                 let mut mesh = Mesh::default();
                 gun_icon(&mut mesh, wid, 1, 0, 100.0, 50.0, 180.0, 64.0, turn);
                 assert!(
-                    mesh.v
-                        .iter()
-                        .all(|v| (v.pos[0] - 100.0).abs() <= 90.01
-                            && (v.pos[1] - 50.0).abs() <= 32.01),
+                    mesh.v.iter().all(|v| (v.pos[0] - 100.0).abs() <= 90.01 && (v.pos[1] - 50.0).abs() <= 32.01),
                     "{} clips its rotating preview card",
                     weapon_def(wid).name
                 );

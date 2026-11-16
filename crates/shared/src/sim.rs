@@ -49,7 +49,11 @@ pub const LAVA_WEAPON: u8 = 254;
 
 /// What the kill feed calls a weapon id, including environmental deaths.
 pub fn weapon_name(wid: u8) -> &'static str {
-    if wid == LAVA_WEAPON { "Lava" } else { weapon_def(wid).name }
+    if wid == LAVA_WEAPON {
+        "Lava"
+    } else {
+        weapon_def(wid).name
+    }
 }
 /// A swing: how long before another (or a shot), how far it reaches from
 /// the eye, and what it does from the front. From behind it kills.
@@ -136,8 +140,22 @@ pub fn weapon_skin_price(id: u8) -> u32 {
 
 pub static KITS: [KitDef; 3] = [
     KitDef { name: "VANGUARD", blurb: "100 HP - 2 frags - line fighter", prims: &[0, 12, 8, 6], hp: 100.0, grenades: 2, speed: 1.0 },
-    KitDef { name: "BREACHER", blurb: "130 HP - 1 frag - faster - clears points", prims: &[1, 7, 13, 14, 8], hp: 130.0, grenades: 1, speed: 1.05 },
-    KitDef { name: "MARKSMAN", blurb: "90 HP - 1 frag - its rifles mark targets", prims: &[2, 9, 15, 5], hp: 90.0, grenades: 1, speed: 1.0 },
+    KitDef {
+        name: "BREACHER",
+        blurb: "130 HP - 1 frag - faster - clears points",
+        prims: &[1, 7, 13, 14, 8],
+        hp: 130.0,
+        grenades: 1,
+        speed: 1.05,
+    },
+    KitDef {
+        name: "MARKSMAN",
+        blurb: "90 HP - 1 frag - its rifles mark targets",
+        prims: &[2, 9, 15, 5],
+        hp: 90.0,
+        grenades: 1,
+        speed: 1.0,
+    },
 ];
 
 /// Procedural paint treatment on a weapon's receiver and furniture.
@@ -250,7 +268,8 @@ pub static WEAPON_SKINS: [WeaponSkinDef; 14] = [
         detail: Some([0.12, 0.11, 0.095]),
         pattern: WeaponPattern::Digital,
         pattern_color: Some([0.43, 0.36, 0.26]),
-    },    WeaponSkinDef {
+    },
+    WeaponSkinDef {
         name: "EMBERFALL",
         blurb: "Furnace red with molten orange bands",
         weapons: &[],
@@ -881,12 +900,7 @@ pub fn right_of(yaw: f32) -> Vec3 {
 }
 
 fn overlaps(b: &Block, p: Vec3, h: f32) -> bool {
-    p.x + P_R > b.min.x
-        && p.x - P_R < b.max.x
-        && p.z + P_R > b.min.z
-        && p.z - P_R < b.max.z
-        && p.y + h > b.min.y
-        && p.y < b.max.y
+    p.x + P_R > b.min.x && p.x - P_R < b.max.x && p.z + P_R > b.min.z && p.z - P_R < b.max.z && p.y + h > b.min.y && p.y < b.max.y
 }
 
 fn blocked_at(w: &World, p: Vec3, dmask: u64, h: f32) -> bool {

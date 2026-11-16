@@ -8,7 +8,19 @@ use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
 fn cfg(per_team: usize) -> Config {
-    Config { port: 0, per_team, seed: 0xFE221, map: 0, rotation: Vec::new(), lobby_secs: 0, tickets: 250, bot_skill: 1.0, log: false, discover: false, ..Default::default() }
+    Config {
+        port: 0,
+        per_team,
+        seed: 0xFE221,
+        map: 0,
+        rotation: Vec::new(),
+        lobby_secs: 0,
+        tickets: 250,
+        bot_skill: 1.0,
+        log: false,
+        discover: false,
+        ..Default::default()
+    }
 }
 
 fn random_cmd(rng: &mut Rng, seq: u32, yaw: &mut f32) -> Cmd {
@@ -23,7 +35,16 @@ fn random_cmd(rng: &mut Rng, seq: u32, yaw: &mut f32) -> Cmd {
     if rng.chance(0.2) {
         buttons |= btn::FIRE;
     }
-    Cmd { seq, mx: rng.below(3) as i8 - 1, mz: if rng.chance(0.8) { 1 } else { -1 }, buttons, more: (seq % 37 == 0) as u8, yaw: *yaw, pitch: rng.range(-0.3, 0.3), interp: 0.0 }
+    Cmd {
+        seq,
+        mx: rng.below(3) as i8 - 1,
+        mz: if rng.chance(0.8) { 1 } else { -1 },
+        buttons,
+        more: (seq % 37 == 0) as u8,
+        yaw: *yaw,
+        pitch: rng.range(-0.3, 0.3),
+        interp: 0.0,
+    }
 }
 
 /// The client predicts by running the same `sim::step`. With no loss the
@@ -188,13 +209,15 @@ fn udp_round_trip() {
     let mut buf = [0u8; 8192];
 
     // wrong protocol version is refused with a reason
-    sock.send(&encode(&C2S::Hello { proto: PROTO + 1, name: "old".into(), spectator: false, team: 2, uuid: [0; 16], icon: Vec::new() })).unwrap();
+    sock.send(&encode(&C2S::Hello { proto: PROTO + 1, name: "old".into(), spectator: false, team: 2, uuid: [0; 16], icon: Vec::new() }))
+        .unwrap();
     let n = sock.recv(&mut buf).unwrap();
     assert!(matches!(decode::<S2C>(&buf[..n]), Some(S2C::Reject(_))));
 
     // An id and a 16 x 16 icon go up with the hello.
     let icon: Vec<u8> = (0..ICON_BYTES).map(|k| (k * 7 % 251) as u8).collect();
-    sock.send(&encode(&C2S::Hello { proto: PROTO, name: "net-test".into(), spectator: false, team: 2, uuid: [7; 16], icon: icon.clone() })).unwrap();
+    sock.send(&encode(&C2S::Hello { proto: PROTO, name: "net-test".into(), spectator: false, team: 2, uuid: [7; 16], icon: icon.clone() }))
+        .unwrap();
     let (mut id, mut seed, mut first_team) = (SPECTATOR_ID, 0, 0u8);
     for _ in 0..10 {
         let n = sock.recv(&mut buf).unwrap();
@@ -224,7 +247,17 @@ fn udp_round_trip() {
             seq += 1;
             history.push(Cmd { seq, mz: 1, yaw: 1.0, ..Default::default() });
             let recent: Vec<Cmd> = history.iter().rev().take(3).rev().copied().collect();
-            sock.send(&encode(&C2S::Cmds { cmds: recent, ack_feed: 0, kit: 1, prim: 1, side: 4, skin: 2, wskin: requested_finishes, ack_chat })).unwrap();
+            sock.send(&encode(&C2S::Cmds {
+                cmds: recent,
+                ack_feed: 0,
+                kit: 1,
+                prim: 1,
+                side: 4,
+                skin: 2,
+                wskin: requested_finishes,
+                ack_chat,
+            }))
+            .unwrap();
             // Said three times, heard once.
             if seq == 20 || seq == 21 || seq == 22 {
                 sock.send(&encode(&C2S::Chat { id: 1, team: false, text: "hello  there\u{7}".into() })).unwrap();
@@ -464,7 +497,13 @@ fn mantle_climbs_reachable_ledges_only() {
         let mut w = World::new(0xFE221);
         let (x, z) = (-106.0, 4.0);
         let g = w.height(x, z);
-        w.blocks.push(Block { min: vec3(x - 3.0, g - 2.0, z + 2.0), max: vec3(x + 3.0, g + wall_h, z + 40.0), kind: BlockKind::Concrete, tint: 0, dest: None });
+        w.blocks.push(Block {
+            min: vec3(x - 3.0, g - 2.0, z + 2.0),
+            max: vec3(x + 3.0, g + wall_h, z + 40.0),
+            kind: BlockKind::Concrete,
+            tint: 0,
+            dest: None,
+        });
         let mut st = sim::PState::spawn(vec3(x, g, z), 0);
         let mut mantled = false;
         for seq in 1..110 {
@@ -588,7 +627,11 @@ fn every_map_is_fair_and_playable() {
             g.tick();
             if g.tick % 30 == 0 {
                 for p in &g.players {
-                    assert!(p.st.pos.is_finite() && p.st.pos.x.abs() <= HALF_X && p.st.pos.z.abs() <= HALF_Z, "{name}: {} left the map", p.name);
+                    assert!(
+                        p.st.pos.is_finite() && p.st.pos.x.abs() <= HALF_X && p.st.pos.z.abs() <= HALF_Z,
+                        "{name}: {} left the map",
+                        p.name
+                    );
                     if p.alive {
                         assert!(p.st.pos.y >= g.world.height(p.st.pos.x, p.st.pos.z) - 0.05, "{name}: {} fell through terrain", p.name);
                     }
@@ -776,7 +819,8 @@ fn servers_answer_discovery_queries() {
     assert_eq!(decode_info(b"FERRITE!"), None);
     assert_eq!(decode_info(b"nonsense"), None);
 
-    let mut server = ferrite_server::spawn(Config { port: 0, per_team: 2, map: 1, name: "test box".into(), ..Default::default() }).expect("server");
+    let mut server =
+        ferrite_server::spawn(Config { port: 0, per_team: 2, map: 1, name: "test box".into(), ..Default::default() }).expect("server");
     let sock = UdpSocket::bind("0.0.0.0:0").unwrap();
     sock.set_multicast_loop_v4(true).unwrap();
     sock.set_read_timeout(Some(Duration::from_millis(200))).unwrap();
@@ -1008,7 +1052,9 @@ fn melee_hits_close_and_kills_from_behind() {
     stage(&mut g, 1.6, std::f32::consts::PI);
     swing(&mut g);
     assert!(!g.players[foe].alive);
-    assert!(g.feed[feed0..].iter().any(|f| matches!(f, Feed::Kill { killer, victim, weapon, .. } if *killer == me as u8 && *victim == foe as u8 && *weapon == MELEE_WEAPON)));
+    assert!(g.feed[feed0..].iter().any(
+        |f| matches!(f, Feed::Kill { killer, victim, weapon, .. } if *killer == me as u8 && *victim == foe as u8 && *weapon == MELEE_WEAPON)
+    ));
     assert_eq!(sim::weapon_def(MELEE_WEAPON).name, "Melee");
     // A swing interrupts a reload.
     stage(&mut g, 9.0, 0.0);
@@ -1039,7 +1085,9 @@ fn weapon_finishes_are_validated_and_replicated() {
     let mut g = Game::new(Config { max_bots: 0, ..cfg(2) });
     let me = g.join("tester").unwrap();
     g.players[me].next_wskin = [1, 6];
-    for _ in 0..40 { g.tick(); }
+    for _ in 0..40 {
+        g.tick();
+    }
     assert!(g.players[me].alive);
     assert_eq!(g.players[me].wskin, [1, 6]);
     // This is the same selection path used by C2S::Cmds. Cosmetics must
@@ -1127,13 +1175,16 @@ fn live_weapon_finishes_replicate_without_redeploying() {
     sock.connect(("127.0.0.1", server.addr.port())).unwrap();
     sock.set_read_timeout(Some(Duration::from_millis(10))).unwrap();
     let mut bytes = [0u8; 8192];
-    let hello = encode(&C2S::Hello { proto: PROTO, name: "finish-test".into(), spectator: false, team: 0, uuid: [8; 16], icon: Vec::new() });
+    let hello =
+        encode(&C2S::Hello { proto: PROTO, name: "finish-test".into(), spectator: false, team: 0, uuid: [8; 16], icon: Vec::new() });
     let deadline = Instant::now() + Duration::from_secs(3);
     let mut id = None;
     while Instant::now() < deadline && id.is_none() {
         sock.send(&hello).unwrap();
         if let Ok(n) = sock.recv(&mut bytes) {
-            if let Some(S2C::Welcome { id: who, .. }) = decode::<S2C>(&bytes[..n]) { id = Some(who); }
+            if let Some(S2C::Welcome { id: who, .. }) = decode::<S2C>(&bytes[..n]) {
+                id = Some(who);
+            }
         }
     }
     let id = id.expect("no cosmetic test welcome");
@@ -1150,18 +1201,24 @@ fn live_weapon_finishes_replicate_without_redeploying() {
         let (mut saw_state, mut saw_finish) = (false, false);
         while Instant::now() < deadline && !(saw_state && saw_finish) {
             if last_send.elapsed() >= Duration::from_millis(40) {
-                sock.send(&encode(&C2S::Cmds { cmds: Vec::new(), ack_feed: 0, kit, prim, side, skin: 0, wskin: wants, ack_chat: 0 })).unwrap();
+                sock.send(&encode(&C2S::Cmds { cmds: Vec::new(), ack_feed: 0, kit, prim, side, skin: 0, wskin: wants, ack_chat: 0 }))
+                    .unwrap();
                 last_send = Instant::now();
             }
             let Ok(n) = sock.recv(&mut bytes) else { continue };
             match decode::<S2C>(&bytes[..n]) {
-                Some(S2C::Snap(s)) => if let Some(me) = s.me.filter(|me| me.alive) {
-                    let issued = (me.spawn_count, me.st.kit, me.st.prim, me.st.side, me.st.ammo, me.hp);
-                    if let Some(before) = baseline { assert_eq!(issued, before, "cosmetic selection changed the issued gameplay loadout"); }
-                    else { baseline = Some(issued); }
-                    assert_eq!((me.st.kit, me.st.prim, me.st.side), (0, 0, 4));
-                    saw_state = true;
-                },
+                Some(S2C::Snap(s)) => {
+                    if let Some(me) = s.me.filter(|me| me.alive) {
+                        let issued = (me.spawn_count, me.st.kit, me.st.prim, me.st.side, me.st.ammo, me.hp);
+                        if let Some(before) = baseline {
+                            assert_eq!(issued, before, "cosmetic selection changed the issued gameplay loadout");
+                        } else {
+                            baseline = Some(issued);
+                        }
+                        assert_eq!((me.st.kit, me.st.prim, me.st.side), (0, 0, 4));
+                        saw_state = true;
+                    }
+                }
                 Some(S2C::Roster { entries, .. }) => {
                     saw_finish |= entries.iter().any(|e| e.id == id && e.prim == 0 && e.side == 4 && e.wskin == expected);
                 }
@@ -1233,7 +1290,12 @@ fn spawns_spread_across_the_base_ground() {
             // round a point the team holds.
             for &p in &pos {
                 let at_point = g.world.points.iter().any(|&c| flat(p, c) <= 16.5 && flat(p, c) >= 5.5);
-                assert!(at_point || flat(p, base) <= BASE_SPAWN_RADIUS + 0.5, "map {map}: spawned {:.1} m from base, {:.2} from nearest point", flat(p, base), g.world.points.iter().map(|&c| flat(p, c)).fold(f32::MAX, f32::min));
+                assert!(
+                    at_point || flat(p, base) <= BASE_SPAWN_RADIUS + 0.5,
+                    "map {map}: spawned {:.1} m from base, {:.2} from nearest point",
+                    flat(p, base),
+                    g.world.points.iter().map(|&c| flat(p, c)).fold(f32::MAX, f32::min)
+                );
             }
             // Nobody arrives on top of a teammate, and the group is spread
             // over the spawn ground rather than bunched in its middle.

@@ -5,14 +5,7 @@ use crate::gfx::{rgb, shade, Col, Mesh};
 use ferrite_shared::glam::{vec3, Mat4, Vec3};
 use ferrite_shared::sim::{WeaponPattern, WeaponSkinDef};
 
-pub(super) fn receiver(
-    m: &mut Mesh,
-    g: &Mat4,
-    center: Vec3,
-    half: Vec3,
-    col: Col,
-    finish: &WeaponSkinDef,
-) {
+pub(super) fn receiver(m: &mut Mesh, g: &Mat4, center: Vec3, half: Vec3, col: Col, finish: &WeaponSkinDef) {
     let bevel = half.x.min(half.y) * 0.3;
     let ring = [
         (-half.x + bevel, -half.y),
@@ -29,13 +22,7 @@ pub(super) fn receiver(
     let back = g.transform_point3(center + Vec3::Z * half.z);
     for i in 0..8 {
         let j = (i + 1) % 8;
-        m.quad(
-            point(i, -half.z),
-            point(j, -half.z),
-            point(j, half.z),
-            point(i, half.z),
-            col,
-        );
+        m.quad(point(i, -half.z), point(j, -half.z), point(j, half.z), point(i, half.z), col);
         m.tri(front, point(j, -half.z), point(i, -half.z), col);
         m.tri(back, point(i, half.z), point(j, half.z), col);
     }
@@ -47,35 +34,14 @@ pub(super) fn receiver(
         return;
     }
     let ink = rgb(ink[0], ink[1], ink[2]);
-    let faint = [
-        ink[0] * 0.55 + col[0] * 0.45,
-        ink[1] * 0.55 + col[1] * 0.45,
-        ink[2] * 0.55 + col[2] * 0.45,
-        0.0,
-    ];
+    let faint = [ink[0] * 0.55 + col[0] * 0.45, ink[1] * 0.55 + col[1] * 0.45, ink[2] * 0.55 + col[2] * 0.45, 0.0];
     let salt = (center.z * 1000.0).round() as i32 as u32 ^ (half.z * 1000.0) as u32;
     // A fraction of a millimetre avoids z fighting without floating decals.
     for side in [-1.0f32, 1.0] {
-        let origin = center
-            + vec3(
-                side * (half.x + 0.00018),
-                -half.y + bevel + 0.001,
-                -half.z + 0.002,
-            );
+        let origin = center + vec3(side * (half.x + 0.00018), -half.y + bevel + 0.001, -half.z + 0.002);
         let along = Vec3::Z * (half.z * 2.0 - 0.004);
         let up = Vec3::Y * ((half.y - bevel) * 2.0 - 0.002);
-        pattern(
-            m,
-            g,
-            origin,
-            along,
-            up,
-            side > 0.0,
-            finish.pattern,
-            ink,
-            faint,
-            salt,
-        );
+        pattern(m, g, origin, along, up, side > 0.0, finish.pattern, ink, faint, salt);
     }
     let origin = center + vec3(-half.x + bevel + 0.001, half.y + 0.00018, -half.z + 0.002);
     pattern(
@@ -136,22 +102,14 @@ fn pattern(
                     let (u, v) = (x as f32 / 13.0, y as f32 / 4.0);
                     let w = 1.0 / 13.0;
                     let x1 = (u + w).min(1.0);
-                    polygon(
-                        &[(u, v), (x1, v), (x1, v + 0.25), (u, v + 0.25)],
-                        if h & 16 == 0 { ink } else { faint },
-                    );
+                    polygon(&[(u, v), (x1, v), (x1, v + 0.25), (u, v + 0.25)], if h & 16 == 0 { ink } else { faint });
                 }
             }
         }
         WeaponPattern::Bands => {
             for k in -1..4 {
                 let u = k as f32 * 0.30;
-                let band = [
-                    (u - 0.10, 0.0),
-                    (u + 0.015, 0.0),
-                    (u + 0.265, 1.0),
-                    (u + 0.15, 1.0),
-                ];
+                let band = [(u - 0.10, 0.0), (u + 0.015, 0.0), (u + 0.265, 1.0), (u + 0.15, 1.0)];
                 let clipped = clip_u(&clip_u(&band, 0.0, true), 1.0, false);
                 if clipped.len() >= 3 {
                     polygon(&clipped, ink);
@@ -193,38 +151,16 @@ mod tests {
     fn paint_stays_on_the_part_with_outward_facing_normals() {
         let half = vec3(0.04, 0.05, 0.2);
         let mut factory = Mesh::default();
-        receiver(
-            &mut factory,
-            &Mat4::IDENTITY,
-            Vec3::ZERO,
-            half,
-            rgb(0.3, 0.3, 0.3),
-            &WEAPON_SKINS[0],
-        );
+        receiver(&mut factory, &Mat4::IDENTITY, Vec3::ZERO, half, rgb(0.3, 0.3, 0.3), &WEAPON_SKINS[0]);
         for finish in &WEAPON_SKINS[1..] {
             let mut mesh = Mesh::default();
-            receiver(
-                &mut mesh,
-                &Mat4::IDENTITY,
-                Vec3::ZERO,
-                half,
-                rgb(0.3, 0.3, 0.3),
-                finish,
-            );
-            assert!(
-                mesh.v.len() > factory.v.len(),
-                "{} has no pattern",
-                finish.name
-            );
+            receiver(&mut mesh, &Mat4::IDENTITY, Vec3::ZERO, half, rgb(0.3, 0.3, 0.3), finish);
+            assert!(mesh.v.len() > factory.v.len(), "{} has no pattern", finish.name);
             for v in &mesh.v[factory.v.len()..] {
                 let p = Vec3::from(v.pos);
                 let n = Vec3::from(v.nrm);
                 assert!(p.is_finite() && n.is_finite());
-                assert!(
-                    p.abs().cmple(half + Vec3::splat(0.0002)).all(),
-                    "{} paint beyond part: {p:?}",
-                    finish.name
-                );
+                assert!(p.abs().cmple(half + Vec3::splat(0.0002)).all(), "{} paint beyond part: {p:?}", finish.name);
                 assert!(n.dot(p) > 0.03, "{} has inward paint at {p:?}", finish.name);
                 assert!(n.length() > 0.99);
             }

@@ -165,11 +165,8 @@ impl Mesh {
     pub fn obox(&mut self, m: &Mat4, center: Vec3, half: Vec3, col: Col) {
         let mut p = [Vec3::ZERO; 8];
         for (k, c) in p.iter_mut().enumerate() {
-            let s = Vec3::new(
-                if k & 1 != 0 { 1.0 } else { -1.0 },
-                if k & 2 != 0 { 1.0 } else { -1.0 },
-                if k & 4 != 0 { 1.0 } else { -1.0 },
-            );
+            let s =
+                Vec3::new(if k & 1 != 0 { 1.0 } else { -1.0 }, if k & 2 != 0 { 1.0 } else { -1.0 }, if k & 4 != 0 { 1.0 } else { -1.0 });
             *c = m.transform_point3(center + half * s);
         }
         self.corners(p, col);
@@ -370,7 +367,11 @@ impl DynPage {
 /// Mesh pages retain local u16 indices. Submit each page independently so
 /// a full squad's detailed equipment cannot silently drop other soldiers.
 fn mesh_pages(m: &Mesh) -> impl Iterator<Item = (&[Vertex], &[u16])> {
-    m.chunks.iter().map(|(v, i)| (v.as_slice(), i.as_slice())).chain(std::iter::once((m.v.as_slice(), m.i.as_slice()))).filter(|(v, _)| !v.is_empty())
+    m.chunks
+        .iter()
+        .map(|(v, i)| (v.as_slice(), i.as_slice()))
+        .chain(std::iter::once((m.v.as_slice(), m.i.as_slice())))
+        .filter(|(v, _)| !v.is_empty())
 }
 
 #[cfg(test)]
@@ -544,7 +545,8 @@ impl Gpu {
     pub fn destroy(self) {
         let ctx = unsafe { get_internal_gl() }.quad_context;
         let dynamic = [&self.d_opaque, &self.d_alpha, &self.d_add, &self.d_view, &self.d_view_add, &self.d_overlay];
-        for b in self.statics.iter().chain(self.sky.iter()).map(|(b, _)| b).chain(dynamic.iter().flat_map(|d| d.pages.iter().map(|p| &p.b))) {
+        for b in self.statics.iter().chain(self.sky.iter()).map(|(b, _)| b).chain(dynamic.iter().flat_map(|d| d.pages.iter().map(|p| &p.b)))
+        {
             for v in &b.vertex_buffers {
                 ctx.delete_buffer(*v);
             }
@@ -755,11 +757,7 @@ impl Gpu {
             ctx.end_render_pass();
         }
 
-        ctx.begin_default_pass(PassAction::Clear {
-            color: Some((f.fog[0], f.fog[1], f.fog[2], 1.0)),
-            depth: Some(1.0),
-            stencil: None,
-        });
+        ctx.begin_default_pass(PassAction::Clear { color: Some((f.fog[0], f.fog[1], f.fog[2], 1.0)), depth: Some(1.0), stencil: None });
         // Sky: camera-centred dome, no fog, no depth write.
         ctx.apply_pipeline(&self.alpha);
         depth_mask(false);

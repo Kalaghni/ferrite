@@ -69,12 +69,16 @@ impl Fx {
     /// Persistent state, rather than a possibly lost debris event, removes
     /// bullet marks attached to surfaces that no longer exist.
     pub fn remove_destroyed_decals(&mut self, world: &World, changed: u64) {
-        if changed == 0 { return; }
-        self.decals.retain(|d| !world.blocks.iter().any(|b| {
-            b.dest.is_some_and(|bit| changed & (1u64 << bit) != 0)
-                && d.pos.cmpge(b.min - Vec3::splat(0.08)).all()
-                && d.pos.cmple(b.max + Vec3::splat(0.08)).all()
-        }));
+        if changed == 0 {
+            return;
+        }
+        self.decals.retain(|d| {
+            !world.blocks.iter().any(|b| {
+                b.dest.is_some_and(|bit| changed & (1u64 << bit) != 0)
+                    && d.pos.cmpge(b.min - Vec3::splat(0.08)).all()
+                    && d.pos.cmple(b.max + Vec3::splat(0.08)).all()
+            })
+        });
     }
 
     fn push(&mut self, p: Particle) {
@@ -140,8 +144,26 @@ impl Fx {
             self.push(Particle { pos, vel: v, life: 0.5, max: 0.5, size: s, col, kind: Kind::Cube, spin: 9.0 });
         }
         let v = self.rv() * 0.3 + n * 0.8 + vec3(0.0, 0.3, 0.0);
-        self.push(Particle { pos: pos + n * 0.05, vel: v, life: 0.55, max: 0.55, size: 0.12, col: [0.62, 0.58, 0.52], kind: Kind::Smoke, spin: 0.0 });
-        self.push(Particle { pos: pos + n * 0.03, vel: Vec3::ZERO, life: 0.06, max: 0.06, size: 0.1, col: [1.0, 0.85, 0.5], kind: Kind::Spark, spin: 0.0 });
+        self.push(Particle {
+            pos: pos + n * 0.05,
+            vel: v,
+            life: 0.55,
+            max: 0.55,
+            size: 0.12,
+            col: [0.62, 0.58, 0.52],
+            kind: Kind::Smoke,
+            spin: 0.0,
+        });
+        self.push(Particle {
+            pos: pos + n * 0.03,
+            vel: Vec3::ZERO,
+            life: 0.06,
+            max: 0.06,
+            size: 0.1,
+            col: [1.0, 0.85, 0.5],
+            kind: Kind::Spark,
+            spin: 0.0,
+        });
         let s = self.rng.range(0.018, 0.032);
         self.decal(pos, n, s, [0.06, 0.055, 0.05, 0.85], 26.0);
     }
@@ -215,18 +237,45 @@ impl Fx {
             let off = self.rv() * 1.3;
             let sz = self.rng.range(0.5, 1.1);
             let g = self.rng.range(0.2, 0.34);
-            self.push(Particle { pos: pos + off, vel: v, life: l, max: l, size: sz, col: [g, g * 0.94, g * 0.9], kind: Kind::Smoke, spin: 0.0 });
+            self.push(Particle {
+                pos: pos + off,
+                vel: v,
+                life: l,
+                max: l,
+                size: sz,
+                col: [g, g * 0.94, g * 0.9],
+                kind: Kind::Smoke,
+                spin: 0.0,
+            });
         }
         for _ in 0..30 {
             let v = self.rv() * 6.5 + vec3(0.0, 8.0, 0.0);
             let s = self.rng.range(0.06, 0.17);
             self.push(Particle { pos, vel: v, life: 2.4, max: 2.4, size: s, col: [0.36, 0.3, 0.24], kind: Kind::Cube, spin: 10.0 });
         }
-        self.push(Particle { pos: pos + vec3(0.0, 0.6, 0.0), vel: Vec3::ZERO, life: 0.16, max: 0.16, size: 5.5, col: [1.0, 0.85, 0.55], kind: Kind::Spark, spin: 0.0 });
+        self.push(Particle {
+            pos: pos + vec3(0.0, 0.6, 0.0),
+            vel: Vec3::ZERO,
+            life: 0.16,
+            max: 0.16,
+            size: 5.5,
+            col: [1.0, 0.85, 0.55],
+            kind: Kind::Spark,
+            spin: 0.0,
+        });
         let g = w.height(pos.x, pos.z);
         if pos.y - g < 2.0 {
             let ground = vec3(pos.x, g, pos.z);
-            self.push(Particle { pos: ground + vec3(0.0, 0.12, 0.0), vel: Vec3::ZERO, life: 0.45, max: 0.45, size: 8.0, col: [1.0, 0.8, 0.55], kind: Kind::Ring, spin: 0.0 });
+            self.push(Particle {
+                pos: ground + vec3(0.0, 0.12, 0.0),
+                vel: Vec3::ZERO,
+                life: 0.45,
+                max: 0.45,
+                size: 8.0,
+                col: [1.0, 0.8, 0.55],
+                kind: Kind::Ring,
+                spin: 0.0,
+            });
             let s = self.rng.range(2.0, 2.6);
             self.decal(ground, w.terrain_normal(pos.x, pos.z), s, [0.05, 0.045, 0.04, 0.6], 45.0);
         }
@@ -251,13 +300,31 @@ impl Fx {
         for _ in 0..n {
             let v = self.rv() * 0.6 * amount + vec3(0.0, 0.5, 0.0);
             let l = self.rng.range(0.4, 0.8);
-            self.push(Particle { pos: pos + vec3(0.0, 0.08, 0.0), vel: v, life: l, max: l, size: 0.14 * amount.max(0.6), col: [0.6, 0.53, 0.42], kind: Kind::Smoke, spin: 0.0 });
+            self.push(Particle {
+                pos: pos + vec3(0.0, 0.08, 0.0),
+                vel: v,
+                life: l,
+                max: l,
+                size: 0.14 * amount.max(0.6),
+                col: [0.6, 0.53, 0.42],
+                kind: Kind::Smoke,
+                spin: 0.0,
+            });
         }
     }
 
     /// Thin smoke left behind a flying grenade.
     pub fn trail(&mut self, pos: Vec3) {
-        self.push(Particle { pos, vel: vec3(0.0, 0.3, 0.0), life: 0.5, max: 0.5, size: 0.06, col: [0.75, 0.75, 0.75], kind: Kind::Smoke, spin: 0.0 });
+        self.push(Particle {
+            pos,
+            vel: vec3(0.0, 0.3, 0.0),
+            life: 0.5,
+            max: 0.5,
+            size: 0.06,
+            col: [0.75, 0.75, 0.75],
+            kind: Kind::Smoke,
+            spin: 0.0,
+        });
     }
 
     pub fn update(&mut self, dt: f32, w: &World) {
@@ -336,14 +403,26 @@ impl Fx {
                 Kind::Spark => {
                     let s = p.size * (0.4 + 0.6 * f);
                     let c = [p.col[0], p.col[1], p.col[2], f];
-                    add.quad(p.pos - right * s - up * s, p.pos + right * s - up * s, p.pos + right * s + up * s, p.pos - right * s + up * s, c);
+                    add.quad(
+                        p.pos - right * s - up * s,
+                        p.pos + right * s - up * s,
+                        p.pos + right * s + up * s,
+                        p.pos - right * s + up * s,
+                        c,
+                    );
                 }
                 Kind::Smoke => {
                     // Fade in fast, fade out slow: puffs appear soft, not popped.
                     let s = p.size;
                     let a = 0.34 * f * ((1.0 - f) * 8.0).min(1.0);
                     let c = [p.col[0], p.col[1], p.col[2], a];
-                    alpha.quad(p.pos - right * s - up * s, p.pos + right * s - up * s, p.pos + right * s + up * s, p.pos - right * s + up * s, c);
+                    alpha.quad(
+                        p.pos - right * s - up * s,
+                        p.pos + right * s - up * s,
+                        p.pos + right * s + up * s,
+                        p.pos - right * s + up * s,
+                        c,
+                    );
                 }
                 Kind::Ring => {
                     let r1 = p.size * (1.0 - f * f);

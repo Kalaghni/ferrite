@@ -25,9 +25,7 @@ pub fn owns(block: &Block) -> bool {
 /// Flat ground inside and at every entrance; the surrounding ridge blends
 /// into this crash scar without introducing a step at a torn hull opening.
 pub(super) fn settle(x: f32, z: f32, h: f32, target: f32) -> f32 {
-    let d = (x.abs() - HALF_LENGTH - 5.0)
-        .max(z.abs() - HALF_WIDTH - 5.0)
-        .max(0.0);
+    let d = (x.abs() - HALF_LENGTH - 5.0).max(z.abs() - HALF_WIDTH - 5.0).max(0.0);
     let weight = 1.0 - smooth(0.0, 8.0, d);
     h + (target - h) * weight
 }
@@ -40,40 +38,15 @@ pub(super) fn build(w: &mut World) {
     let g = floor(w);
     // Sidewall segments between the paired tears. End-on entry has no
     // blocking ramp lip, and the centre stays clear for objective C.
-    for z in [
-        -HALF_WIDTH - WALL_THICKNESS * 0.5,
-        HALF_WIDTH + WALL_THICKNESS * 0.5,
-    ] {
+    for z in [-HALF_WIDTH - WALL_THICKNESS * 0.5, HALF_WIDTH + WALL_THICKNESS * 0.5] {
         let mut start = -HALF_LENGTH;
-        for end in SIDE_DOORS
-            .map(|x| x - DOOR_HALF_WIDTH)
-            .into_iter()
-            .chain([HALF_LENGTH])
-        {
+        for end in SIDE_DOORS.map(|x| x - DOOR_HALF_WIDTH).into_iter().chain([HALF_LENGTH]) {
             let center = (start + end) * 0.5;
-            w.add_abs(
-                center,
-                z,
-                (end - start) * 0.5,
-                WALL_THICKNESS * 0.5,
-                g - 0.6,
-                g + ROOF_HEIGHT,
-                BlockKind::Metal,
-                SHELL_TINT,
-            );
+            w.add_abs(center, z, (end - start) * 0.5, WALL_THICKNESS * 0.5, g - 0.6, g + ROOF_HEIGHT, BlockKind::Metal, SHELL_TINT);
             start = end + DOOR_HALF_WIDTH * 2.0;
         }
         for x in SIDE_DOORS {
-            w.add_abs(
-                x,
-                z,
-                DOOR_HALF_WIDTH,
-                WALL_THICKNESS * 0.5,
-                g + DOOR_HEIGHT,
-                g + ROOF_HEIGHT,
-                BlockKind::Metal,
-                SHELL_TINT,
-            );
+            w.add_abs(x, z, DOOR_HALF_WIDTH, WALL_THICKNESS * 0.5, g + DOOR_HEIGHT, g + ROOF_HEIGHT, BlockKind::Metal, SHELL_TINT);
         }
     }
     w.add_abs(
@@ -88,16 +61,7 @@ pub(super) fn build(w: &mut World) {
     );
     // Cargo cases are low cover along the hold edges, leaving a broad
     // clear walking line through the entire aircraft.
-    w.sym_abs(
-        -30.0,
-        -3.8,
-        2.8,
-        0.8,
-        g,
-        g + 1.2,
-        BlockKind::Metal,
-        CARGO_TINT,
-    );
+    w.sym_abs(-30.0, -3.8, 2.8, 0.8, g, g + 1.2, BlockKind::Metal, CARGO_TINT);
 }
 
 #[cfg(test)]
@@ -137,9 +101,7 @@ mod tests {
                 }
                 assert!(world.los(vec3(x, g + 1.7, -10.0), vec3(x, g + 1.7, 10.0), 0));
             }
-            let roof = world
-                .raycast(vec3(0.0, g + 1.7, 0.0), Vec3::Y, 10.0, 0)
-                .unwrap();
+            let roof = world.raycast(vec3(0.0, g + 1.7, 0.0), Vec3::Y, 10.0, 0).unwrap();
             assert!((roof.t - (ROOF_HEIGHT - 1.7)).abs() < 0.01);
         }
     }

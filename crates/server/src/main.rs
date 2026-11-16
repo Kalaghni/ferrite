@@ -141,7 +141,18 @@ fn main() {
             if g.tick % 1800 == 0 {
                 let o: String = g.points.iter().map(|p| ['E', 'C', '-'][p.owner as usize]).collect();
                 let alive = |t: u8| g.players.iter().filter(|p| p.team == t && p.alive).count();
-                println!("  t={:>4}s  line [{}]  score {:>3}-{:<3}  alive {}v{}  kills {}  pickups {}  rounds {}", g.tick / 60, o, g.tickets[0], g.tickets[1], alive(0), alive(1), g.stats.kills, g.pickups.len(), g.stats.rounds);
+                println!(
+                    "  t={:>4}s  line [{}]  score {:>3}-{:<3}  alive {}v{}  kills {}  pickups {}  rounds {}",
+                    g.tick / 60,
+                    o,
+                    g.tickets[0],
+                    g.tickets[1],
+                    alive(0),
+                    alive(1),
+                    g.stats.kills,
+                    g.pickups.len(),
+                    g.stats.rounds
+                );
             }
             worst = worst.max(s.elapsed().as_secs_f64() * 1000.0);
         }
@@ -156,7 +167,10 @@ fn main() {
             el * 1000.0 / n as f64,
             worst
         );
-        println!("kills {} shots {} captures {} rounds {} tickets {:?}", g.stats.kills, g.stats.shots, g.stats.captures, g.stats.rounds, g.tickets);
+        println!(
+            "kills {} shots {} captures {} rounds {} tickets {:?}",
+            g.stats.kills, g.stats.shots, g.stats.captures, g.stats.rounds, g.tickets
+        );
         return;
     }
     let sock = UdpSocket::bind(("0.0.0.0", cfg.port)).expect("could not bind UDP port");

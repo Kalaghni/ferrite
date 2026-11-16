@@ -29,7 +29,20 @@ pub enum Btn {
 }
 
 #[cfg(test)]
-const BTNS: [Btn; 12] = [Btn::Fire, Btn::Aim, Btn::Jump, Btn::Crouch, Btn::Reload, Btn::Swap, Btn::Grenade, Btn::Melee, Btn::Sight, Btn::Pause, Btn::Scores, Btn::Loadout];
+const BTNS: [Btn; 12] = [
+    Btn::Fire,
+    Btn::Aim,
+    Btn::Jump,
+    Btn::Crouch,
+    Btn::Reload,
+    Btn::Swap,
+    Btn::Grenade,
+    Btn::Melee,
+    Btn::Sight,
+    Btn::Pause,
+    Btn::Scores,
+    Btn::Loadout,
+];
 
 impl Btn {
     fn bit(self) -> u32 {
@@ -351,7 +364,9 @@ mod tests {
             assert_eq!(seen & b.bit(), 0);
             seen |= b.bit();
         }
-        for a in [Action::Fire, Action::Aim, Action::Jump, Action::Crouch, Action::Reload, Action::SwapWeapon, Action::Grenade, Action::Melee] {
+        for a in
+            [Action::Fire, Action::Aim, Action::Jump, Action::Crouch, Action::Reload, Action::SwapWeapon, Action::Grenade, Action::Melee]
+        {
             assert!(button_for(a).is_some(), "no touch button for {a:?}");
         }
         assert!(button_for(Action::Forward).is_none());
