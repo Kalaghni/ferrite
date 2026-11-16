@@ -5,6 +5,8 @@
 //! Slag Cathedral views: overview / nave / gallery / furnace / approach.
 //! Classic map views: workshop / interior / passage / landmark / breach / walkway.
 //! Ridgeline aircraft views: wreck / cargo / tail.
+//! Monument views: foundry viaduct / train / crossing, quarry excavator /
+//! bucket / dragline, spillway dam / gates / crest.
 //! A fourth argument freezes machinery and wind at that second.
 //! A fifth argument selects a destruction mask (decimal/0xhex), or "broken"
 //! to show all designated map features in their destroyed state.
@@ -173,8 +175,11 @@ async fn main() {
             );
         }
         let aspect = mq::screen_width() / mq::screen_height();
+        let monument = if gallery { None } else { scene::monuments::review_view(&w, pose) };
         let (eye, target) = if models {
             (vec3(2.7, 5.0, 13.0), vec3(0.0, 0.6, 0.0))
+        } else if let Some(view) = monument {
+            view
         } else if !gallery && map == 2 && matches!(pose, "wreck" | "cargo" | "tail") {
             let g = w.height(0.0, 0.0);
             match pose {

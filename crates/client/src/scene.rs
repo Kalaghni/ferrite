@@ -179,8 +179,37 @@ pub fn shade_groups(w: &World) -> Vec<usize> {
     (0..b.len()).map(|i| find(&mut root, i)).collect()
 }
 
+/// Triangles each part of a map adds, in drawing order: one row per scene
+/// module. The triangle_profile example prints these for every map.
+pub type Profile = Vec<(&'static str, usize)>;
+
+/// Add `n` triangles to `name`'s row (rows keep the order first seen).
+pub fn tally(p: &mut Profile, name: &'static str, n: usize) {
+    match p.iter_mut().find(|row| row.0 == name) {
+        Some(row) => row.1 += n,
+        None => p.push((name, n)),
+    }
+}
+
+/// Counts what a section added to the mesh since the last mark.
+struct Meter(usize);
+impl Meter {
+    fn mark(&mut self, p: &mut Profile, m: &Mesh, name: &'static str) {
+        let now = m.triangles();
+        tally(p, name, now - self.0);
+        self.0 = now;
+    }
+}
+
 pub fn build_world(w: &World) -> Mesh {
+    build_world_profiled(w).0
+}
+
+/// The static world mesh, and how many of its triangles each module drew.
+pub fn build_world_profiled(w: &World) -> (Mesh, Profile) {
     let mut m = Mesh::default();
+    let mut prof = Profile::new();
+    let mut meter = Meter(0);
     let seed = w.seed as u32;
     // The ground is drawn at twice the resolution the sim walks on. The new
     // vertices follow a curve through the old ones, so slopes round off, but
@@ -220,6 +249,7 @@ pub fn build_world(w: &World) -> Mesh {
             }
         }
     }
+    meter.mark(&mut prof, &m, "terrain");
     const CONTAINER: [[f32; 3]; 4] = [[0.66, 0.27, 0.16], [0.18, 0.46, 0.48], [0.80, 0.60, 0.18], [0.34, 0.38, 0.47]];
     let groups = shade_groups(w);
     for (i, b) in w.blocks.iter().enumerate() {
@@ -230,11 +260,13 @@ pub fn build_world(w: &World) -> Mesh {
         }
         if w.map == fallen_giant::ID && ferrite_shared::map::fallen_giant::owns(b) {
             fallen_giant::block(&mut m, b);
+            meter.mark(&mut prof, &m, "fallen giant");
             continue;
         }
         let g = groups[i]; // shade of the group, so coplanar faces match
         if w.map == slag_cathedral::ID {
             slag_cathedral::block(&mut m, b, g);
+            meter.mark(&mut prof, &m, "slag cathedral");
             continue;
         }
         if w.map == relay::ID && relay::owns(b) {
@@ -242,6 +274,7 @@ pub fn build_world(w: &World) -> Mesh {
         }
         if landmarks::owns(w, b) {
             landmarks::block(&mut m, w, b);
+            meter.mark(&mut prof, &m, "landmarks");
             continue;
         }
         let j = 0.9 + 0.2 * hash01(g as u32, 91);
@@ -312,24 +345,38 @@ pub fn build_world(w: &World) -> Mesh {
             }
             BlockKind::Trunk => {}
         }
+        meter.mark(&mut prof, &m, "blocks");
     }
     if w.map == slag_cathedral::ID {
         slag_cathedral::build(&mut m, w);
+        meter.mark(&mut prof, &m, "slag cathedral");
         special_landmarks::build(&mut m, w);
-        return m;
+        meter.mark(&mut prof, &m, "relay mast / volcano");
+        return (m, prof);
     }
     for (i, t) in w.trees.iter().enumerate() {
-        tree(&mut m, t, i);
+        if !monuments::hides_tree(w, t) {
+            tree(&mut m, t, i);
+        }
     }
+    meter.mark(&mut prof, &m, "trees");
     build_ground_cover(&mut m, w);
+    meter.mark(&mut prof, &m, "ground cover");
     flora::grow(&mut m, w);
+    meter.mark(&mut prof, &m, "flora");
     if w.map == relay::ID {
         relay::build(&mut m, w);
+        meter.mark(&mut prof, &m, "relay");
     }
     landmarks::build(&mut m, w);
+    meter.mark(&mut prof, &m, "landmarks");
     fallen_giant::build(&mut m, w);
+    meter.mark(&mut prof, &m, "fallen giant");
     special_landmarks::build(&mut m, w);
-    m
+    meter.mark(&mut prof, &m, "relay mast / volcano");
+    monuments::build(&mut m, w);
+    meter.mark(&mut prof, &m, "monuments");
+    (m, prof)
 }
 
 /// Leaf colours a broadleaf tree's `tint` picks from.
@@ -651,16 +698,46 @@ pub fn flag(m: &mut Mesh, add: &mut Mesh, pos: Vec3, team: u8, carried: bool, ti
 /// from across the map. An owner of 255 hides that objective (modes that
 /// do not use it).
 pub fn beacons(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, owners: &[(u8, f32, bool)], time: f32, dmask: u64) {
+    beacons_profiled(m, alpha, add, w, owners, time, dmask, &mut Profile::new());
+}
+
+/// `beacons`, also counting the triangles each module adds this frame.
+#[allow(clippy::too_many_arguments)]
+pub fn beacons_profiled(
+    m: &mut Mesh,
+    alpha: &mut Mesh,
+    add: &mut Mesh,
+    w: &World,
+    owners: &[(u8, f32, bool)],
+    time: f32,
+    dmask: u64,
+    prof: &mut Profile,
+) {
+    let count = |m: &Mesh, alpha: &Mesh, add: &Mesh| m.triangles() + alpha.triangles() + add.triangles();
+    let mut last = count(m, alpha, add);
+    let mut mark = |m: &Mesh, alpha: &Mesh, add: &Mesh, name: &'static str| {
+        let now = count(m, alpha, add);
+        tally(prof, name, now - last);
+        last = now;
+    };
     if w.map == slag_cathedral::ID {
         slag_cathedral::atmosphere(alpha, add, w, time);
+        mark(m, alpha, add, "slag cathedral");
     }
     if w.map == relay::ID {
         relay::atmosphere(m, alpha, add, w, time);
+        mark(m, alpha, add, "relay");
     }
     landmarks::features(m, alpha, add, w, dmask, time);
+    mark(m, alpha, add, "landmark features");
     landmarks::atmosphere(m, alpha, add, w, time, dmask);
+    mark(m, alpha, add, "landmarks");
     special_landmarks::atmosphere(m, alpha, add, w, time);
+    mark(m, alpha, add, "relay mast / volcano");
     fallen_giant::atmosphere(m, alpha, add, w, time);
+    mark(m, alpha, add, "fallen giant");
+    monuments::atmosphere(m, alpha, add, w, time);
+    mark(m, alpha, add, "monuments");
     for (k, &(owner, progress, contested)) in owners.iter().enumerate() {
         if owner == 255 {
             continue;
@@ -714,6 +791,7 @@ pub fn beacons(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, owners
             );
         }
     }
+    mark(m, alpha, add, "objectives");
 }
 
 /// Box stretched from `a` to `b` (a forearm, a thigh...).
@@ -748,6 +826,8 @@ mod fallen_giant;
 mod flora;
 #[path = "scene/landmarks.rs"]
 mod landmarks;
+#[path = "scene/monuments.rs"]
+pub mod monuments;
 #[path = "scene/relay.rs"]
 mod relay;
 #[path = "scene/slag_cathedral.rs"]

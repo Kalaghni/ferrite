@@ -318,6 +318,12 @@ pub enum Sfx {
     Slide,
     /// Wind knocking a loose aircraft skin panel against its frame.
     MetalRattle,
+    /// The Broken Viaduct's tender straining at its hanging engine.
+    Creak,
+    /// The Titan Excavator's ropes and slewing gear under load.
+    Groan,
+    /// The Great Dam's warning sirens under test, far off.
+    Siren,
     Count,
 }
 
@@ -457,6 +463,80 @@ fn metal_rattle() -> Vec<f32> {
         .collect()
 }
 
+/// Stick-slip friction: a train of tiny impulses at `rate(t)` per second,
+/// rung through a few decaying resonances `(hz, decay seconds, gain)`. Slow
+/// rates are the groan of a loaded cable, faster ones a creaking joint.
+fn friction(dur: f32, rate: impl Fn(f32) -> f32, modes: &[(f32, f32, f32)], seed: u64) -> Vec<f32> {
+    let mut rng = Rng::new(seed);
+    let n = (dur * SR) as usize;
+    let mut state: Vec<(f32, f32)> = vec![(0.0, 0.0); modes.len()];
+    let mut phase = 0.0f32;
+    (0..n)
+        .map(|i| {
+            let t = i as f32 / SR;
+            phase += rate(t) / SR;
+            // Each slip is a little irregular in strength.
+            let kick = if phase >= 1.0 {
+                phase -= 1.0;
+                rng.range(0.55, 1.0)
+            } else {
+                0.0
+            };
+            let mut s = 0.0;
+            for ((hz, decay, gain), (y1, y2)) in modes.iter().zip(state.iter_mut()) {
+                let r = (-1.0 / (decay * SR)).exp();
+                let c = 2.0 * r * (hz * std::f32::consts::TAU / SR).cos();
+                let y = c * *y1 - r * r * *y2 + kick;
+                *y2 = *y1;
+                *y1 = y;
+                s += y * gain * (1.0 - r);
+            }
+            let env = (t / 0.12).min(1.0) * (1.0 - ((t - dur + 0.5) / 0.5).clamp(0.0, 1.0)).powi(2);
+            (s * env * 6.0).tanh() * 0.8
+        })
+        .collect()
+}
+
+/// A rusted joint creaking as weight shifts: the slip rate bends up and back.
+fn creak() -> Vec<f32> {
+    let rate = |t: f32| 22.0 + 30.0 * (t / 1.6 * std::f32::consts::PI).sin().max(0.0);
+    friction(1.6, rate, &[(240.0, 0.03, 1.0), (515.0, 0.02, 0.7), (1180.0, 0.012, 0.35), (96.0, 0.05, 0.6)], 0xC4EE)
+}
+
+/// Heavy wire rope groaning over a sheave: low, slow and uneven.
+fn groan() -> Vec<f32> {
+    let rate = |t: f32| 9.0 + 6.0 * (t * 2.1).sin() + 4.0 * (t * 0.7).sin();
+    friction(2.6, rate, &[(62.0, 0.09, 1.0), (148.0, 0.06, 0.8), (331.0, 0.03, 0.4), (705.0, 0.015, 0.15)], 0x6A0)
+}
+
+/// A motor siren some way off: the rotor winds up, holds, and runs down,
+/// softened by distance with a late echo off the valley walls.
+fn siren() -> Vec<f32> {
+    let dur = 8.0;
+    let n = (dur * SR) as usize;
+    let pitch = |t: f32| {
+        let up = (t / 2.6).min(1.0);
+        let down = ((t - 4.4) / 3.4).clamp(0.0, 1.0);
+        110.0 + 470.0 * (up * up * (3.0 - 2.0 * up)) * (1.0 - down * down)
+    };
+    let mut ph = 0.0f32;
+    let mut lp = 0.0f32;
+    let mut rng = Rng::new(0x5124);
+    let mut dry = Vec::with_capacity(n);
+    for i in 0..n {
+        let t = i as f32 / SR;
+        ph += pitch(t) / SR * std::f32::consts::TAU;
+        // A rotor chopping air: odd harmonics, a little breath.
+        let tone = ph.sin() + (ph * 3.0).sin() / 3.0 + (ph * 5.0).sin() / 6.0 + rng.range(-0.08, 0.08);
+        lp += (tone - lp) * 0.18;
+        // Silent for the last half second, so the echo dies inside the sample.
+        let env = (t / 0.4).min(1.0) * (1.0 - ((t - dur + 1.7) / 1.2).clamp(0.0, 1.0));
+        dry.push(lp * env * 0.5);
+    }
+    let delay = (0.42 * SR) as usize;
+    (0..n).map(|i| dry[i] + if i >= delay { dry[i - delay] * 0.3 } else { 0.0 }).collect()
+}
+
 /// A boot on dirt: a dull thud with a little grit, nothing sharp.
 fn footstep() -> Vec<f32> {
     let mut rng = Rng::new(6);
@@ -520,6 +600,9 @@ impl Audio {
             (Sfx::Whizz, whizz()),
             (Sfx::Slide, scrape()),
             (Sfx::MetalRattle, metal_rattle()),
+            (Sfx::Creak, creak()),
+            (Sfx::Groan, groan()),
+            (Sfx::Siren, siren()),
         ];
         // Reload: two metallic clicks.
         let mut reload = vec![0.0; (0.5 * SR) as usize];
@@ -545,6 +628,9 @@ impl Audio {
             Sfx::Throw,
             Sfx::Whizz,
             Sfx::MetalRattle,
+            Sfx::Creak,
+            Sfx::Groan,
+            Sfx::Siren,
         ];
         for (id, samples) in defs {
             for (k, gain) in PANS.iter().enumerate() {
@@ -607,6 +693,18 @@ mod music_tests {
         assert!(pcm.iter().all(|s| s.is_finite() && s.abs() <= 1.0));
         assert!(pcm.iter().take(4410).any(|s| s.abs() > 0.05));
         assert!(pcm.iter().rev().take(4410).all(|s| s.abs() < 0.002));
+    }
+
+    #[test]
+    fn monument_sounds_are_finite_audible_and_fade_out() {
+        for (name, pcm, secs) in [("creak", creak(), 1.6), ("groan", groan(), 2.6), ("siren", siren(), 8.0)] {
+            assert_eq!(pcm.len(), (SR * secs) as usize, "{name} length");
+            assert!(pcm.iter().all(|s| s.is_finite() && s.abs() <= 1.0), "{name} clips or is not finite");
+            let loud = pcm.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+            assert!(loud > 0.1, "{name} is nearly silent ({loud})");
+            assert!(pcm.iter().take(40).all(|s| s.abs() < 0.05), "{name} starts with a click");
+            assert!(pcm.iter().rev().take(400).all(|s| s.abs() < 0.02), "{name} ends abruptly");
+        }
     }
 
     #[test]
