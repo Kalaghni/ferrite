@@ -13,7 +13,7 @@ The map expansion gives the four oldest battlefields authored places to fight th
 | Relay | Existing climbable signal towers and listening station | One giant cellular backbone beyond the boundary, with antenna crowns, service rings, scanner and aviation lights |
 | Slag Cathedral | Existing casting nave, furnace courts and galleries | A distant volcanic caldera with lava seams, smoke and occasional eruptions |
 
-The volcano has a seeded 40% eruption chance in each 96-second visual cycle. An active cycle builds warning smoke, launches a lava fountain and arcing volcanic bombs, and cools into ash. It sits beyond the playable boundary and causes no damage. Its visual clock, like the other ambient animations, is local to each client.
+The volcano has a seeded 40% eruption chance in each 96-second visual cycle. An active cycle builds warning smoke, launches a lava fountain and arcing volcanic bombs, and cools into ash. It sits beyond the playable boundary and causes no damage. It runs, like the machinery, the wind and the other map events, on the world clock: the server's tick, which every client follows from its snapshots, so all players - including anyone who joins mid-round - see the same eruption at the same moment.
 
 ## Explosive changes
 

@@ -2435,10 +2435,15 @@ async fn play(
         vm_opaque.clear();
         vm_add.clear();
         let time = now as f32;
+        // Map events (machinery, the volcano, wind, beacons) run on the
+        // server's clock so all players see them together; `time` stays for
+        // our own HUD and effects.
+        let world_t = app.net.world_time(now);
+        let world_prev = app.net.world_time(now - dt as f64);
         let blob = !gpu.shadows();
         // A quiet, positional ambient cue once per gust, behind combat audio.
         // This is cosmetic and never creates a network event or damage.
-        if app.world.map == 2 && app.kc.is_none() && (now / 7.0) as u64 != ((now - dt as f64) / 7.0) as u64 {
+        if app.world.map == 2 && app.kc.is_none() && (world_t / 7.0).floor() != (world_prev / 7.0).floor() {
             let panel = vec3(12.0, app.world.height(0.0, 0.0) + 6.3, 6.25);
             if panel.distance(eye) < 42.0 {
                 app.audio.play_at(Sfx::MetalRattle, panel, eye, 0.22, 12.0);
@@ -2495,8 +2500,8 @@ async fn play(
                     (if used { p.owner } else { 255 }, p.progress as f32 / 100.0, p.n[0] > 0 && p.n[1] > 0)
                 })
                 .collect();
-            scene::beacons(&mut opaque, &mut alpha, &mut add, &app.world, &owners, time, visual_dmask);
-            scene::ambience(&mut opaque, &mut alpha, &mut add, &app.world, eye, cam_right, cam_up, time);
+            scene::beacons(&mut opaque, &mut alpha, &mut add, &app.world, &owners, world_t, visual_dmask);
+            scene::ambience(&mut opaque, &mut alpha, &mut add, &app.world, eye, cam_right, cam_up, world_t);
             if s.mode == mode::CTF {
                 for (f, fl) in s.flags.iter().enumerate() {
                     let carried = fl.state == 1;
@@ -2610,7 +2615,8 @@ async fn play(
             sun: scene::sun_for(app.world.map).normalize(),
             fog: scene::fog_for(app.world.map),
             tone: scene::tone_for(app.world.map),
-            time,
+            // Wind in the grass and trees: the same gusts for everyone.
+            time: world_t,
             lights: scene::map_lights(&app.world, eye, app.fx.lights(eye)),
             opaque: &opaque,
             alpha: &alpha,

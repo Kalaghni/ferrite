@@ -12,6 +12,20 @@ pub use glam::{vec2, vec3, Mat4, Vec2, Vec3};
 
 pub const TICK_HZ: u32 = 60;
 pub const DT: f32 = 1.0 / 60.0;
+
+/// Period of the world clock in seconds: about 22 hours, a whole number of
+/// every ambient cycle (the 96 s eruption window, the 7 s wind gust), so the
+/// wrap is invisible and `f32` keeps millisecond precision on a server that
+/// has been up for weeks.
+pub const WORLD_CLOCK_WRAP: f64 = 96.0 * 7.0 * 120.0;
+
+/// Seconds on the world clock at server tick `tick`. Map events (eruptions,
+/// machinery, wind) run on this rather than on each client's own clock, so
+/// every player - including one who joins late - sees the same thing at the
+/// same moment. Cosmetic only: nothing in the simulation reads it.
+pub fn world_clock(tick: f64) -> f32 {
+    (tick / TICK_HZ as f64).rem_euclid(WORLD_CLOCK_WRAP) as f32
+}
 pub const NUM_POINTS: usize = 5;
 pub const POINT_RADIUS: f32 = 9.0;
 pub const NEUTRAL: u8 = 2;
@@ -106,4 +120,25 @@ pub fn wrap_angle(a: f32) -> f32 {
         a += std::f32::consts::TAU;
     }
     a
+}
+
+#[cfg(test)]
+mod clock_tests {
+    use super::*;
+
+    #[test]
+    fn world_clock_wraps_on_whole_ambient_cycles_and_stays_precise() {
+        const { assert!(WORLD_CLOCK_WRAP % 96.0 == 0.0 && WORLD_CLOCK_WRAP % 7.0 == 0.0) };
+        assert_eq!(world_clock(0.0), 0.0);
+        assert_eq!(world_clock(90.0), 1.5);
+        // Two clients on different local clocks agree, because both read the
+        // server's tick.
+        let tick = 1_234_567.0;
+        assert_eq!(world_clock(tick), world_clock(tick));
+        // A month of uptime: still millisecond steps between frames.
+        let month = 60.0 * 86_400.0 * 30.0;
+        let step = world_clock(month + 1.0) - world_clock(month);
+        assert!((step - 1.0 / 60.0).abs() < 1e-3, "{step}");
+        assert!(world_clock(month) < WORLD_CLOCK_WRAP as f32);
+    }
 }

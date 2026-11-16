@@ -211,6 +211,12 @@ impl Net {
         let _ = self.sock.send(&encode_c2s(self.token, &C2S::WantIcon(id)));
     }
 
+    /// The world clock (see `ferrite_shared::world_clock`) as displayed now:
+    /// the same on every client, whenever it joined.
+    pub fn world_time(&self, now: f64) -> f32 {
+        ferrite_shared::world_clock(self.render_tick(now))
+    }
+
     /// Tick-time at which remote entities are displayed right now.
     pub fn render_tick(&self, now: f64) -> f64 {
         now * 60.0 + self.clock_offset - INTERP_TICKS

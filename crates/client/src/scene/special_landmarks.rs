@@ -26,7 +26,8 @@ pub(crate) fn volcano_origin(w: &World) -> Vec3 {
 
 /// Each 96-second ambient window has a 40% chance of an eruption. Smoke
 /// thickens first, then a lava fountain launches bombs, then the plume cools.
-/// Based only on the world seed and visual clock; it never affects players.
+/// Based only on the world seed and the world clock (`ferrite_shared::world_clock`,
+/// the same on every client); it never affects players.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Eruption {
     pub warning: f32,
