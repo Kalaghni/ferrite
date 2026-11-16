@@ -179,7 +179,9 @@ fn tunnel(m: &mut Mesh, w: &World, t: &Tunnel, which: u32) {
         }
     }
     for (s, out) in [(a, -1.0), (b, 1.0)] {
-        collar(m, w, t, s, out, seed + if out < 0.0 { 0 } else { n });
+        let ring = seed + if out < 0.0 { 0 } else { n };
+        cheeks(m, w, t, s, out, ring);
+        collar(m, w, t, s, out, ring);
     }
     if map == 1 {
         mine_fittings(m, t);
@@ -187,6 +189,48 @@ fn tunnel(m: &mut Mesh, w: &World, t: &Tunnel, which: u32) {
         cave_fittings(m, w, t, seed);
     }
 }
+
+/// The cavity's walls carried on out through the mouth, each point kept
+/// under the ground. The terrain grid cannot follow the cut's sides as
+/// steeply as the walls rise, so just outside a portal the cut is narrower
+/// than the opening; these cheeks line it, so nobody looking out of a
+/// tunnel sees into the hill beside it. Where the cut is wide they sink
+/// out of sight under its sides.
+fn cheeks(m: &mut Mesh, w: &World, t: &Tunnel, s: f32, out: f32, ring: u32) {
+    let map = w.map;
+    let centre = |s: f32| at(&frame(t, s), 0.0, H * 0.45, 0.0);
+    let walls = |s: f32| -> Vec<Vec3> {
+        let f = frame(t, s);
+        let c = centre(s);
+        ring_points(t, map, s, ring)
+            .into_iter()
+            .map(|p| {
+                if (p - c).normalize_or_zero().y > 0.55 {
+                    return p;
+                }
+                vec3(p.x, p.y.min(w.height(p.x, p.z) - 0.08).max(f.0.y - 0.3), p.z)
+            })
+            .collect()
+    };
+    let steps = 4;
+    let mut prev = walls(s);
+    for i in 1..=steps {
+        let s1 = s + out * (CUT_LINING * i as f32 / steps as f32);
+        let next = walls(s1);
+        let c = centre(s1);
+        for k in 0..prev.len() - 1 {
+            let (p, q) = (prev[k], prev[k + 1]);
+            if (p - c).normalize_or_zero().y > 0.55 || (q - c).normalize_or_zero().y > 0.55 {
+                continue;
+            }
+            face(m, [p, next[k], next[k + 1], q], c, rock(map, ring + i, k + 20, 0.0));
+        }
+        prev = next;
+    }
+}
+
+/// How far the cheeks line the cut beyond each portal.
+const CUT_LINING: f32 = 3.2;
 
 /// Rock round a portal: one face from the opening out into the cut and the
 /// hillside, and a cap over the terrain cells left out above the mouth.
