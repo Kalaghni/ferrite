@@ -995,7 +995,7 @@ mod tests {
                     );
                     // Detailed guns are shared by every remote soldier: keep each inexpensive.
                     assert!(
-                        mesh.v.len() < 6500,
+                        mesh.v.len() < 13000,
                         "{}: {} vertices",
                         weapon_def(wid).name,
                         mesh.v.len()

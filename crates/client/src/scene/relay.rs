@@ -148,9 +148,13 @@ fn lathe_m(
         let (dr, dy) = (r1 - r0, y1 - y0);
         let len = (dr * dr + dy * dy).sqrt().max(1e-5);
         let (nr, ny) = (dy / len, -dr / len);
-        for k in 0..segs {
-            let a0 = k as f32 / segs as f32 * TAU;
-            let a1 = (k + 1) as f32 / segs as f32 * TAU;
+        // `k` stays the caller's facet (colour patterns key on it); each is
+        // swept in `ROUND` steps.
+        for k in 0..segs * crate::gfx::ROUND {
+            let fine = (segs * crate::gfx::ROUND) as f32;
+            let a0 = k as f32 / fine * TAU;
+            let a1 = (k + 1) as f32 / fine * TAU;
+            let k = k / crate::gfx::ROUND;
             let (d0, d1) = (vec3(a0.cos(), 0.0, a0.sin()), vec3(a1.cos(), 0.0, a1.sin()));
             let p = |d: Vec3, r: f32, y: f32| g.transform_point3(d * r + Vec3::Y * y);
             let n = |d: Vec3| {
@@ -2037,7 +2041,7 @@ mod tests {
             );
         }
         assert!(
-            mesh.triangles() > 4_000 && mesh.triangles() < 66_000,
+            mesh.triangles() > 8_000 && mesh.triangles() < 132_000,
             "static dressing budget"
         );
         let mut top = 0.0f32;

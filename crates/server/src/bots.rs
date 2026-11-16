@@ -214,7 +214,14 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
             let sprinting = !p.st.crouch && hs > sim::WALK * 1.2;
             let heard = d < 1.8 || (sprinting && d < 9.0) || (t < p.firing_until && d < 30.0);
             let aware = in_view || heard || b.alert == Some(j) || b.target == Some(j) || t < p.marked_until;
-            if !aware || !g.world.los(eye, p.st.pos + vec3(0.0, th + 0.3, 0.0), g.dmask) {
+            let chest = p.st.pos + vec3(0.0, th + 0.3, 0.0);
+            if !aware || !g.world.los(eye, chest, g.dmask) {
+                continue;
+            }
+            // Leaves hide a soldier as well as a wall does, unless they give
+            // themselves away with a muzzle flash where the bot is looking.
+            let flash = in_view && t < p.firing_until;
+            if !flash && d > 2.5 && g.world.foliage(eye, chest) {
                 continue;
             }
             let mut score = d;

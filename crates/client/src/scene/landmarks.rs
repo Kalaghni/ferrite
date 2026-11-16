@@ -647,7 +647,7 @@ mod tests {
     use super::*;
 
     fn valid(mesh: Mesh, limit: usize) {
-        assert!(mesh.triangles() < limit, "landmark mesh exceeds {limit} triangles");
+        assert!(mesh.triangles() < limit, "landmark mesh of {} triangles exceeds {limit}", mesh.triangles());
         for (v, indices) in mesh.finish() {
             assert!(indices.iter().all(|&i| (i as usize) < v.len()));
             for v in v {
@@ -667,7 +667,7 @@ mod tests {
                 let (mut m, mut alpha, mut add) = (Mesh::default(), Mesh::default(), Mesh::default());
                 atmosphere(&mut m, &mut alpha, &mut add, &w, t, 0);
                 assert!(m.triangles() > 0, "map {id} has no moving machinery");
-                valid(m, 2_000);
+                valid(m, 4_000);
                 valid(alpha, 1_000);
                 valid(add, 500);
             }

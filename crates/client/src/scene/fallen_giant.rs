@@ -610,7 +610,7 @@ mod tests {
             build(&mut m, &w);
             assert!(m.triangles() > 2500);
             assert!(m.v.iter().any(|v| v.pos[1] > layout::floor(&w) + 30.0));
-            valid(m, 16000);
+            valid(m, 28000);
             let mut poses = Vec::new();
             for t in [0.0, 0.4, 2.3, 10000.0] {
                 let (mut m, mut alpha, mut add) =

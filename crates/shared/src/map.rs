@@ -473,6 +473,75 @@ impl World {
         self.raycast(a, d / len, len, dmask).is_none()
     }
 
+    /// Whether a sight line from `a` to `b` passes through the leaves of a
+    /// tree. Canopies stop sight, not bullets, so this is for whoever has
+    /// to see a target first (bots) and not for hit tests. The volumes are
+    /// the solid core of what the client draws, and the first and last
+    /// 1.2 m of the line are not counted, so someone standing under a pine
+    /// is not hidden from a soldier in the open.
+    pub fn foliage(&self, a: Vec3, b: Vec3) -> bool {
+        const STEP: f32 = 0.35;
+        const SKIP: f32 = 1.2;
+        let d = b - a;
+        let len = d.length();
+        if len < SKIP * 2.0 + STEP {
+            return false;
+        }
+        let dir = d / len;
+        let (lo, hi) = (a.min(b), a.max(b));
+        for t in &self.trees {
+            let r = t.radius;
+            if t.base.x + r < lo.x || t.base.x - r > hi.x || t.base.z + r < lo.z || t.base.z - r > hi.z {
+                continue;
+            }
+            if t.base.y + t.height < lo.y || t.base.y + t.height * 0.25 > hi.y {
+                continue;
+            }
+            // The stretch of the line within the canopy's footprint.
+            let (ox, oz) = (a.x - t.base.x, a.z - t.base.z);
+            let qa = dir.x * dir.x + dir.z * dir.z;
+            let (s0, s1) = if qa < 1e-6 {
+                if ox * ox + oz * oz > r * r {
+                    continue;
+                }
+                (0.0, len)
+            } else {
+                let qb = ox * dir.x + oz * dir.z;
+                let disc = qb * qb - qa * (ox * ox + oz * oz - r * r);
+                if disc <= 0.0 {
+                    continue;
+                }
+                let root = disc.sqrt();
+                ((-qb - root) / qa, (-qb + root) / qa)
+            };
+            let (s0, s1) = (s0.max(SKIP), s1.min(len - SKIP));
+            let mut inside = 0;
+            let mut s = s0;
+            while s <= s1 {
+                let p = a + dir * s;
+                let y = (p.y - t.base.y) / t.height;
+                let rr = vec2(p.x - t.base.x, p.z - t.base.z).length() / r;
+                let leaves = if t.pine {
+                    // Four stacked tiers read as one cone from 0.28 to 0.78.
+                    (0.28..0.78).contains(&y) && rr < 0.85 * (0.8 - y) / 0.52
+                } else {
+                    let e = (y - 0.72) / (0.34 * 0.8);
+                    let h = rr / 0.85;
+                    h * h + e * e < 1.0
+                };
+                if leaves {
+                    inside += 1;
+                    // About 0.7 m of leaves hides a soldier.
+                    if inside >= 2 {
+                        return true;
+                    }
+                }
+                s += STEP;
+            }
+        }
+        false
+    }
+
     // ---------------------------------------------------------------- build
 
     fn add(&mut self, cx: f32, cz: f32, hx: f32, hz: f32, y0: f32, h: f32, kind: BlockKind, tint: u8) {
@@ -1652,6 +1721,28 @@ impl Nav {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canopies_hide_and_trunks_do_not_blind() {
+        let w = World::new(0xFE221);
+        let mut checked = 0;
+        for t in w.trees.iter().filter(|t| t.base.x.abs() < 60.0 && t.base.z.abs() < 40.0).take(20) {
+            let side = vec3(t.radius * 3.0, 0.0, 0.0);
+            // Straight through the middle of the leaves.
+            let y = t.base.y + t.height * if t.pine { 0.42 } else { 0.72 };
+            let mid = vec3(t.base.x, y, t.base.z) + vec3(0.0, 0.0, t.radius * 0.3);
+            assert!(w.foliage(mid - side, mid + side), "tree at {:?}", t.base);
+            // Well above the crown.
+            let over = mid + vec3(0.0, t.height, 0.0);
+            assert!(!w.foliage(over - side, over + side));
+            checked += 1;
+        }
+        assert!(checked > 5);
+        // Someone standing right under a tree is not hidden by it.
+        let t = w.trees.iter().find(|t| t.pine && t.base.x.abs() < 60.0).unwrap();
+        let foot = t.base + vec3(0.9, 1.0, 0.0);
+        assert!(!w.foliage(foot + vec3(30.0, 0.6, 0.0), foot));
+    }
 
     // Captured after the authored landmark sites and Ridgeline cargo wreck.
     // Millimetre quantisation tolerates tiny floating-point differences

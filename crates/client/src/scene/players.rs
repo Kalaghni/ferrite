@@ -1,4 +1,10 @@
 //! Soldier silhouettes, equipment and movement poses.
+//!
+//! The shape language follows the launcher art: heavy, broad-shouldered
+//! troopers built from faceted plates (every edge cut back, flat shaded),
+//! pale armour layered over a dark undersuit, a domed helmet with a
+//! glowing visor, big shoulder plates and a pack whose lid carries the
+//! team colour and two pale recognition bars.
 
 use super::team_col;
 use super::weapons::{gun_grips, gun_model_pose};
@@ -85,75 +91,90 @@ impl Default for PlayerView {
     }
 }
 
-/// Eight-sided rings give armor a cut silhouette without smoothing away
-/// the deliberate facets. `top` narrows helmets and widens chest plates.
-fn plate(m: &mut Mesh, g: &Mat4, c: Vec3, h: Vec3, top: f32, col: Col) {
-    let bevel = 0.28;
-    let ring = [
-        (-1.0 + bevel, -1.0),
-        (1.0 - bevel, -1.0),
-        (1.0, -1.0 + bevel),
-        (1.0, 1.0 - bevel),
-        (1.0 - bevel, 1.0),
-        (-1.0 + bevel, 1.0),
-        (-1.0, 1.0 - bevel),
-        (-1.0, -1.0 + bevel),
-    ];
-    let at = |i: usize, upper: bool| {
-        let (x, z) = ring[i % 8];
-        let scale = if upper { top } else { 1.0 };
-        g.transform_point3(
-            c + vec3(
-                x * h.x * scale,
-                if upper { h.y } else { -h.y },
-                z * h.z * scale,
-            ),
-        )
-    };
-    for k in 0..8 {
-        m.quad(
-            at(k, false),
-            at(k, true),
-            at(k + 1, true),
-            at(k + 1, false),
-            col,
-        );
-    }
-    // Convex caps triangulated from a ring vertex avoid degenerate faces.
-    for k in 1..7 {
-        m.tri(at(0, true), at(k + 1, true), at(k, true), col);
-        m.tri(
-            at(0, false),
-            at(k, false),
-            at(k + 1, false),
-            shade(col, 0.9),
-        );
+/// One flat face, wound so that it faces away from `inside`.
+fn face(m: &mut Mesh, p: &[Vec3], inside: Vec3, col: Col) {
+    let n = (p[1] - p[0]).cross(p[p.len() - 1] - p[0]);
+    let mid = p.iter().copied().sum::<Vec3>() / p.len() as f32;
+    let out = n.dot(mid - inside) >= 0.0;
+    match (p.len(), out) {
+        (3, true) => m.tri(p[0], p[1], p[2], col),
+        (3, false) => m.tri(p[0], p[2], p[1], col),
+        (_, true) => m.quad(p[0], p[1], p[2], p[3], col),
+        (_, false) => m.quad(p[0], p[3], p[2], p[1], col),
     }
 }
 
-fn segment(m: &mut Mesh, g: &Mat4, a: Vec3, b: Vec3, radius: f32, col: Col) {
+/// The plate everything is built from: a box of half-size `h` with all
+/// twelve edges cut back by `k` (0..1 of each half-size, limited by the
+/// longest so long parts do not come to a point), which gives the six
+/// faces, twelve bevels and eight corner facets of the art's armour.
+/// `top` widens (> 1) or narrows (< 1) the +y end in x and z; every face
+/// stays flat under that taper.
+fn slab(m: &mut Mesh, g: &Mat4, c: Vec3, h: Vec3, top: f32, k: f32, col: Col) {
+    let cap = h.max_element() * 0.6;
+    let cut = vec3(h.x.min(cap), h.y.min(cap), h.z.min(cap)) * k;
+    let s = [1.0f32, -1.0];
+    // Corner (sx, sy, sz) has one vertex for each axis: the one lying on
+    // that axis' face.
+    let v = |axis: usize, sx: f32, sy: f32, sz: f32| {
+        let sg = [sx, sy, sz];
+        let mut p = [0.0f32; 3];
+        for i in 0..3 {
+            let full = h[i];
+            p[i] = sg[i] * if i == axis { full } else { full - cut[i] };
+        }
+        let t = 1.0 + (top - 1.0) * (p[1] / h.y + 1.0) * 0.5;
+        g.transform_point3(c + vec3(p[0] * t, p[1], p[2] * t))
+    };
+    let inside = g.transform_point3(c);
+    let darker = shade(col, 0.93);
+    // Faces: the four corners of each, in order round it.
+    let ring = [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
+    for &sa in &s {
+        face(m, &ring.map(|(a, b)| v(0, sa, a, b)), inside, col);
+        face(m, &ring.map(|(a, b)| v(1, a, sa, b)), inside, if sa > 0.0 { col } else { darker });
+        face(m, &ring.map(|(a, b)| v(2, a, b, sa)), inside, col);
+    }
+    // Bevels along each edge.
+    for &a in &s {
+        for &b in &s {
+            // Edges running along z (between the x and y faces).
+            face(m, &[v(0, a, b, -1.0), v(1, a, b, -1.0), v(1, a, b, 1.0), v(0, a, b, 1.0)], inside, col);
+            // Along y (between x and z).
+            face(m, &[v(0, a, -1.0, b), v(2, a, -1.0, b), v(2, a, 1.0, b), v(0, a, 1.0, b)], inside, col);
+            // Along x (between y and z).
+            face(m, &[v(1, -1.0, a, b), v(2, -1.0, a, b), v(2, 1.0, a, b), v(1, 1.0, a, b)], inside, col);
+        }
+    }
+    for &x in &s {
+        for &y in &s {
+            for &z in &s {
+                face(m, &[v(0, x, y, z), v(1, x, y, z), v(2, x, y, z)], inside, col);
+            }
+        }
+    }
+}
+
+/// Frame along a bone: origin at its middle, +y pointing from `b` to `a`,
+/// +z kept as close to the body's forward as the bone allows.
+fn bone(g: &Mat4, a: Vec3, b: Vec3) -> Option<(Mat4, f32)> {
     let d = a - b;
     if d.length_squared() < 1e-8 {
-        return;
+        return None;
     }
     let y = d.normalize();
     let guide = if y.z.abs() > 0.9 { Vec3::Y } else { Vec3::Z };
     let x = y.cross(guide).normalize();
     let z = x.cross(y);
-    let basis = Mat4::from_cols(
-        x.extend(0.0),
-        y.extend(0.0),
-        z.extend(0.0),
-        ((a + b) * 0.5).extend(1.0),
-    );
-    plate(
-        m,
-        &(*g * basis),
-        Vec3::ZERO,
-        vec3(radius * 0.86, d.length() * 0.5, radius),
-        1.12,
-        col,
-    );
+    let basis = Mat4::from_cols(x.extend(0.0), y.extend(0.0), z.extend(0.0), ((a + b) * 0.5).extend(1.0));
+    Some((*g * basis, d.length()))
+}
+
+/// An eight-sided limb from `b` up to `a`, wider at `a` by `top`.
+fn segment(m: &mut Mesh, g: &Mat4, a: Vec3, b: Vec3, radius: f32, top: f32, col: Col) {
+    if let Some((f, len)) = bone(g, a, b) {
+        slab(m, &f, Vec3::ZERO, vec3(radius * 0.9, len * 0.5 + radius * 0.35, radius), top, 0.42, col);
+    }
 }
 
 /// Scale of a gun in another soldier's hands.
@@ -164,7 +185,7 @@ const BUTT_SEAT: f32 = -0.03;
 
 /// Where the front of the chest plate is, in body space.
 fn chest_front(bulk: f32) -> f32 {
-    0.138 * bulk + 0.055
+    0.152 * bulk + 0.032
 }
 
 /// How far forward of the spine a gun's origin is held. Pistols are held
@@ -173,7 +194,7 @@ fn chest_front(bulk: f32) -> f32 {
 fn gun_reach(wid: u8, bulk: f32) -> f32 {
     let arch = ferrite_shared::sim::weapon_def(wid).arch;
     if arch == 4 {
-        return 0.28;
+        return 0.30;
     }
     let butt = if arch == 2 { 0.39 } else { 0.36 } * GUN_SCALE;
     (chest_front(bulk) + BUTT_SEAT + butt).max(0.28)
@@ -190,6 +211,11 @@ fn joint(a: Vec3, b: Vec3, upper: f32, lower: f32, pole: Vec3) -> Vec3 {
     let along = ((u * u - l * l + len * len) / (2.0 * len)).clamp(0.0, u);
     let bend = (pole - axis * pole.dot(axis)).normalize_or_zero();
     a + axis * along + bend * (u * u - along * along).max(0.0).sqrt()
+}
+
+/// Mix a colour toward white: the hot core of a visor's glow.
+fn hot(c: [f32; 3], k: f32) -> [f32; 3] {
+    [c[0] + (1.0 - c[0]) * k, c[1] + (1.0 - c[1]) * k, c[2] + (1.0 - c[2]) * k]
 }
 
 /// A soldier with planted foot targets and articulated arms. All equipment
@@ -213,19 +239,21 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
     };
     let main = tint(tc, glow);
     let look = p.skin % 6;
-    // The key art separates muted cloth from bright team armor. Keeping
-    // that value contrast makes silhouettes readable against the terrain.
-    let fatigues = match look {
-        3 => [0.075, 0.085, 0.105],
-        1 => [0.34, 0.36, 0.34],
-        _ => [0.25, 0.27, 0.28],
+    let rare = p.skin as usize % ferrite_shared::sim::SKINS.len() >= 6;
+    // Undersuit, armour, webbing, warning paint and markings. The art
+    // keeps pale armour over a dark suit, with team colour reserved for
+    // the shoulders, the pack lid and the visor. The armory looks (ids 6
+    // and up) are the same six shapes in rarer colours.
+    let mut pal = match look {
+        1 => ([0.30, 0.31, 0.27], [0.50, 0.49, 0.44], [0.34, 0.25, 0.16], [0.95, 0.72, 0.13], [0.86, 0.9, 0.9]),
+        3 => ([0.075, 0.085, 0.105], [0.27, 0.29, 0.31], [0.12, 0.13, 0.14], [0.95, 0.72, 0.13], [0.86, 0.9, 0.9]),
+        4 => ([0.27, 0.27, 0.22], [0.60, 0.58, 0.54], [0.34, 0.25, 0.16], [0.80, 0.64, 0.30], [0.86, 0.9, 0.9]),
+        5 => ([0.24, 0.26, 0.29], [0.66, 0.65, 0.62], [0.22, 0.21, 0.19], [0.95, 0.72, 0.13], [0.86, 0.9, 0.9]),
+        _ => ([0.21, 0.205, 0.215], [0.71, 0.69, 0.67], [0.20, 0.19, 0.18], [0.95, 0.72, 0.13], [0.88, 0.91, 0.92]),
     };
-    // Cloth, plate, leather, warning paint and markings. The armory looks
-    // (ids 6 and up) are the same six shapes in rarer colours.
-    let mut pal = (fatigues, [0.43, 0.45, 0.46], [0.34, 0.25, 0.16], [0.95, 0.72, 0.13], [0.86, 0.9, 0.9]);
-    if p.skin as usize % ferrite_shared::sim::SKINS.len() >= 6 {
+    if rare {
         pal = match look {
-            0 => ([0.055, 0.058, 0.066], [0.105, 0.11, 0.12], [0.09, 0.09, 0.10], [0.92, 0.94, 0.96], [0.96, 0.97, 0.98]),
+            0 => ([0.055, 0.058, 0.066], [0.12, 0.125, 0.135], [0.09, 0.09, 0.10], [0.92, 0.94, 0.96], [0.96, 0.97, 0.98]),
             1 => ([0.58, 0.47, 0.31], [0.47, 0.25, 0.14], [0.30, 0.19, 0.11], [0.86, 0.50, 0.22], [0.93, 0.86, 0.70]),
             2 => ([0.15, 0.16, 0.18], [0.30, 0.33, 0.38], [0.20, 0.17, 0.10], [0.96, 0.76, 0.22], [0.98, 0.82, 0.30]),
             3 => ([0.80, 0.78, 0.72], [0.56, 0.56, 0.54], [0.38, 0.36, 0.33], [0.70, 0.72, 0.74], [0.20, 0.21, 0.23]),
@@ -237,10 +265,20 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
     let armor = tint(pal.1, 0.0);
     let metal = tint([0.13, 0.15, 0.18], 0.0);
     let skin = tint([0.78, 0.65, 0.51], 0.0);
-    let glove = tint([0.15, 0.16, 0.17], 0.0);
-    let leather = tint(pal.2, 0.0);
+    let glove = tint([0.13, 0.13, 0.14], 0.0);
+    let webbing = tint(pal.2, 0.0);
     let hazard = tint(pal.3, 0.0);
     let markings = tint(pal.4, 0.0);
+    let boots = tint([0.15, 0.14, 0.14], 0.0);
+    let visor = tint([0.06, 0.07, 0.09], 0.0);
+    // Blackout's white marks and Juggernaut's gold carry over to the
+    // visor; everyone else's glows in their team colour.
+    let glass = if rare && matches!(look, 0 | 2) { tint(hot(pal.4, 0.2), 0.9) } else { tint(hot(tc, 0.35), 0.95) };
+    // Gear on the pack and belt: a shade between suit and webbing.
+    let gear = tint(
+        [(pal.0[0] + pal.2[0]) * 0.6, (pal.0[1] + pal.2[1]) * 0.6, (pal.0[2] + pal.2[2]) * 0.6],
+        0.0,
+    );
 
     let sl = p.slide.clamp(0.0, 1.0);
     let c = p.crouch.clamp(0.0, 1.0).max(sl);
@@ -262,6 +300,15 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
     } else {
         1.0
     };
+    // How much plate a look wears: the scout's light rig, the heavy's
+    // layered suit.
+    let plated: f32 = match look {
+        1 => 0.7,
+        2 => 1.12,
+        3 => 0.85,
+        4 => 0.9,
+        _ => 1.0,
+    };
     let phase = p.phase * 2.2;
     let walk_dir = if speed > 0.1 {
         vec3(-p.vel.1 / speed, 0.0, p.vel.0 / speed)
@@ -278,8 +325,8 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
         let ph = phase + offset;
         let reach = (0.30 + 0.13 * sprint) * locomotion * (1.0 - 0.65 * kneel);
         let lift = ph.cos().max(0.0).powf(1.5) * (0.11 + 0.045 * sprint) * locomotion;
-        let hip = vec3(sign * 0.145, hip_y + bounce, 0.0);
-        let mut ankle = vec3(sign * 0.155, 0.095 + lift, 0.0) + walk_dir * (ph.sin() * reach);
+        let hip = vec3(sign * 0.15, hip_y + bounce, 0.0);
+        let mut ankle = vec3(sign * 0.165, 0.10 + lift, 0.0) + walk_dir * (ph.sin() * reach);
         ankle.z += kneel * if sign > 0.0 { 0.28 } else { -0.22 };
         ankle += vec3(sign * 0.025, 0.055, 0.64 - sign * 0.07) * sl;
         ankle += vec3(sign * 0.035, 0.31 + sign * 0.045, -0.16) * air;
@@ -292,55 +339,59 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
             }
         }
         let knee = joint(hip, ankle, 0.39, 0.38, Vec3::Z);
-        segment(m, &root, hip, knee, 0.101 * bulk, dark);
-        segment(m, &root, knee, ankle, 0.077 * bulk, shade(dark, 0.9));
-        plate(
-            m,
-            &root,
-            knee + vec3(0.0, 0.0, 0.055),
-            vec3(0.082 * bulk, 0.082, 0.056),
-            0.82,
-            armor,
-        );
-        let boot = root
-            * Mat4::from_translation(ankle)
-            * Mat4::from_rotation_y(
-                (-p.vel.1 / speed.max(1.0)).clamp(-1.0, 1.0) * 0.25 * locomotion,
-            )
-            * Mat4::from_rotation_x(-ph.sin().max(0.0) * 0.18 * locomotion);
-        plate(
-            m,
-            &boot,
-            vec3(0.0, -0.025, 0.045),
-            vec3(0.087, 0.065, 0.145),
-            0.83,
-            metal,
-        );
-        m.obox(
-            &boot,
-            vec3(0.0, -0.076, 0.045),
-            vec3(0.09, 0.014, 0.148),
-            shade(metal, 0.7),
-        );
-        if look == 2 {
-            plate(
+        // Thigh: suit, with a plate over its front and outside.
+        segment(m, &root, hip, knee, 0.124 * bulk, 1.15, dark);
+        if let Some((f, len)) = bone(&root, hip, knee) {
+            slab(
                 m,
-                &root,
-                hip.lerp(knee, 0.44) + vec3(sign * 0.035, 0.0, 0.06),
-                vec3(0.085, 0.12, 0.04),
-                1.05,
-                armor,
+                &f,
+                vec3(sign * 0.028, 0.02, 0.05),
+                vec3(0.095 * bulk * plated.min(1.0), len * 0.3, 0.06),
+                1.12,
+                0.4,
+                if look == 3 { dark } else { shade(armor, 0.94) },
             );
-        } else if look == 5 {
-            segment(
+            if look == 2 {
+                // The heavy's tasset hangs over the hip.
+                slab(m, &f, vec3(sign * 0.075, len * 0.26, 0.02), vec3(0.06, 0.1, 0.1), 1.1, 0.4, armor);
+            }
+            if sign < 0.0 && look != 3 {
+                // Holster on the right thigh.
+                slab(m, &f, vec3(-0.11 * bulk, 0.04, -0.005), vec3(0.03, 0.095, 0.055), 0.9, 0.4, gear);
+            }
+        }
+        // Shin: an armoured greave from knee to boot, and a big knee pad.
+        segment(m, &root, knee, ankle, 0.088 * bulk, 1.1, shade(dark, 0.92));
+        if let Some((f, len)) = bone(&root, knee, ankle) {
+            slab(
                 m,
-                &root,
-                knee.lerp(ankle, 0.56),
-                knee.lerp(ankle, 0.7),
-                0.083 * bulk,
-                hazard,
+                &f,
+                vec3(0.0, -0.01, 0.012),
+                vec3(0.095 * bulk, len * 0.36, 0.093 * bulk),
+                1.15,
+                0.42,
+                if look == 3 { shade(dark, 1.25) } else { armor },
+            );
+            if look == 5 {
+                slab(m, &f, vec3(0.0, -len * 0.12, 0.012), vec3(0.104 * bulk, 0.03, 0.102 * bulk), 1.0, 0.3, hazard);
+            }
+            slab(
+                m,
+                &f,
+                vec3(0.0, len * 0.5, 0.085),
+                vec3(0.088 * bulk, 0.088, 0.055),
+                0.8,
+                0.48,
+                if look == 3 { metal } else { shade(armor, 1.06) },
             );
         }
+        let boot = root
+            * Mat4::from_translation(ankle)
+            * Mat4::from_rotation_y((-p.vel.1 / speed.max(1.0)).clamp(-1.0, 1.0) * 0.25 * locomotion)
+            * Mat4::from_rotation_x(-ph.sin().max(0.0) * 0.18 * locomotion);
+        slab(m, &boot, vec3(0.0, -0.02, 0.04), vec3(0.1, 0.08, 0.155), 0.86, 0.38, boots);
+        slab(m, &boot, vec3(0.0, -0.085, 0.045), vec3(0.105, 0.018, 0.163), 1.0, 0.35, shade(boots, 0.6));
+        slab(m, &boot, vec3(0.0, 0.02, 0.15), vec3(0.07, 0.035, 0.045), 0.8, 0.45, shade(boots, 1.25));
     }
 
     // Rotation is about the hips. Weight shifts toward the supporting leg;
@@ -359,400 +410,191 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
         * Mat4::from_rotation_z(roll)
         * Mat4::from_rotation_y(phase.sin() * 0.035 * locomotion * (1.0 - c))
         * Mat4::from_translation(vec3(0.0, -0.84, 0.0));
-    plate(
-        m,
-        &body,
-        vec3(0.0, 1.12, 0.0),
-        vec3(0.225 * bulk, 0.28, 0.145 * bulk),
-        1.14,
-        dark,
-    );
-    plate(
-        m,
-        &body,
-        vec3(0.0, 1.21, 0.138 * bulk),
-        vec3(0.215 * bulk, 0.19, 0.055),
-        1.12,
-        if look == 3 { shade(main, 0.65) } else { main },
-    );
-    plate(
-        m,
-        &body,
-        vec3(0.0, 0.85, 0.0),
-        vec3(0.25 * bulk, 0.065, 0.155 * bulk),
-        0.92,
-        metal,
-    );
-    m.obox(
-        &body,
-        vec3(0.0, 0.855, 0.163 * bulk),
-        vec3(0.035, 0.035, 0.018),
-        armor,
-    );
-    for sign in [-1.0f32, 1.0] {
-        let shoulder = body
-            * Mat4::from_translation(vec3(sign * 0.28 * bulk, 1.35, 0.0))
-            * Mat4::from_rotation_z(sign * 0.3);
-        plate(
-            m,
-            &shoulder,
-            vec3(sign * 0.035, 0.015, 0.0),
-            vec3(0.115, 0.11, 0.16),
-            0.76,
-            armor,
-        );
-        plate(
-            m,
-            &shoulder,
-            vec3(sign * 0.05, 0.065, 0.0),
-            vec3(0.116, 0.047, 0.15),
-            0.85,
-            shade(main, 0.92),
-        );
-        m.obox(
-            &body,
-            vec3(sign * 0.135, 0.96, 0.186 * bulk),
-            vec3(0.055, 0.075, 0.04),
-            metal,
-        );
-        m.obox(
-            &body,
-            vec3(sign * 0.247 * bulk, 0.87, 0.035),
-            vec3(0.046, 0.082, 0.078),
-            dark,
-        );
-    }
-    plate(
-        m,
-        &body,
-        vec3(0.0, 1.45, 0.0),
-        vec3(0.135, 0.035, 0.125),
-        0.85,
-        metal,
-    );
-    m.obox(&body, vec3(0.0, 1.48, 0.0), vec3(0.065, 0.04, 0.065), dark);
 
-    // The compact pack and inset team plate are the strongest repeated
-    // shape in the launcher art, including its two pale recognition bars.
-    let pack_w = match p.kit {
-        1 => 0.215,
-        2 => 0.165,
-        _ => 0.185,
-    };
-    let pack_h = if p.kit == 2 { 0.245 } else { 0.20 };
-    plate(
-        m,
-        &body,
-        vec3(0.0, 1.19, -0.185 * bulk),
-        vec3(pack_w, pack_h, 0.095),
-        0.9,
-        metal,
-    );
-    let pack_panel =
-        body * Mat4::from_translation(vec3(0.0, 1.24, -0.282 * bulk)) * Mat4::from_rotation_x(0.12);
-    plate(
-        m,
-        &pack_panel,
-        Vec3::ZERO,
-        vec3(pack_w * 0.87, 0.125, 0.027),
-        1.0,
-        main,
-    );
-    for x in [-0.038f32, 0.038] {
-        let stripe = pack_panel
-            * Mat4::from_translation(vec3(x, 0.015, -0.03))
-            * Mat4::from_rotation_z(-0.12);
-        m.obox(&stripe, Vec3::ZERO, vec3(0.017, 0.065, 0.004), markings);
+    // ---- torso: suit, belt, abdomen and the chest plate over it ----
+    let b = bulk;
+    slab(m, &body, vec3(0.0, 0.92, 0.0), vec3(0.19 * b, 0.11, 0.13 * b), 1.05, 0.4, dark);
+    slab(m, &body, vec3(0.0, 1.15, -0.005), vec3(0.215 * b, 0.25, 0.135 * b), 1.16, 0.4, dark);
+    slab(m, &body, vec3(0.0, 0.875, 0.0), vec3(0.225 * b, 0.042, 0.152 * b), 1.0, 0.35, webbing);
+    slab(m, &body, vec3(0.0, 0.875, 0.152 * b), vec3(0.04, 0.03, 0.012), 1.0, 0.3, metal);
+    // Groin plate and the abdomen's two bands.
+    slab(m, &body, vec3(0.0, 0.79, 0.115 * b), vec3(0.085, 0.06, 0.03), 0.8, 0.4, shade(armor, 0.86));
+    slab(m, &body, vec3(0.0, 1.0, 0.075 * b), vec3(0.175 * b, 0.055, 0.075 * b), 1.04, 0.42, shade(armor, 0.86));
+    for sign in [-1.0f32, 1.0] {
+        // Pouches round the hips.
+        slab(m, &body, vec3(sign * 0.205 * b, 0.84, 0.06), vec3(0.042, 0.065, 0.06), 0.92, 0.4, gear);
+        slab(m, &body, vec3(sign * 0.12 * b, 0.84, 0.162 * b), vec3(0.05, 0.055, 0.03), 0.92, 0.4, gear);
     }
-    m.obox(
+    // The cuirass: wide over the chest, cut in at the waist.
+    let chest_col = if look == 1 { shade(armor, 0.82) } else { armor };
+    slab(
+        m,
         &body,
-        vec3(0.0, 1.0, -0.23 * bulk),
-        vec3(pack_w * 0.78, 0.06, 0.07),
-        dark,
+        vec3(0.0, 1.245, 0.02),
+        vec3(0.245 * b * plated.max(0.9), 0.165, 0.132 * b),
+        1.12,
+        0.38,
+        chest_col,
     );
+    // A team tab on the chest, and a second plate layer for the heavy.
+    slab(m, &body, vec3(-0.115 * b, 1.3, chest_front(b) + 0.002), vec3(0.048, 0.03, 0.01), 1.0, 0.3, main);
+    if look == 2 {
+        slab(m, &body, vec3(0.0, 1.21, chest_front(b) - 0.01), vec3(0.17 * b, 0.1, 0.03), 1.12, 0.4, shade(armor, 1.06));
+    }
     match look {
         1 => {
-            for x in [-0.14f32, 0.0, 0.14] {
-                plate(
-                    m,
-                    &body,
-                    vec3(x * bulk, 1.04, 0.204 * bulk),
-                    vec3(0.051, 0.08, 0.033),
-                    0.92,
-                    leather,
-                );
+            // The scout's rig: three magazine pouches across the front.
+            for x in [-0.11f32, 0.0, 0.11] {
+                slab(m, &body, vec3(x * b, 1.13, chest_front(b) + 0.02), vec3(0.048, 0.07, 0.032), 0.92, 0.4, webbing);
             }
         }
-        2 => {
-            for sign in [-1.0f32, 1.0] {
-                let pauldron = body
-                    * Mat4::from_translation(vec3(sign * 0.36 * bulk, 1.34, -0.015))
-                    * Mat4::from_rotation_z(sign * 0.22);
-                plate(
-                    m,
-                    &pauldron,
-                    Vec3::ZERO,
-                    vec3(0.11, 0.13, 0.185),
-                    0.75,
-                    armor,
-                );
-            }
-            plate(
-                m,
-                &body,
-                vec3(0.0, 1.43, 0.0),
-                vec3(0.19, 0.055, 0.175),
-                0.9,
-                armor,
-            );
-        }
-        3 => m.obox(
-            &body,
-            vec3(0.31 * bulk, 1.24, 0.0),
-            vec3(0.055, 0.03, 0.142),
-            main,
-        ),
         4 => {
-            let strap =
-                body * Mat4::from_translation(vec3(0.0, 1.16, 0.203)) * Mat4::from_rotation_z(0.7);
-            m.obox(&strap, Vec3::ZERO, vec3(0.035, 0.28, 0.019), leather);
+            // The veteran's bandolier, shoulder to hip.
+            let strap = body * Mat4::from_translation(vec3(0.0, 1.13, chest_front(b) + 0.012)) * Mat4::from_rotation_z(0.72);
+            slab(m, &strap, Vec3::ZERO, vec3(0.034, 0.3, 0.014), 1.0, 0.3, webbing);
             for k in -2i32..=2 {
-                m.obox(
-                    &strap,
-                    vec3(0.0, k as f32 * 0.095, 0.023),
-                    vec3(0.025, 0.027, 0.012),
-                    hazard,
-                );
+                slab(m, &strap, vec3(0.0, k as f32 * 0.1, 0.018), vec3(0.025, 0.028, 0.012), 1.0, 0.35, hazard);
             }
         }
         5 => {
-            for y in [1.08f32, 1.32] {
-                m.obox(
-                    &body,
-                    vec3(0.0, y, 0.2),
-                    vec3(0.205 * bulk, 0.021, 0.008),
-                    hazard,
-                );
+            for y in [1.17f32, 1.33] {
+                slab(m, &body, vec3(0.0, y, chest_front(b) - 0.004), vec3(0.2 * b, 0.02, 0.012), 1.0, 0.3, hazard);
             }
         }
         _ => {}
     }
+    // Collar.
+    slab(m, &body, vec3(0.0, 1.425, -0.01), vec3(0.135, 0.06, 0.12), 0.8, 0.45, shade(dark, 1.1));
+    if look == 2 {
+        slab(m, &body, vec3(0.0, 1.415, 0.02), vec3(0.17, 0.05, 0.15), 0.85, 0.42, armor);
+    }
 
-    // Head counter-leans with the torso. The closed Regular helmet has a
-    // sloped crown, cheek guards and a recessed face aperture as in the art.
+    // ---- shoulder plates: big, layered, team colour on the top ----
+    let pad = match look {
+        1 => 0.72,
+        2 => 1.15,
+        3 => 0.85,
+        _ => 1.0,
+    };
+    for sign in [-1.0f32, 1.0] {
+        let shoulder = body * Mat4::from_translation(vec3(sign * 0.3 * b, 1.35, -0.005)) * Mat4::from_rotation_z(sign * 0.3);
+        let pc = if look == 3 { shade(dark, 1.6) } else { armor };
+        slab(m, &shoulder, vec3(sign * 0.045, -0.015, 0.0), vec3(0.135, 0.12, 0.17) * pad, 0.7, 0.5, pc);
+        slab(m, &shoulder, vec3(sign * 0.055, 0.075 * pad, 0.0), vec3(0.122, 0.045, 0.158) * pad, 0.78, 0.5, main);
+        if look == 2 {
+            // The heavy's lower lame.
+            slab(m, &shoulder, vec3(sign * 0.1, -0.12, 0.0), vec3(0.06, 0.07, 0.15), 0.9, 0.45, shade(armor, 0.9));
+        }
+    }
+
+    // ---- the pack: dark body, team-coloured lid, two pale bars ----
+    let pack_w = match p.kit {
+        1 => 0.23,
+        2 => 0.19,
+        _ => 0.21,
+    } * if look == 1 { 0.88 } else { 1.0 };
+    let pack_h = if p.kit == 2 { 0.235 } else { 0.21 };
+    let back = -0.135 * b;
+    slab(m, &body, vec3(0.0, 1.14, back - 0.095), vec3(pack_w, pack_h, 0.095), 1.0, 0.32, gear);
+    let lid = body * Mat4::from_translation(vec3(0.0, 1.27, back - 0.19)) * Mat4::from_rotation_x(-0.3);
+    slab(m, &lid, Vec3::ZERO, vec3(pack_w * 1.08, 0.14, 0.035), 1.04, 0.32, main);
+    for x in [-0.036f32, 0.036] {
+        let bar = lid * Mat4::from_translation(vec3(x * 1.15, 0.0, -0.035)) * Mat4::from_rotation_z(-0.36);
+        slab(m, &bar, Vec3::ZERO, vec3(0.019, 0.075, 0.006), 1.0, 0.3, markings);
+    }
+    for sign in [-1.0f32, 1.0] {
+        slab(m, &body, vec3(sign * pack_w * 0.5, 0.97, back - 0.17), vec3(pack_w * 0.42, 0.06, 0.05), 0.9, 0.4, shade(gear, 0.85));
+        // Shoulder straps over the collar.
+        slab(m, &body, vec3(sign * 0.12, 1.36, 0.04), vec3(0.03, 0.08, 0.15), 1.0, 0.3, webbing);
+    }
+
+    // ---- head ----
+    // Head counter-leans with the torso. The Regular helmet is the art's:
+    // a faceted dome, a dark visor band with a glowing slit, ear pods and
+    // a jaw guard.
     let head = body
-        * Mat4::from_translation(vec3(0.0, 1.48, 0.0))
+        * Mat4::from_translation(vec3(0.0, 1.445, 0.0))
         * Mat4::from_rotation_x(-p.pitch * 0.65 * (1.0 - fall) - lean * 0.8)
         * Mat4::from_rotation_z(-roll * 0.7);
-    plate(
-        m,
-        &head,
-        vec3(0.0, 0.145, 0.0),
-        vec3(0.125, 0.135, 0.13),
-        0.87,
-        skin,
-    );
+    slab(m, &head, vec3(0.0, 0.03, 0.0), vec3(0.07, 0.05, 0.07), 1.0, 0.4, dark);
+    let face = |m: &mut Mesh| {
+        slab(m, &head, vec3(0.0, 0.16, 0.0), vec3(0.1, 0.125, 0.115), 1.14, 0.5, skin);
+        slab(m, &head, vec3(0.0, 0.085, 0.035), vec3(0.075, 0.05, 0.085), 1.1, 0.5, shade(skin, 0.94));
+        slab(m, &head, vec3(0.0, 0.15, 0.118), vec3(0.016, 0.03, 0.018), 0.7, 0.45, shade(skin, 0.9));
+        slab(m, &head, vec3(0.0, 0.2, 0.108), vec3(0.075, 0.012, 0.012), 1.0, 0.4, shade(skin, 0.7));
+        for sign in [-1.0f32, 1.0] {
+            slab(m, &head, vec3(sign * 0.105, 0.15, -0.01), vec3(0.012, 0.03, 0.022), 1.0, 0.4, shade(skin, 0.92));
+        }
+    };
     match look {
         1 => {
-            plate(
-                m,
-                &head,
-                vec3(0.0, 0.27, -0.015),
-                vec3(0.154, 0.047, 0.16),
-                0.82,
-                shade(main, 0.8),
-            );
-            m.obox(
-                &head,
-                vec3(0.0, 0.242, 0.16),
-                vec3(0.125, 0.014, 0.065),
-                shade(main, 0.6),
-            );
-            m.obox(
-                &head,
-                vec3(0.0, 0.171, 0.13),
-                vec3(0.137, 0.037, 0.021),
-                metal,
-            );
-            for x in [-0.066f32, 0.066] {
-                m.obox(
-                    &head,
-                    vec3(x, 0.177, 0.153),
-                    vec3(0.05, 0.024, 0.006),
-                    tint([0.38, 0.57, 0.62], 0.06),
-                );
+            // Soft cap with a peak, goggles and a headset.
+            face(m);
+            slab(m, &head, vec3(0.0, 0.255, -0.01), vec3(0.128, 0.055, 0.135), 0.86, 0.45, shade(main, 0.75));
+            slab(m, &head, vec3(0.0, 0.225, 0.14), vec3(0.11, 0.012, 0.06), 0.9, 0.4, shade(main, 0.55));
+            slab(m, &head, vec3(0.0, 0.17, 0.12), vec3(0.122, 0.034, 0.02), 1.0, 0.4, metal);
+            for x in [-0.055f32, 0.055] {
+                slab(m, &head, vec3(x, 0.172, 0.138), vec3(0.042, 0.024, 0.008), 1.0, 0.4, tint([0.38, 0.62, 0.68], 0.25));
+            }
+            for sign in [-1.0f32, 1.0] {
+                slab(m, &head, vec3(sign * 0.125, 0.15, 0.0), vec3(0.025, 0.05, 0.05), 1.0, 0.45, metal);
             }
         }
         2 => {
-            plate(
-                m,
-                &head,
-                vec3(0.0, 0.165, 0.0),
-                vec3(0.175, 0.17, 0.18),
-                0.85,
-                armor,
-            );
-            plate(
-                m,
-                &head,
-                vec3(0.0, 0.285, -0.01),
-                vec3(0.17, 0.055, 0.175),
-                0.8,
-                main,
-            );
-            m.obox(
-                &head,
-                vec3(0.0, 0.185, 0.178),
-                vec3(0.129, 0.032, 0.012),
-                metal,
-            );
-            m.obox(
-                &head,
-                vec3(0.0, 0.19, 0.191),
-                vec3(0.105, 0.012, 0.004),
-                tint(tc, 0.15),
-            );
-            plate(
-                m,
-                &head,
-                vec3(0.0, 0.055, 0.15),
-                vec3(0.085, 0.055, 0.055),
-                0.8,
-                metal,
-            );
+            // Full-face helmet: a bigger shell, the visor wrapping round,
+            // a team crest.
+            slab(m, &head, vec3(0.0, 0.185, -0.015), vec3(0.172, 0.165, 0.18), 0.86, 0.5, armor);
+            slab(m, &head, vec3(0.0, 0.3, -0.03), vec3(0.13, 0.06, 0.14), 0.72, 0.5, shade(armor, 1.04));
+            slab(m, &head, vec3(0.0, 0.33, -0.03), vec3(0.04, 0.03, 0.15), 0.8, 0.4, main);
+            slab(m, &head, vec3(0.0, 0.16, 0.1), vec3(0.16, 0.07, 0.08), 1.0, 0.55, visor);
+            slab(m, &head, vec3(0.0, 0.17, 0.178), vec3(0.12, 0.015, 0.006), 1.0, 0.3, glass);
+            slab(m, &head, vec3(0.0, 0.06, 0.1), vec3(0.12, 0.055, 0.075), 1.12, 0.42, shade(armor, 0.86));
+            for sign in [-1.0f32, 1.0] {
+                slab(m, &head, vec3(sign * 0.175, 0.16, -0.02), vec3(0.022, 0.06, 0.06), 1.0, 0.45, metal);
+            }
         }
         3 => {
-            plate(
-                m,
-                &head,
-                vec3(0.0, 0.17, -0.035),
-                vec3(0.173, 0.18, 0.18),
-                0.77,
-                dark,
-            );
-            plate(
-                m,
-                &head,
-                vec3(0.0, 0.10, 0.13),
-                vec3(0.122, 0.07, 0.022),
-                1.05,
-                metal,
-            );
-            m.obox(
-                &head,
-                vec3(0.0, 0.197, 0.148),
-                vec3(0.109, 0.019, 0.006),
-                tint([0.5, 0.61, 0.65], 0.03),
-            );
+            // Hood and a mask with a faint eye slit.
+            slab(m, &head, vec3(0.0, 0.175, -0.03), vec3(0.165, 0.18, 0.175), 0.78, 0.45, dark);
+            slab(m, &head, vec3(0.0, 0.31, -0.08), vec3(0.09, 0.06, 0.1), 0.6, 0.45, shade(dark, 0.9));
+            slab(m, &head, vec3(0.0, 0.13, 0.115), vec3(0.115, 0.085, 0.035), 1.05, 0.42, metal);
+            slab(m, &head, vec3(0.0, 0.175, 0.152), vec3(0.085, 0.012, 0.004), 1.0, 0.3, tint(hot(tc, 0.2), 0.5));
+            slab(m, &head, vec3(0.0, 0.08, 0.15), vec3(0.05, 0.03, 0.01), 1.0, 0.4, shade(metal, 0.7));
         }
         4 => {
-            let tilt = head
-                * Mat4::from_translation(vec3(0.018, 0.275, 0.0))
-                * Mat4::from_rotation_z(-0.22);
-            plate(m, &tilt, Vec3::ZERO, vec3(0.181, 0.039, 0.166), 0.79, main);
-            m.obox(
-                &tilt,
-                vec3(0.09, 0.041, 0.09),
-                vec3(0.023, 0.021, 0.025),
-                hazard,
-            );
-            m.obox(
-                &head,
-                vec3(0.0, 0.079, 0.13),
-                vec3(0.058, 0.015, 0.012),
-                tint([0.55, 0.52, 0.46], 0.0),
-            );
+            // Bare head, a tilted beret with a brass badge.
+            face(m);
+            let tilt = head * Mat4::from_translation(vec3(0.02, 0.27, -0.005)) * Mat4::from_rotation_z(-0.22);
+            slab(m, &tilt, Vec3::ZERO, vec3(0.15, 0.035, 0.145), 0.82, 0.5, main);
+            slab(m, &tilt, vec3(-0.065, 0.02, 0.11), vec3(0.022, 0.022, 0.01), 1.0, 0.4, hazard);
+            slab(m, &head, vec3(0.0, 0.09, 0.128), vec3(0.06, 0.016, 0.012), 1.0, 0.4, tint([0.4, 0.37, 0.33], 0.0));
         }
         5 => {
-            plate(
-                m,
-                &head,
-                vec3(0.0, 0.265, 0.0),
-                vec3(0.163, 0.07, 0.163),
-                0.77,
-                hazard,
-            );
-            plate(
-                m,
-                &head,
-                vec3(0.0, 0.214, 0.025),
-                vec3(0.186, 0.012, 0.204),
-                1.0,
-                hazard,
-            );
-            m.obox(
-                &head,
-                vec3(0.0, 0.332, 0.0),
-                vec3(0.022, 0.012, 0.135),
-                shade(hazard, 0.7),
-            );
+            // Hard hat with a brim, respirator, ear defenders.
+            face(m);
+            slab(m, &head, vec3(0.0, 0.27, 0.0), vec3(0.15, 0.07, 0.155), 0.8, 0.45, hazard);
+            slab(m, &head, vec3(0.0, 0.22, 0.02), vec3(0.18, 0.012, 0.2), 1.0, 0.4, hazard);
+            slab(m, &head, vec3(0.0, 0.34, 0.0), vec3(0.025, 0.012, 0.13), 1.0, 0.4, shade(hazard, 0.7));
+            slab(m, &head, vec3(0.0, 0.08, 0.125), vec3(0.075, 0.05, 0.04), 0.9, 0.42, metal);
             for sign in [-1.0f32, 1.0] {
-                plate(
-                    m,
-                    &head,
-                    vec3(sign * 0.15, 0.135, -0.01),
-                    vec3(0.029, 0.063, 0.06),
-                    0.9,
-                    main,
-                );
+                slab(m, &head, vec3(sign * 0.05, 0.07, 0.165), vec3(0.025, 0.025, 0.02), 1.0, 0.45, shade(metal, 0.7));
+                slab(m, &head, vec3(sign * 0.13, 0.15, -0.01), vec3(0.03, 0.06, 0.06), 1.0, 0.45, main);
             }
         }
         _ => {
-            plate(
-                m,
-                &head,
-                vec3(0.0, 0.215, -0.015),
-                vec3(0.168, 0.115, 0.18),
-                0.75,
-                armor,
-            );
-            plate(
-                m,
-                &head,
-                vec3(0.0, 0.26, -0.025),
-                vec3(0.16, 0.065, 0.17),
-                0.78,
-                shade(main, 0.9),
-            );
-            m.obox(
-                &head,
-                vec3(0.0, 0.17, 0.158),
-                vec3(0.121, 0.048, 0.014),
-                metal,
-            );
-            m.obox(
-                &head,
-                vec3(0.0, 0.188, 0.174),
-                vec3(0.101, 0.022, 0.004),
-                tint([0.2, 0.28, 0.3], 0.0),
-            );
-            plate(
-                m,
-                &head,
-                vec3(0.0, 0.067, 0.131),
-                vec3(0.106, 0.05, 0.052),
-                0.9,
-                armor,
-            );
+            slab(m, &head, vec3(0.0, 0.175, -0.02), vec3(0.16, 0.15, 0.17), 0.84, 0.5, armor);
+            slab(m, &head, vec3(0.0, 0.29, -0.03), vec3(0.125, 0.06, 0.135), 0.72, 0.5, shade(armor, 1.04));
+            slab(m, &head, vec3(0.0, 0.165, 0.09), vec3(0.15, 0.043, 0.075), 1.0, 0.55, visor);
+            slab(m, &head, vec3(0.0, 0.167, 0.163), vec3(0.112, 0.013, 0.006), 1.0, 0.3, glass);
+            slab(m, &head, vec3(0.0, 0.075, 0.07), vec3(0.11, 0.05, 0.08), 1.12, 0.5, shade(armor, 0.88));
             for sign in [-1.0f32, 1.0] {
-                plate(
-                    m,
-                    &head,
-                    vec3(sign * 0.143, 0.123, -0.005),
-                    vec3(0.032, 0.08, 0.095),
-                    0.94,
-                    shade(armor, 0.85),
-                );
-                m.obox(
-                    &head,
-                    vec3(sign * 0.174, 0.15, -0.015),
-                    vec3(0.007, 0.033, 0.038),
-                    metal,
-                );
+                slab(m, &head, vec3(sign * 0.16, 0.15, -0.025), vec3(0.024, 0.055, 0.055), 1.0, 0.5, metal);
+                slab(m, &head, vec3(sign * 0.18, 0.15, -0.025), vec3(0.006, 0.028, 0.028), 1.0, 0.4, main);
             }
         }
     }
 
+    // ---- arms and gun ----
     // Third person, first person and the picker share exactly the same
     // gun. Hand targets come from that model rather than a generic rifle.
     let relaxed = (0.5 * sprint + 0.25 * air) * (1.0 - p.fire) * (1.0 - p.melee)
@@ -772,15 +614,7 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
         * Mat4::from_translation(vec3(if long { -0.135 } else { -0.12 }, -0.06, reach))
         * Mat4::from_rotation_y(std::f32::consts::PI)
         * Mat4::from_scale(Vec3::splat(GUN_SCALE));
-    gun_model_pose(
-        m,
-        p.wid,
-        p.team,
-        p.wskin,
-        body * gun,
-        p.reload_phase,
-        p.cycle,
-    );
+    gun_model_pose(m, p.wid, p.team, p.wskin, body * gun, p.reload_phase, p.cycle);
     let (mut grip, mut support) = gun_grips(p.wid);
     if long {
         // With the gun that far forward the off hand holds nearer the
@@ -804,35 +638,32 @@ pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: 
     if p.reload_phase >= 0.0 {
         let r = p.reload_phase.clamp(0.0, 1.0);
         let reach = smooth(0.03, 0.18, r) * (1.0 - smooth(0.72, 0.94, r));
-        let mag = gun.transform_point3(vec3(
-            0.0,
-            -0.20 - (r * std::f32::consts::PI).sin() * 0.12,
-            -0.04,
-        ));
+        let mag = gun.transform_point3(vec3(0.0, -0.20 - (r * std::f32::consts::PI).sin() * 0.12, -0.04));
         left_hand = left_hand.lerp(mag, reach);
     }
     for (sign, hand) in [(-1.0f32, right_hand), (1.0, left_hand)] {
         // The off shoulder rolls forward into a long gun.
-        let shoulder = vec3(sign * 0.285 * bulk, 1.34, if long && sign > 0.0 { 0.07 } else { 0.0 });
+        let shoulder = vec3(sign * 0.29 * bulk, 1.34, if long && sign > 0.0 { 0.07 } else { 0.0 });
         let elbow = joint(shoulder, hand, 0.29, 0.32, vec3(sign * 0.7, -1.0, 0.1));
-        segment(m, &body, shoulder, elbow, 0.078 * bulk, dark);
-        segment(
-            m,
-            &body,
-            elbow,
-            hand,
-            0.061 * bulk,
-            if look == 4 { skin } else { shade(dark, 0.9) },
-        );
-        plate(
-            m,
-            &body,
-            elbow + vec3(sign * 0.025, 0.0, -0.015),
-            vec3(0.065, 0.064, 0.065),
-            0.9,
-            armor,
-        );
-        plate(m, &body, hand, vec3(0.043, 0.046, 0.05), 0.9, glove);
+        segment(m, &body, shoulder, elbow, 0.078 * bulk, 1.1, dark);
+        if let Some((f, len)) = bone(&body, shoulder, elbow) {
+            // Upper-arm plate, hanging from under the shoulder plate.
+            if look != 4 {
+                slab(m, &f, vec3(0.0, -0.03, 0.0), vec3(0.084 * bulk, len * 0.28, 0.084 * bulk), 1.1, 0.45, armor);
+            }
+            slab(m, &f, vec3(0.0, -len * 0.5, -0.02), vec3(0.06, 0.06, 0.06), 1.0, 0.48, shade(armor, 0.88));
+        }
+        let rolled = look == 4;
+        segment(m, &body, elbow, hand, 0.064 * bulk, 1.12, if rolled { skin } else { shade(dark, 0.92) });
+        if let Some((f, len)) = bone(&body, elbow, hand) {
+            // Bracer over the forearm.
+            if rolled {
+                slab(m, &f, vec3(0.0, len * 0.42, 0.0), vec3(0.075 * bulk, 0.04, 0.075 * bulk), 1.0, 0.4, dark);
+            } else {
+                slab(m, &f, vec3(0.0, -0.02, 0.0), vec3(0.074 * bulk, len * 0.3, 0.074 * bulk), 1.12, 0.42, shade(armor, 0.96));
+            }
+        }
+        slab(m, &body, hand, vec3(0.046, 0.05, 0.055), 0.9, 0.42, glove);
     }
     if shield {
         let a = 0.25 + 0.15 * (time * 12.0).sin();
@@ -869,6 +700,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn plates_are_closed_and_face_outward() {
+        let mut m = Mesh::default();
+        let g = Mat4::from_rotation_y(0.7) * Mat4::from_translation(vec3(1.0, 2.0, 3.0));
+        let c = vec3(0.1, -0.2, 0.3);
+        slab(&mut m, &g, c, vec3(0.2, 0.05, 0.12), 0.8, 0.4, [1.0; 4]);
+        assert_eq!(m.triangles(), 6 * 2 + 12 * 2 + 8);
+        let centre = g.transform_point3(c);
+        for t in m.i.chunks(3) {
+            let (a, b, d) = (m.v[t[0] as usize], m.v[t[1] as usize], m.v[t[2] as usize]);
+            let mid = (Vec3::from_array(a.pos) + Vec3::from_array(b.pos) + Vec3::from_array(d.pos)) / 3.0;
+            assert!(Vec3::from_array(a.nrm).dot(mid - centre) > 0.0);
+        }
+    }
+
+    #[test]
     fn no_stock_is_buried_in_the_chest() {
         for wid in 0..ferrite_shared::sim::WEAPONS.len() as u8 {
             if ferrite_shared::sim::weapon_def(wid).arch == 4 {
@@ -890,13 +736,14 @@ mod tests {
     fn soldier_equipment_and_extreme_poses_have_valid_geometry() {
         let world = World::new(0xFE221);
         // Idle, sprint, strafe, crouch, slide, airborne, reload, fallen.
-        for look in 0..6 {
+        for look in 0..12 {
             for wid in [0, 1, 2, 4, 10, 16] {
                 for pose in 0..8 {
                     let mut p = PlayerView {
                         pos: world.points[2],
                         hp: 100,
                         skin: look,
+                        kit: look % 3,
                         wid,
                         flags: flag::GROUND,
                         pitch: if pose % 2 == 0 { 0.7 } else { -0.7 },
@@ -963,4 +810,3 @@ mod tests {
         }
     }
 }
-

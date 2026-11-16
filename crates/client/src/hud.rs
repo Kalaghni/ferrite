@@ -900,6 +900,11 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
         for (f, fl) in snap.flags.iter().enumerate() {
             let ours = f as u8 == app.my_team && !app.spectator;
             let mine = fl.state == 1 && fl.carrier == app.my_id && !app.spectator;
+            // Our flag at home stands where BRING IT HERE points; while we
+            // carry theirs that one marker says all there is to say.
+            if have_flag && ours && fl.state == 0 {
+                continue;
+            }
             // Carrying theirs: the marker that matters is our own stand.
             let (at, label) = if mine {
                 (app.world.points[ferrite_shared::FLAG_POINT[app.my_team as usize % 2]], "BRING IT HERE")
