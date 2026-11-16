@@ -626,7 +626,7 @@ mod tests {
                     .all(|x| x.is_finite())));
                 largest = largest.max(mesh.v.len());
                 assert!(
-                    mesh.v.len() < 4000,
+                    mesh.v.len() < 8000,
                     "{} {} attachment exceeds budget: {}",
                     weapon_def(wid).name,
                     SIGHT_NAMES[sight as usize],

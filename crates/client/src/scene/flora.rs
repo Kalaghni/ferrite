@@ -484,9 +484,9 @@ fn col3(c: [f32; 3], k: f32) -> Col {
     rgb(c[0] * k, c[1] * k, c[2] * k)
 }
 
-/// A lump of leaves: five-sided, lit from above, its top moving in the wind.
+/// A lump of leaves: seven-sided, lit from above, its top moving in the wind.
 fn blob(m: &mut Mesh, c: Vec3, r: Vec3, rot: f32, col: Col, ground: f32, sway: f32, k: u32) {
-    const N: usize = 5;
+    const N: usize = 7;
     let ring = |i: usize, rad: f32, y: f32, tw: f32| {
         let a = (i % N) as f32 / N as f32 * TAU + rot + tw;
         c + vec3(a.cos() * rad * r.x, y * r.y, a.sin() * rad * r.z)
@@ -499,23 +499,29 @@ fn blob(m: &mut Mesh, c: Vec3, r: Vec3, rot: f32, col: Col, ground: f32, sway: f
     };
     for i in 0..N {
         let j = 0.9 + 0.2 * hash01(i as u32, k);
-        let (u0, u1) = (ring(i, 0.68, 0.5, 0.3), ring(i + 1, 0.68, 0.5, 0.3));
-        let (m0, m1) = (ring(i, 1.0, -0.05, 0.0), ring(i + 1, 1.0, -0.05, 0.0));
+        let (u0, u1) = (ring(i, 0.58, 0.62, 0.3), ring(i + 1, 0.58, 0.62, 0.3));
+        let (s0, s1) = (ring(i, 0.92, 0.26, 0.15), ring(i + 1, 0.92, 0.26, 0.15));
+        let (m0, m1) = (ring(i, 1.0, -0.12, 0.0), ring(i + 1, 1.0, -0.12, 0.0));
         let (l0, l1) = (ring(i, 0.7, -0.62, -0.3), ring(i + 1, 0.7, -0.62, -0.3));
         face(m, u0, top, u1, 1.1 * j);
-        face(m, m0, u0, u1, 0.97 * j);
-        face(m, m0, u1, m1, 0.97 * j);
+        face(m, s0, u0, u1, 1.02 * j);
+        face(m, s0, u1, s1, 1.02 * j);
+        face(m, m0, s0, s1, 0.94 * j);
+        face(m, m0, s1, m1, 0.94 * j);
         face(m, l0, m0, m1, 0.8 * j);
         face(m, l0, m1, l1, 0.8 * j);
     }
 }
 
-/// One blade: a thin triangle rooted at `base`, its tip swaying.
+/// One blade: two thin triangles rooted at `base`, bending over towards
+/// its swaying tip.
 #[allow(clippy::too_many_arguments)]
 fn blade(m: &mut Mesh, base: Vec3, a: f32, h: f32, wd: f32, lean: f32, n: Vec3, col: Col) {
     let side = vec3(-a.sin(), 0.0, a.cos()) * wd;
     let tip = base + vec3(a.cos() * lean, h, a.sin() * lean);
-    m.tri_w([base - side, base + side, tip], n, [0.0, 0.0, h * 0.42], col);
+    let mid = base + vec3(a.cos() * lean * 0.28, h * 0.58, a.sin() * lean * 0.28) + side * 0.55;
+    m.tri_w([base - side, base + side, mid], n, [0.0, 0.0, h * 0.14], col);
+    m.tri_w([base - side, mid, tip], n, [0.0, h * 0.14, h * 0.42], shade(col, 1.07));
 }
 
 fn bush(m: &mut Mesh, p: Vec3, r: &mut Rng, pal: &[[f32; 3]; 3], scale: f32) {
@@ -1139,8 +1145,8 @@ mod tests {
             grow(&mut m, &w);
             let tris = finite(m);
             eprintln!("{}: {} foliage triangles", MAPS[map as usize].name, tris);
-            assert!(tris > 20_000, "{} is bare: {tris}", MAPS[map as usize].name);
-            assert!(tris < 420_000, "{} over budget: {tris}", MAPS[map as usize].name);
+            assert!(tris > 40_000, "{} is bare: {tris}", MAPS[map as usize].name);
+            assert!(tris < 840_000, "{} over budget: {tris}", MAPS[map as usize].name);
         }
     }
 

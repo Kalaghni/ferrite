@@ -1302,7 +1302,7 @@ mod tests {
         build(&mut mesh, &w);
         eprintln!("Slag static detail: {} triangles", mesh.triangles());
         assert!(
-            mesh.triangles() < 160_000,
+            mesh.triangles() < 320_000,
             "static cathedral triangle budget"
         );
         let mut vertices = 0;
@@ -1325,7 +1325,7 @@ mod tests {
             "furnace crowns should rise above the nave"
         );
         assert!(
-            vertices < 340_000,
+            vertices < 680_000,
             "static detail budget: {vertices} vertices"
         );
     }

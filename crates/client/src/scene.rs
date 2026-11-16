@@ -72,10 +72,25 @@ fn taper(m: &mut Mesh, min: Vec3, max: Vec3, bot: f32, top: f32, skew_bot: Vec3,
     m.corners(p, col);
 }
 
+/// A length of trunk: eight-sided, open at both ends (the ground and the
+/// crown hide them).
+#[allow(clippy::too_many_arguments)]
+fn bole(m: &mut Mesh, a: Vec3, ra: f32, b: Vec3, rb: f32, rot: f32, col: Col, seed: u32) {
+    const N: usize = 8;
+    let at = |k: usize, c: Vec3, r: f32| {
+        let ang = rot + (k % N) as f32 / N as f32 * std::f32::consts::TAU;
+        c + vec3(ang.cos() * r, 0.0, ang.sin() * r)
+    };
+    for k in 0..N {
+        let j = 0.92 + 0.16 * hash01(k as u32, seed);
+        m.quad(at(k, a, ra), at(k, b, rb), at(k + 1, b, rb), at(k + 1, a, ra), shade(col, j));
+    }
+}
+
 fn octa(m: &mut Mesh, c: Vec3, r: Vec3, rot: f32, col: Col) {
     let (s, co) = rot.sin_cos();
     let h = |a: f32, b: f32| c + vec3((a * co - b * s) * r.x, 0.0, (a * s + b * co) * r.z);
-    const N: usize = 7;
+    const N: usize = 10;
     let top = c + vec3(0.0, r.y, 0.0);
     let bot = c - vec3(0.0, r.y * 0.7, 0.0);
     let ring = |k: usize, rad: f32, y: f32, tw: f32| {
@@ -84,11 +99,13 @@ fn octa(m: &mut Mesh, c: Vec3, r: Vec3, rot: f32, col: Col) {
     };
     for k in 0..N {
         let j = 0.9 + 0.2 * hash01(k as u32, (r.x * 97.0) as u32);
-        let (u0, u1) = (ring(k, 0.72, r.y * 0.5, 0.2), ring(k + 1, 0.72, r.y * 0.5, 0.2));
-        let (m0, m1) = (ring(k, 1.0, 0.0, 0.0), ring(k + 1, 1.0, 0.0, 0.0));
+        let (u0, u1) = (ring(k, 0.62, r.y * 0.62, 0.2), ring(k + 1, 0.62, r.y * 0.62, 0.2));
+        let (s0, s1) = (ring(k, 0.93, r.y * 0.28, 0.1), ring(k + 1, 0.93, r.y * 0.28, 0.1));
+        let (m0, m1) = (ring(k, 1.0, -r.y * 0.08, 0.0), ring(k + 1, 1.0, -r.y * 0.08, 0.0));
         let (l0, l1) = (ring(k, 0.6, -r.y * 0.45, -0.2), ring(k + 1, 0.6, -r.y * 0.45, -0.2));
-        m.tri(u0, top, u1, shade(col, 1.06 * j));
-        m.quad(m0, u0, u1, m1, shade(col, 0.96 * j));
+        m.tri(u0, top, u1, shade(col, 1.08 * j));
+        m.quad(s0, u0, u1, s1, shade(col, 1.0 * j));
+        m.quad(m0, s0, s1, m1, shade(col, 0.93 * j));
         m.quad(l0, m0, m1, l1, shade(col, 0.84 * j));
         m.tri(l1, bot, l0, shade(col, 0.72));
     }
@@ -102,7 +119,13 @@ fn pyramid(m: &mut Mesh, base: Vec3, r: f32, h: f32, rot: f32, col: Col) {
         let a1 = rot + (k + 1) as f32 / n as f32 * std::f32::consts::TAU;
         let p0 = base + vec3(a0.cos() * r, 0.0, a0.sin() * r);
         let p1 = base + vec3(a1.cos() * r, 0.0, a1.sin() * r);
-        m.tri(p0, top, p1, shade(col, 0.9 + 0.2 * hash01(k as u32, (r * 100.0) as u32)));
+        // A shoulder part-way up: the boughs droop out from the stem
+        // instead of running straight to the tip.
+        let q0 = base + vec3(a0.cos() * r * 0.46, h * 0.42, a0.sin() * r * 0.46);
+        let q1 = base + vec3(a1.cos() * r * 0.46, h * 0.42, a1.sin() * r * 0.46);
+        let j = 0.9 + 0.2 * hash01(k as u32, (r * 100.0) as u32);
+        m.tri(q0, top, q1, shade(col, 1.04 * j));
+        m.quad(p0, q0, q1, p1, shade(col, 0.96 * j));
         m.tri(p1, base + vec3(0.0, h * 0.12, 0.0), p0, shade(col, 0.6));
     }
 }
@@ -157,11 +180,42 @@ pub fn shade_groups(w: &World) -> Vec<usize> {
 pub fn build_world(w: &World) -> Mesh {
     let mut m = Mesh::default();
     let seed = w.seed as u32;
-    let hp = |ix: usize, iz: usize| {
-        vec3(TER_X0 + ix as f32 * CELL, w.heights[iz * (TNX + 1) + ix], TER_Z0 + iz as f32 * CELL)
+    // The ground is drawn at twice the resolution the sim walks on. The new
+    // vertices follow a curve through the old ones, so slopes round off, but
+    // never leave the walked surface by more than `SMOOTH`: feet, grass and
+    // walls stay where the sim put them.
+    const SMOOTH: f32 = 0.05;
+    let smooth = if w.map == slag_cathedral::ID { 0.0 } else { SMOOTH }; // a cast floor stays flat
+    let hg = |ix: isize, iz: isize| {
+        w.heights[iz.clamp(0, TNZ as isize) as usize * (TNX + 1) + ix.clamp(0, TNX as isize) as usize]
     };
-    for iz in 0..TNZ {
-        for ix in 0..TNX {
+    let cr = |a: f32, b: f32, c: f32, d: f32| (-a + 9.0 * b + 9.0 * c - d) / 16.0;
+    let (fnx, fnz) = (TNX * 2, TNZ * 2);
+    let mut fine = Vec::with_capacity((fnx + 1) * (fnz + 1));
+    for fz in 0..=fnz {
+        for fx in 0..=fnx {
+            let (ix, iz) = ((fx / 2) as isize, (fz / 2) as isize);
+            let along_x = |z: isize| cr(hg(ix - 1, z), hg(ix, z), hg(ix + 1, z), hg(ix + 2, z));
+            let along_z = |x: isize| cr(hg(x, iz - 1), hg(x, iz), hg(x, iz + 1), hg(x, iz + 2));
+            // (curved, walked): the walked surface splits each cell along
+            // its (x+1, z)-(x, z+1) diagonal.
+            let (curved, walked) = match (fx % 2, fz % 2) {
+                (0, 0) => (hg(ix, iz), hg(ix, iz)),
+                (1, 0) => (along_x(iz), (hg(ix, iz) + hg(ix + 1, iz)) * 0.5),
+                (0, 1) => (along_z(ix), (hg(ix, iz) + hg(ix, iz + 1)) * 0.5),
+                _ => (
+                    cr(along_x(iz - 1), along_x(iz), along_x(iz + 1), along_x(iz + 2)),
+                    (hg(ix + 1, iz) + hg(ix, iz + 1)) * 0.5,
+                ),
+            };
+            fine.push(walked + (curved - walked).clamp(-smooth, smooth));
+        }
+    }
+    let hp = |fx: usize, fz: usize| {
+        vec3(TER_X0 + fx as f32 * CELL * 0.5, fine[fz * (fnx + 1) + fx], TER_Z0 + fz as f32 * CELL * 0.5)
+    };
+    for iz in 0..fnz {
+        for ix in 0..fnx {
             let (p00, p10, p01, p11) = (hp(ix, iz), hp(ix + 1, iz), hp(ix, iz + 1), hp(ix + 1, iz + 1));
             for (k, (a, b, c)) in [(p00, p01, p10), (p11, p10, p01)].into_iter().enumerate() {
                 let n = (b - a).cross(c - a).normalize();
@@ -259,8 +313,10 @@ fn tree(m: &mut Mesh, t: &Tree, i: usize) {
         let r = hash01(i as u32 / 2, 17) * std::f32::consts::TAU;
         let trunk = rgb(0.34, 0.25, 0.18);
         let th = t.height * 0.5;
-        taper(m, t.base + vec3(-0.3, -0.5, -0.3), t.base + vec3(0.3, th * 0.35, 0.3), 1.0, 0.7, Vec3::ZERO, Vec3::ZERO, trunk);
-        taper(m, t.base + vec3(-0.3, th * 0.35, -0.3), t.base + vec3(0.3, th, 0.3), 0.7, 0.5, Vec3::ZERO, vec3(r.cos(), 0.0, r.sin()) * 0.12, shade(trunk, 1.1));
+        let lean = vec3(r.cos(), 0.0, r.sin()) * 0.12;
+        let (foot, knee, head) = (t.base - vec3(0.0, 0.5, 0.0), t.base + vec3(0.0, th * 0.35, 0.0), t.base + vec3(0.0, th, 0.0) + lean);
+        bole(m, foot, 0.36, knee, 0.25, r, trunk, i as u32);
+        bole(m, knee, 0.25, head, 0.18, r, shade(trunk, 1.1), i as u32 + 7);
         if t.pine {
             let c = shade(rgb(0.17, 0.33, 0.25), 0.85 + 0.1 * t.tint as f32);
             for k in 0..4 {
@@ -321,7 +377,11 @@ fn build_ground_cover(m: &mut Mesh, w: &World) {
             let off = vec3(a.cos(), 0.0, a.sin()) * 0.12 * hash01(k, 40 + b);
             let wd = vec3(-a.sin(), 0.0, a.cos()) * 0.02;
             let tip = base + off + vec3(a.cos() * 0.08, hgt, a.sin() * 0.08);
-            m.tri_w([base + off - wd, base + off + wd, tip], n, [0.0, 0.0, hgt * 0.42], shade(col, 0.85 + 0.3 * hash01(k, 50 + b)));
+            // Two pieces, so the blade bends over instead of standing as a spike.
+            let (root, c) = (base + off, shade(col, 0.85 + 0.3 * hash01(k, 50 + b)));
+            let mid = root + vec3(a.cos() * 0.022, hgt * 0.58, a.sin() * 0.022) + wd * 0.55;
+            m.tri_w([root - wd, root + wd, mid], n, [0.0, 0.0, hgt * 0.14], c);
+            m.tri_w([root - wd, mid, tip], n, [0.0, hgt * 0.14, hgt * 0.42], shade(c, 1.07));
         }
     }
 }

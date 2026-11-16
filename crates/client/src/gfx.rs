@@ -28,6 +28,8 @@ pub fn shade(c: Col, k: f32) -> Col {
 const MAX_V: usize = 65000;
 /// Normals longer than this carry a wind-sway weight (see `Mesh::tri_w`).
 pub const SWAY_BASE: f32 = 2.0;
+/// How many facets each facet of a round shape (tube, lathe) is cut into.
+pub const ROUND: usize = 2;
 
 /// Colour of the light: direct sun, sky ambient, ground ambient.
 pub type Tone = [[f32; 3]; 3];
@@ -126,6 +128,9 @@ impl Mesh {
     /// it a hollow tube you can see through; `r1 == 0` is a solid rod.
     #[allow(clippy::too_many_arguments)]
     pub fn tube(&mut self, m: &Mat4, c: Vec3, r0: f32, r1: f32, half_len: f32, segs: usize, col: Col) {
+        // Callers give the count the art was drawn at; every tube is cut
+        // `ROUND` times as fine as that.
+        let segs = segs * ROUND;
         let tau = std::f32::consts::TAU;
         let nz = m.transform_vector3(Vec3::Z).normalize_or_zero();
         for k in 0..segs {

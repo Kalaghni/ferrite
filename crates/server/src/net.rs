@@ -93,14 +93,22 @@ pub fn spawn(cfg: Config) -> io::Result<ServerHandle> {
     let addr = sock.local_addr()?;
     let stop = Arc::new(AtomicBool::new(false));
     let s2 = stop.clone();
-    let thread = std::thread::Builder::new().name("ferrite-server".into()).spawn(move || run(cfg, sock, s2))?;
+    // The world and its navigation are built before returning, so the
+    // server answers as soon as the caller has its address. Built on the
+    // thread instead, a hello sent straight away waited out the build
+    // (over 100 ms in a debug build, far more on a busy machine).
+    let game = Game::new(cfg);
+    let thread = std::thread::Builder::new().name("ferrite-server".into()).spawn(move || serve(game, sock, s2))?;
     Ok(ServerHandle { addr, stop, thread: Some(thread) })
 }
 
 pub fn run(cfg: Config, sock: UdpSocket, stop: Arc<AtomicBool>) {
-    let log = cfg.log;
+    serve(Game::new(cfg), sock, stop)
+}
+
+fn serve(mut game: Game, sock: UdpSocket, stop: Arc<AtomicBool>) {
+    let log = game.cfg.log;
     sock.set_nonblocking(true).expect("nonblocking socket");
-    let mut game = Game::new(cfg);
     let mut conns: HashMap<SocketAddr, Conn> = HashMap::new();
     let instance = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32) ^ std::process::id();
     let game_port = sock.local_addr().map(|a| a.port()).unwrap_or(game.cfg.port);
