@@ -259,6 +259,7 @@ pub fn build_world_profiled(w: &World) -> (Mesh, Profile) {
     meter.mark(&mut prof, &m, "terrain");
     const CONTAINER: [[f32; 3]; 4] = [[0.66, 0.27, 0.16], [0.18, 0.46, 0.48], [0.80, 0.60, 0.18], [0.34, 0.38, 0.47]];
     let groups = shade_groups(w);
+    let drawn_elsewhere = spillway::owned(w);
     for (i, b) in w.blocks.iter().enumerate() {
         // Breakable route pieces and cabinets are drawn from the current mask
         // every frame, just like crates; none can survive in the static mesh.
@@ -276,7 +277,7 @@ pub fn build_world_profiled(w: &World) -> (Mesh, Profile) {
             meter.mark(&mut prof, &m, "slag cathedral");
             continue;
         }
-        if w.map == relay::ID && relay::owns(b) {
+        if (w.map == relay::ID && relay::owns(b)) || drawn_elsewhere.get(i).copied().unwrap_or(false) {
             continue;
         }
         let j = 0.9 + 0.2 * hash01(g as u32, 91);
@@ -372,6 +373,8 @@ pub fn build_world_profiled(w: &World) -> (Mesh, Profile) {
     }
     landmarks::build(&mut m, w);
     meter.mark(&mut prof, &m, "landmarks");
+    spillway::build(&mut m, w);
+    meter.mark(&mut prof, &m, "spillway deck");
     tunnels::build(&mut m, w);
     meter.mark(&mut prof, &m, "tunnels");
     fallen_giant::build(&mut m, w);
@@ -743,6 +746,8 @@ pub fn beacons_profiled(
     mark(m, alpha, add, "fallen giant");
     monuments::atmosphere(m, alpha, add, w, time);
     mark(m, alpha, add, "monuments");
+    spillway::atmosphere(m, alpha, add, w, time);
+    mark(m, alpha, add, "spillway flood");
     for (k, &(owner, progress, contested)) in owners.iter().enumerate() {
         if owner == 255 {
             continue;
@@ -778,7 +783,7 @@ pub fn beacons_profiled(
             let a1 = (s + 1) as f32 / segs as f32 * std::f32::consts::TAU;
             let p = |a: f32, r: f32| {
                 let (x, z) = (c.x + a.cos() * r, c.z + a.sin() * r);
-                vec3(x, w.height(x, z) + 0.08, z)
+                vec3(x, w.walk_height(x, z) + 0.08, z)
             };
             let col = [oc[0], oc[1], oc[2], 0.6 * pulse];
             alpha.quad(p(a0, POINT_RADIUS - 0.4), p(a0, POINT_RADIUS), p(a1, POINT_RADIUS), p(a1, POINT_RADIUS - 0.4), col);
@@ -839,5 +844,7 @@ mod relay;
 mod slag_cathedral;
 #[path = "scene/special_landmarks.rs"]
 mod special_landmarks;
+#[path = "scene/spillway.rs"]
+pub mod spillway;
 #[path = "scene/tunnels.rs"]
 mod tunnels;

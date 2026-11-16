@@ -1466,9 +1466,9 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
 
     // ---- capture panel ----
     if playing || app.spectator {
-        for (k, p) in app.world.points.iter().enumerate() {
-            let d = *p - my_pos;
-            if d.x * d.x + d.z * d.z > POINT_RADIUS * POINT_RADIUS || !point_used(snap.mode, k) {
+        for k in 0..app.world.points.len() {
+            // The server's rule: on Spillway's gate deck, not under it.
+            if !app.world.on_point(k, my_pos) || !point_used(snap.mode, k) {
                 continue;
             }
             let pt = &snap.points[k];

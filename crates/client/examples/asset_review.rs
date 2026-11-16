@@ -9,6 +9,8 @@
 //! Ridgeline aircraft views: wreck / cargo / tail.
 //! Monument views: foundry viaduct / train / crossing, quarry excavator /
 //! bucket / dragline, spillway dam / gates / crest.
+//! Spillway's gate deck: platform / outfall / channel / deck; give a fourth
+//! argument in a flooding window (220 to 275 for this seed) to see the water.
 //! A fourth argument freezes machinery and wind at that second.
 //! A fifth argument selects a destruction mask (decimal/0xhex), or "broken"
 //! to show all designated map features in their destroyed state.
@@ -179,7 +181,7 @@ async fn main() {
             );
         }
         let aspect = mq::screen_width() / mq::screen_height();
-        let monument = if gallery { None } else { scene::monuments::review_view(&w, pose) };
+        let monument = if gallery { None } else { scene::monuments::review_view(&w, pose).or_else(|| scene::spillway::view(&w, pose)) };
         let (eye, target) = if models {
             (vec3(2.7, 5.0, 13.0), vec3(0.0, 0.6, 0.0))
         } else if let Some(view) = monument {

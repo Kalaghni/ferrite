@@ -2599,6 +2599,14 @@ async fn play(
                 };
                 app.audio.play_at(sfx, at, eye, vol, reach);
             }
+            // Spillway's sluice gates and the water they let out.
+            for (cue, at, loud) in scene::spillway::cues(&app.world, cue_clock, world_t) {
+                let (sfx, vol, reach) = match cue {
+                    scene::spillway::Cue::Clank => (Sfx::Clank, 0.45, 60.0),
+                    scene::spillway::Cue::Rush => (Sfx::Rush, 0.3 * loud, 55.0),
+                };
+                app.audio.play_at(sfx, at, eye, vol, reach);
+            }
         }
         cue_clock = world_t;
         for v in app.views.iter().chain(&cast_views) {

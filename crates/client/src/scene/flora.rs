@@ -768,7 +768,9 @@ fn moss(m: &mut Mesh, b: &Block, i: usize, r: &mut Rng) {
 pub fn grow(m: &mut Mesh, w: &World) {
     let Some(b) = BIOMES.get(w.map as usize) else { return };
     let seed = (w.seed as u32) ^ 0xF10A;
-    let low = w.points.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+    // The ground under each objective, not the objective: Spillway's C stands
+    // on a deck over the channel.
+    let low = w.points.iter().map(|p| w.height(p.x, p.z)).fold(f32::MAX, f32::min);
     let f = Field { w, occ: Occ::new(w, 0.35), low };
     let rng_for = |salt: u32, k: usize| Rng::new(((seed ^ salt) as u64) << 20 | k as u64);
     let relay = w.map == super::relay::ID;
@@ -1072,7 +1074,7 @@ pub fn ambience(opaque: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, 
     // They fade out near the eye so walking through one never pops.
     if md.mist.0 > 0.0 {
         const STEP: f32 = 15.0;
-        let low = w.points.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+        let low = w.points.iter().map(|p| w.height(p.x, p.z)).fold(f32::MAX, f32::min);
         let (x0, z0) = ((eye.x / STEP).floor() as i32, (eye.z / STEP).floor() as i32);
         for gz in z0 - 9..=z0 + 9 {
             for gx in x0 - 9..=x0 + 9 {

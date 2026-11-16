@@ -10,7 +10,7 @@ The map expansion gives the four oldest battlefields authored places to fight th
 | Quarry | Site workshops and an underground mine: an adit in the terrace wall, a timbered drift with rails and lamps under the second terrace and the headframe, and a long incline up to daylight | An 18-metre headframe, winding wheels, moving skips and ore dust; the Titan Excavator over the pit |
 | Ridgeline | Ranger lodges, a bending natural cave through the ridge and the Fallen Giant's walkable cargo hold across C | Huge cargo-aircraft wreck, tail above the pines, emergency beacon, rattling panels and wind turbines |
 | Depot | Dispatch warehouses and open-ended container passages | A 52-metre-wide gantry, 27-metre supporting towers, traveling trolley, suspended container spreader and warning beacons |
-| Spillway | Existing pump halls, floodgate walls and the sunken channel | The Great Dam beyond the north fence |
+| Spillway | Pump halls, and the gate deck at C over a channel that floods ([spillway.md](spillway.md)) | The Great Dam beyond the north fence |
 | Relay | Existing climbable signal towers and listening station | One giant cellular backbone beyond the boundary, with antenna crowns, service rings, scanner and aviation lights |
 | Slag Cathedral | Existing casting nave, furnace courts and galleries | A distant volcanic caldera with lava seams, smoke and occasional eruptions |
 
@@ -24,7 +24,7 @@ Three giants give Foundry Valley, Quarry and Spillway a skyline. They live in `c
 | --- | --- | --- | --- |
 | Foundry Valley | The Broken Viaduct: a riveted lattice arch 232 m between footings, carrying the ore line 44 m over C, with braced trestle towers and stone abutments into the hills | Along x = 0 from ridge to ridge. The north approach span (z 127 to 145) has fallen onto the slope beyond the fence | The hanging engine and its tender sway with the wind; a signal lamp dangles under the lip and blinks red. The tender creaks at the end of most swings |
 | Quarry | The Titan Excavator: a walking dragline with a 172 m lattice boom, A-frame, pendants, walking shoes and a bucket bigger than the haul truck parked by its tub | Tub on the south ridge at z = -146; the boom reaches north over the terraces and the bucket hangs about 33 m above the pit floor north of C | In most 80-second windows the house slews a few degrees out and back; the bucket swings on its ropes and sheds dust. Ropes groan when it slews and now and then as it swings |
-| Spillway | The Great Dam: a 66 m concrete gravity dam with five steel floodgates, a hoist bridge with a travelling maintenance gantry, two powerhouses with penstocks, and rock shoulders holding the reservoir | Beyond the north fence, z 113 to 137, facing the overcast sun | Water weeps from the gate seals down the chute; spray rises off the stilling basin; turbine-hall lights pulse. In about half of the 90-second windows the sirens are tested for 14 seconds, with turning amber beacons |
+| Spillway | The Great Dam: a 66 m concrete gravity dam with five steel floodgates, a hoist bridge with a travelling maintenance gantry, two powerhouses with penstocks, and rock shoulders holding the reservoir | Beyond the north fence, z 113 to 137, facing the overcast sun | Water weeps from the gate seals down the chute; spray rises off the stilling basin; turbine-hall lights pulse. In about half of the 90-second windows the sirens are tested for 14 seconds, with turning amber beacons; then the middle gate lifts and the reservoir pours down its bay of the chute until the release ends |
 
 All motion and every sound cue is a pure function of the world seed and the visual clock passed to `atmosphere`, so clients sharing a clock see and hear the same thing. The sounds are synthesised like the Fallen Giant's rattle and play positionally at the effects volume.
 
@@ -70,7 +70,7 @@ target/release/examples/asset_review spillway gates.png gates 214
 target/release/examples/asset_review spillway crest.png crest 214
 ```
 
-With seed `0xFE221`, second 214 falls inside a siren test.
+With seed `0xFE221`, second 214 falls inside a siren test, and second 240 shows the middle gate lifted during the release. Views of the gate deck and the flood are in [spillway.md](spillway.md).
 
 `workshop`, `interior`, `passage`, `landmark`, `breach` and `walkway` provide close views on the original four maps; on Quarry and Ridgeline `portal`, `tunnel` and `exit` look at the underground route. Existing Cathedral views remain available. A six-number `eyeX,eyeY,eyeZ,targetX,targetY,targetZ` camera can be supplied instead. The fourth argument freezes animation, including wind; seed `0xFE221` at second 33 shows an active eruption. The fifth accepts `broken` for all structural features or a decimal/hexadecimal destruction mask for an individual state.
 

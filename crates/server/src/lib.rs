@@ -10,7 +10,7 @@ use ferrite_shared::map::{self, Nav, World};
 use ferrite_shared::proto::*;
 use ferrite_shared::rng::Rng;
 use ferrite_shared::sim::{self, PState, GRENADE_WEAPON};
-use ferrite_shared::{eligible, mode, vec3, Vec3, DT, FLAG_POINT, NEUTRAL, NUM_POINTS, POINT_RADIUS, TICK_HZ};
+use ferrite_shared::{eligible, mode, vec3, Vec3, DT, FLAG_POINT, NEUTRAL, NUM_POINTS, TICK_HZ};
 
 pub use net::{run, spawn, ServerHandle, CONNS_PER_IP, MAX_CONNS, RECV_PER_ADDR, RECV_PER_TICK};
 
@@ -1262,10 +1262,12 @@ impl Game {
             // Uniform over the ring's area, not bunched at its middle.
             let r = (r0 * r0 + self.rng.f32() * (r1 * r1 - r0 * r0)).sqrt();
             let (x, z) = (anchor.x + a.cos() * r, anchor.z + a.sin() * r);
-            if self.nav.is_blocked(x, z) || self.world.danger(vec3(x, self.world.height(x, z), z), 1.0) {
+            // On Spillway's gate deck, on the deck, not the channel under it.
+            let g = self.world.walk_height(x, z);
+            if self.nav.is_blocked(x, z) || self.world.danger(vec3(x, g, z), 1.0) {
                 continue;
             }
-            let p = vec3(x, self.world.height(x, z) + 0.05, z);
+            let p = vec3(x, g + 0.05, z);
             let mut score = 0.0f32;
             let (mut friend, mut foe) = (14.0f32, 40.0f32);
             for (j, q) in self.players.iter().enumerate() {
@@ -1532,11 +1534,9 @@ impl Game {
             _ => 0..0,
         };
         for k in live {
-            let c = self.world.points[k];
             let mut n = [0u8; 2];
             for p in self.players.iter().filter(|p| p.alive) {
-                let d = p.st.pos - c;
-                if d.x * d.x + d.z * d.z < POINT_RADIUS * POINT_RADIUS && d.y.abs() < 7.0 {
+                if self.world.on_point(k, p.st.pos) {
                     n[p.team as usize] += 1;
                 }
             }
@@ -1570,8 +1570,7 @@ impl Game {
                 pt.owner = NEUTRAL;
                 self.feed.push(Feed::Neutralized { point: k as u8, by });
                 for p in self.players.iter_mut().filter(|p| p.team == by && p.alive) {
-                    let d = p.st.pos - c;
-                    if d.x * d.x + d.z * d.z < POINT_RADIUS * POINT_RADIUS {
+                    if self.world.on_point(k, p.st.pos) {
                         p.score += 75;
                     }
                 }
@@ -1585,8 +1584,7 @@ impl Game {
                 // Surge: the capturing team gets a short burst of momentum.
                 for p in self.players.iter_mut().filter(|p| p.team == team && p.alive) {
                     p.surge_until = t + 8 * TICK_HZ;
-                    let d = p.st.pos - c;
-                    if d.x * d.x + d.z * d.z < POINT_RADIUS * POINT_RADIUS {
+                    if self.world.on_point(k, p.st.pos) {
                         p.score += 200;
                     }
                 }

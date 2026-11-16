@@ -84,7 +84,7 @@ pub static MAPS: [MapDef; 7] = [
     },
     MapDef {
         name: "SPILLWAY",
-        blurb: "Drained waterworks - floodgates, pump halls and a sunken channel",
+        blurb: "Waterworks under a dam - a gate deck over a channel that floods",
         points: [(-114.0, -27.0), (-54.0, 30.0), (0.0, 0.0), (54.0, -30.0), (114.0, 27.0)],
         bases: BASES_XZ,
         ground: [[0.43, 0.47, 0.40], [0.57, 0.55, 0.46], [0.49, 0.50, 0.47]],
@@ -468,6 +468,52 @@ impl World {
         [(0.0, 0.0), (margin, 0.0), (-margin, 0.0), (0.0, margin), (0.0, -margin)]
             .iter()
             .any(|&(dx, dz)| self.water(p.x + dx, p.z + dz).is_some_and(|y| p.y < y - spillway::WADE))
+    }
+
+    /// Whether Spillway's channel is flooding or about to (from the siren
+    /// until it has drained): while it is, bots route round the water.
+    pub fn flooding(&self) -> bool {
+        if self.map != spillway::MAP_ID {
+            return false;
+        }
+        let f = crate::events::flood(self.seed, self.clock);
+        crate::events::siren(self.seed, self.clock).is_some() || f.gates > 0.0 || f.level > 0.0
+    }
+
+    /// The surface someone walking at (x, z) stands on: the ground, or a
+    /// walkway over it (Spillway's gate deck, its bridges and stairs).
+    pub fn walk_height(&self, x: f32, z: f32) -> f32 {
+        if self.map == spillway::MAP_ID {
+            if let Some(y) = spillway::walkway(self, x, z) {
+                return y;
+            }
+        }
+        self.height(x, z)
+    }
+
+    /// Whether someone whose feet are at `pos` counts toward holding
+    /// objective `k`. Spillway's C counts the gate deck, not the channel
+    /// floor under it.
+    pub fn on_point(&self, k: usize, pos: Vec3) -> bool {
+        let d = pos - self.points[k];
+        if d.x * d.x + d.z * d.z >= crate::POINT_RADIUS * crate::POINT_RADIUS {
+            return false;
+        }
+        if self.map == spillway::MAP_ID && k == crate::NUM_POINTS / 2 {
+            spillway::on_deck(self, pos)
+        } else {
+            d.y.abs() < 7.0
+        }
+    }
+
+    /// The direction a walker at `pos` can go when it wants `want`: out from
+    /// under Spillway's deck (the bots' flow field describes the deck), and
+    /// along a tunnel underground. Unchanged anywhere else.
+    pub fn walk_steer(&self, pos: Vec3, want: Vec2) -> Vec2 {
+        if self.map == spillway::MAP_ID {
+            return spillway::steer(self, pos, want);
+        }
+        self.tunnel_steer(pos, want)
     }
 
     #[inline]
@@ -1387,17 +1433,10 @@ impl World {
         }
         self.crates(rng, -33.5 + ox, 17.5 + oz, 3);
 
-        // C: a lifted floodgate over the dry channel. Its two piers and
-        // winding machinery form the silhouette; all three ground routes
-        // remain open. Nothing occupies the capture point itself.
-        let gate = self.height(0.0, 0.0) + 7.8;
-        for z in [-11.0f32 * SPREAD, 11.0 * SPREAD] {
-            self.add_abs(0.0, z, 2.0, 1.3, self.height(0.0, z) - 0.6, gate, Concrete, 1);
-            self.add_abs(0.0, z, 2.3, 1.55, gate, gate + 0.5, Concrete, 2);
-            self.add_abs(0.0, z, 1.1, 1.0, gate + 0.5, gate + 1.4, Metal, 1);
-        }
-        self.add_abs(0.0, 0.0, 1.7, 11.0 * SPREAD + 1.6, gate - 0.4, gate + 0.25, Metal, 0);
-        self.add_abs(0.0, 0.0, 0.35, 9.8 * SPREAD, gate - 2.3, gate - 0.4, Metal, 1);
+        // C: the gate deck over the channel, above the flood, built last
+        // (see `spillway`). A low wall, sandbags and crates on the channel
+        // floor under it.
+        let stand_ins = spillway::reserve(self);
         self.sym(-6.0, -3.6, 0.4, 2.4, 0.0, 1.05, Concrete, 2);
         self.sym(-11.0, 4.5, 2.1, 0.4, 0.0, 1.05, Sandbag, 0);
         self.crates(rng, -9.0, -6.5, 3);
@@ -1433,6 +1472,7 @@ impl World {
         self.lane_cover(rng, 7, 13.0);
         self.boulders(rng, 26, 0.7, 1.3);
         self.forest(rng, 40, 205, 0.45);
+        spillway::build(self, stand_ins);
     }
 
     // ------------------------------------------------------------- Relay
@@ -1607,6 +1647,29 @@ pub struct Nav {
     pub h: usize,
     pub blocked: Vec<bool>,
     fields: Vec<Vec<u8>>,
+    /// Where a map has walkways over the ground (Spillway's gate deck), the
+    /// surface walked on in each cell and which cells are walkway. A route
+    /// never steps between a walkway and anything a metre above or below
+    /// it, so walkways are only joined where they meet the ground or each
+    /// other. Empty on other maps.
+    ground: Vec<f32>,
+    raised: Vec<bool>,
+    /// Spillway: routes that keep out of the channel where a full flood
+    /// would be deep, used while it floods. Empty on other maps.
+    wet: Vec<Vec<u8>>,
+}
+
+fn near_blocked(blocked: &[bool], w: usize, h: usize) -> Vec<bool> {
+    let mut near = vec![false; w * h];
+    for cz in 0..h as i32 {
+        for cx in 0..w as i32 {
+            near[cz as usize * w + cx as usize] = DIRS.iter().any(|&(dx, dz)| {
+                let (nx, nz) = (cx + dx, cz + dz);
+                nx >= 0 && nz >= 0 && nx < w as i32 && nz < h as i32 && blocked[nz as usize * w + nx as usize]
+            });
+        }
+    }
+    near
 }
 
 impl Nav {
@@ -1620,11 +1683,13 @@ impl Nav {
         let h = (2.0 * HALF_Z / NAV_CELL).ceil() as usize;
         let mut blocked = vec![false; w * h];
         let mut ground = vec![0.0; w * h];
+        let mut raised = vec![false; w * h];
         for cz in 0..h {
             for cx in 0..w {
                 let x = -HALF_X + (cx as f32 + 0.5) * NAV_CELL;
                 let z = -HALF_Z + (cz as f32 + 0.5) * NAV_CELL;
-                ground[cz * w + cx] = world.height(x, z);
+                ground[cz * w + cx] = world.walk_height(x, z);
+                raised[cz * w + cx] = world.map == spillway::MAP_ID && spillway::walkway(world, x, z).is_some();
                 blocked[cz * w + cx] = world.lava_fixed(x, z, 0.9); // bots take the bridges
             }
         }
@@ -1660,16 +1725,10 @@ impl Nav {
                 }
             }
         }
-        let mut near = vec![false; w * h];
-        for cz in 0..h as i32 {
-            for cx in 0..w as i32 {
-                near[cz as usize * w + cx as usize] = DIRS.iter().any(|&(dx, dz)| {
-                    let (nx, nz) = (cx + dx, cz + dz);
-                    nx >= 0 && nz >= 0 && nx < w as i32 && nz < h as i32 && blocked[nz as usize * w + nx as usize]
-                });
-            }
-        }
-        let mut nav = Nav { w, h, blocked, fields: Vec::new() };
+        let near = near_blocked(&blocked, w, h);
+        let walkways = raised.iter().any(|&r| r);
+        let (ground, raised) = if walkways { (ground, raised) } else { (Vec::new(), Vec::new()) };
+        let mut nav = Nav { w, h, blocked, fields: Vec::new(), ground, raised, wet: Vec::new() };
         let changed_features = world.features.iter().any(|f| dmask & (1u64 << f.bit) != 0);
         let workers = if changed_features { std::thread::available_parallelism().map_or(1, |n| n.get().min(4)) } else { 1 };
         let compute = |job: usize| {
@@ -1701,7 +1760,35 @@ impl Nav {
             });
             nav.fields = fields;
         }
+        if world.map == spillway::MAP_ID {
+            // Flood routes: the channel is as good as a wall where a full
+            // flood would be deep, so bots cross by the deck and keep to the
+            // banks; one caught in the water takes the shortest way out.
+            let wet: Vec<bool> = (0..w * h)
+                .map(|cell| {
+                    let c = nav.center(cell % w, cell / w);
+                    nav.blocked[cell]
+                        || (!nav.raised.get(cell).copied().unwrap_or(false)
+                            && spillway::water_surface(world, c.x, c.y, spillway::FULL)
+                                .is_some_and(|s| world.height(c.x, c.y) < s - spillway::WADE))
+                })
+                .collect();
+            let near = near_blocked(&wet, w, h);
+            nav.wet = (0..NAV_GOALS * NAV_LANES)
+                .map(|job| {
+                    let goal = job / NAV_LANES;
+                    let gp = if goal < 5 { world.points[goal] } else { world.bases[goal - 5] };
+                    nav.field_on(&wet, gp.x, gp.z, job % NAV_LANES, &near)
+                })
+                .collect();
+        }
         nav
+    }
+
+    /// Whether a route may not step between cells `a` and `b`: one is a
+    /// walkway and the other is more than a metre above or below it.
+    fn cliff(&self, a: usize, b: usize) -> bool {
+        !self.raised.is_empty() && (self.raised[a] || self.raised[b]) && (self.ground[a] - self.ground[b]).abs() > 1.0
     }
 
     pub fn cell(&self, x: f32, z: f32) -> (usize, usize) {
@@ -1723,7 +1810,16 @@ impl Nav {
     }
 
     fn field(&self, gx: f32, gz: f32, lane: usize, near: &[bool]) -> Vec<u8> {
+        self.field_on(&self.blocked, gx, gz, lane, near)
+    }
+
+    fn field_on(&self, blocked: &[bool], gx: f32, gz: f32, lane: usize, near: &[bool]) -> Vec<u8> {
         let (w, h) = (self.w, self.h);
+        // No stepping off a walkway, nor cutting a corner past its edge.
+        let apart = |c: usize, nx: usize, nz: usize, k: usize| {
+            let (cx, cz) = (c % w, c / w);
+            self.cliff(c, nz * w + nx) || (k >= 4 && (self.cliff(c, cz * w + nx) || self.cliff(c, nz * w + cx)))
+        };
         let mut dist = vec![u32::MAX; w * h];
         let mut heap = BinaryHeap::new();
         let (sx, sz) = self.cell(gx, gz);
@@ -1740,8 +1836,11 @@ impl Nav {
                 }
                 let (nx, nz) = (nx as usize, nz as usize);
                 let ni = nz * w + nx;
-                if k >= 4 && (self.blocked[cz * w + nx] || self.blocked[nz * w + cx]) {
+                if k >= 4 && (blocked[cz * w + nx] || blocked[nz * w + cx]) {
                     continue; // no cutting corners
+                }
+                if apart(cz * w + cx, nx, nz, k) {
+                    continue;
                 }
                 let z = -HALF_Z + (nz as f32 + 0.5) * NAV_CELL;
                 let lane_cost = match lane {
@@ -1750,7 +1849,7 @@ impl Nav {
                     _ => 1.0,
                 };
                 let mut c = if k >= 4 { 141.0 } else { 100.0 } * lane_cost;
-                if self.blocked[ni] {
+                if blocked[ni] {
                     c *= 150.0;
                 } else if near[ni] {
                     c *= 1.7;
@@ -1772,7 +1871,10 @@ impl Nav {
                         continue;
                     }
                     let (nx, nz) = (nx as usize, nz as usize);
-                    if k >= 4 && (self.blocked[cz * w + nx] || self.blocked[nz * w + cx]) {
+                    if k >= 4 && (blocked[cz * w + nx] || blocked[nz * w + cx]) {
+                        continue;
+                    }
+                    if apart(cz * w + cx, nx, nz, k) {
                         continue;
                     }
                     if dist[nz * w + nx] < best {
@@ -1788,8 +1890,17 @@ impl Nav {
     /// Unit XZ direction to walk from (x, z) toward `goal`. Looks a few
     /// cells ahead along the field so paths are smooth, not 8-way staircase.
     pub fn dir(&self, goal: usize, lane: usize, x: f32, z: f32) -> Vec2 {
-        let f = &self.fields[goal * NAV_LANES + lane % NAV_LANES];
+        self.dir_in(false, goal, lane, x, z)
+    }
+
+    /// As `dir`, on the routes round flood water while `flooding` (see
+    /// `World::flooding`).
+    pub fn dir_in(&self, flooding: bool, goal: usize, lane: usize, x: f32, z: f32) -> Vec2 {
+        let set = if flooding && !self.wet.is_empty() { &self.wet } else { &self.fields };
+        let f = &set[goal * NAV_LANES + lane % NAV_LANES];
         let (mut cx, mut cz) = self.cell(x, z);
+        let layer = |cx: usize, cz: usize| self.raised.get(cz * self.w + cx).copied().unwrap_or(false);
+        let start = layer(cx, cz);
         for _ in 0..3 {
             let k = f[cz * self.w + cx];
             if k >= 8 {
@@ -1797,6 +1908,11 @@ impl Nav {
             }
             cx = (cx as i32 + DIRS[k as usize].0) as usize;
             cz = (cz as i32 + DIRS[k as usize].1) as usize;
+            // Aim at the first cell on or off a walkway, not past it: a
+            // straight line beyond would cut across its edge.
+            if layer(cx, cz) != start {
+                break;
+            }
         }
         (self.center(cx, cz) - vec2(x, z)).normalize_or_zero()
     }
@@ -1838,7 +1954,7 @@ mod tests {
         0x3b49936209c2b08f,
         0x3445e849b5f38255,
         0x57c62f6f2f7b39da,
-        0x9add6dc3e14285f4,
+        0xcb1a2501a121ed4e,
         0xf1134b5f6ab0c68f,
         0xa4522d55ba21aae2,
     ];
@@ -1847,7 +1963,7 @@ mod tests {
         0x38841009e290d9e0,
         0xe88f753d78825fa3,
         0x57246f9b0a5621e4,
-        0x4b79a71339bec22c,
+        0x565ba0334f8c8517,
         0x378a3fde022bcd47,
         0xa89dded116c53bbc,
     ];
@@ -1934,7 +2050,7 @@ mod tests {
                     for cz in 0..nav.h {
                         for cx in 0..nav.w {
                             let p = nav.center(cx, cz);
-                            let g = world.height(p.x, p.y);
+                            let g = world.walk_height(p.x, p.y);
                             let reference = world.lava(p.x, p.y, 0.9)
                                 || world.blocks.iter().enumerate().any(|(i, b)| {
                                     world.solid(i, mask)
