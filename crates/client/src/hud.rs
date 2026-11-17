@@ -449,7 +449,7 @@ impl LobbyHead {
         let k = crate::ui::art_scale(w, h);
         let (lx, ly, lw) = crate::ui::LOBBY_LOGO;
         let logo_right = (lx + lw) * k;
-        let logo_bottom = (ly + lw * 316.0 / 1634.0) * k;
+        let logo_bottom = (ly + lw * crate::ui::WORDMARK_ASPECT) * k;
         let top = ly * k;
         let bottom = logo_bottom.max(top + Self::TEXT_H) + 14.0;
         LobbyHead { x0, pw, hx: (logo_right + 30.0).max(x0), top, bottom, cards: bottom + 16.0 }
@@ -759,7 +759,7 @@ fn draw_pause(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
 
     // ---- left: match control ----
     let x = 62.0 * k;
-    pic(&app.art.wordmark, 52.0 * k, 30.0 * k, 330.0 * k, 330.0 * k * 316.0 / 1634.0);
+    pic(&app.art.wordmark, 52.0 * k, 30.0 * k, 330.0 * k, 330.0 * k * crate::ui::WORDMARK_ASPECT);
     draw_text("MATCH CONTROL", x + 2.0, 150.0 * k, sz(20.0), th::EMBER_BRIGHT);
     let title = if app.pause_settings {
         "SETTINGS"

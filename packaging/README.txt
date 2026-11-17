@@ -12,6 +12,7 @@ NEW IN v0.13
   corners (v0.13.1: inside the cave too).
   v0.13.2: the volcano rumbles and booms, lava pours down its cone,
   killcams always reach the kill, drag to turn models in the armory.
+  v0.13.3: a new FERRITE logo and app icon.
   Everyone in a match needs v0.13.0, including the dedicated server.
 
 NEW IN v0.12

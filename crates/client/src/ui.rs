@@ -57,7 +57,7 @@ const FONT_K: f32 = 0.8;
 pub struct Art {
     pub launcher: Texture2D,
     pub lobby: Texture2D,
-    /// The FERRITE wordmark (1634 x 316) and the two team emblems.
+    /// The FERRITE wordmark (`WORDMARK_ASPECT`) and the two team emblems.
     pub wordmark: Texture2D,
     pub emblems: [Texture2D; 2],
 }
@@ -129,12 +129,15 @@ pub fn backdrop(t: &Texture2D, sw: f32, sh: f32) {
 /// `x`, `y` and `width` in key-art pixels, scaled with the art.
 pub fn logo(art: &Art, sw: f32, sh: f32, x: f32, y: f32, width: f32) {
     let k = art_scale(sw, sh);
-    let size = vec2(width, width * 316.0 / 1634.0) * k;
+    let size = vec2(width, width * WORDMARK_ASPECT) * k;
     draw_texture_ex(&art.wordmark, x * k, y * k, WHITE, DrawTextureParams { dest_size: Some(size), ..Default::default() });
 }
 
+/// Height over width of `assets/ferrite-wordmark.png` (1640 x 328).
+pub const WORDMARK_ASPECT: f32 = 328.0 / 1640.0;
+
 /// Where the launcher and the lobby put the wordmark (key-art pixels).
-pub const LAUNCHER_LOGO: (f32, f32, f32) = (46.0, 64.0, 620.0);
+pub const LAUNCHER_LOGO: (f32, f32, f32) = (46.0, 60.0, 550.0);
 pub const LOBBY_LOGO: (f32, f32, f32) = (30.0, 30.0, 440.0);
 
 /// A glass plate with a hairline border.
