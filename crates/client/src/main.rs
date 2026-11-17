@@ -417,6 +417,9 @@ pub struct ChatMsg {
     pub at: f64,
 }
 
+/// How far back the killcam starts when there is time for all of it, in seconds.
+const KILLCAM_BACK: f64 = 3.2;
+
 /// The killcam: the last seconds before our death, replayed through the
 /// eyes of whoever did it, out of the snapshots we already have.
 pub struct KillCam {
@@ -887,7 +890,8 @@ impl App {
         }
     }
 
-    fn handle_feed(&mut self, f: &Feed, now: f64) {
+    /// `tick`: the snapshot the entry came in, as near the moment as known.
+    fn handle_feed(&mut self, f: &Feed, tick: u32, now: f64) {
         match *f {
             Feed::Kill { killer, victim, weapon, head, assist } => {
                 let vteam = self.team(victim);
@@ -915,7 +919,6 @@ impl App {
                     self.stats.my_deaths += 1;
                     // Killed by someone else: their view of it is replayed.
                     if !self.spectator && killer != self.my_id {
-                        let tick = self.net.latest().map_or(0, |s| s.tick);
                         self.kc_armed = Some((tick, now, killer, weapon));
                         self.kc = None;
                     }
@@ -2141,7 +2144,7 @@ async fn play(
             for (id, f) in &s.feed {
                 if *id > app.net.ack_feed {
                     app.net.ack_feed = *id;
-                    app.handle_feed(f, now);
+                    app.handle_feed(f, s.tick, now);
                 }
             }
         }
@@ -2277,10 +2280,18 @@ async fn play(
             app.kc_armed = None;
         }
         if let Some((tick, at, killer, weapon)) = app.kc_armed {
-            if now - at > 0.8 {
+            // The replay has to be over before we are back in: respawning
+            // ends it. A short wait (TDM, an early conquest wave) leaves
+            // less of a pause and fewer seconds of the past, so the replay
+            // still reaches the kill instead of being cut off before it.
+            const TAIL: f64 = 20.0; // ticks shown after the kill
+            let since = now - at;
+            let left = app.respawn_in as f64 - 0.2;
+            if since > 0.8 || (since > 0.35 && left < KILLCAM_BACK + TAIL / 60.0) {
                 app.kc_armed = None;
                 // From where the killer is first on record, up to 3.2 s back.
-                let from = tick as f64 - 3.2 * 60.0;
+                let back = KILLCAM_BACK.min(left - TAIL / 60.0);
+                let from = tick as f64 - back * 60.0;
                 let first =
                     app.net.snaps.iter().find(|s| s.tick as f64 >= from && s.players.iter().any(|p| p.id == killer)).map(|s| s.tick as f64);
                 if let Some(first) = first.filter(|f| *f < tick as f64 - 40.0) {
@@ -2291,7 +2302,7 @@ async fn play(
                         death_now: at,
                         start_now: now,
                         from: first,
-                        to: tick as f64 + 20.0,
+                        to: tick as f64 + TAIL,
                         rt: first,
                         fx_tick: first,
                         ads: 0.0,
@@ -2608,6 +2619,18 @@ async fn play(
                     scene::spillway::Cue::Rush => (Sfx::Rush, 0.3 * loud, 55.0),
                 };
                 app.audio.play_at(sfx, at, eye, vol, reach);
+            }
+            // The volcano rumbling and blowing, heard (and felt) across the map.
+            for (cue, at, loud) in scene::special_landmarks::cues(&app.world, cue_clock, world_t) {
+                let (sfx, vol, reach) = match cue {
+                    scene::special_landmarks::Cue::Rumble => (Sfx::Rumble, 0.6 * loud, 200.0),
+                    scene::special_landmarks::Cue::Blast => (Sfx::Eruption, 1.0, 260.0),
+                };
+                app.audio.play_at(sfx, at, eye, vol, reach);
+                if matches!(cue, scene::special_landmarks::Cue::Blast) {
+                    let d = at.distance(eye) / 220.0;
+                    app.shake = (app.shake + 0.45 / (1.0 + d * d)).min(1.0);
+                }
             }
         }
         cue_clock = world_t;

@@ -271,24 +271,65 @@ fn key_hint(app: &App, action: crate::bindings::Action) -> String {
     app.bindings.inputs(action).first().map(|input| input.label()).unwrap_or_else(|| "UNBOUND".into())
 }
 
+/// A piece of a hint line: words, a key drawn as a keycap, or a wider gap
+/// between one hint and the next.
+enum Hint<'a> {
+    Words(&'a str),
+    Key(&'a str),
+    Gap,
+}
+
+/// A line of hints on baseline `y` from `x`, keys as keycaps so they stand
+/// out from busy art; returns its width. Nothing is drawn unless `draw`.
+fn hints(parts: &[Hint], x: f32, y: f32, size: f32, c: Color, draw: bool) -> f32 {
+    let mut cx = x;
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 && !matches!(part, Hint::Gap) {
+            cx += size * 0.4;
+        }
+        match part {
+            Hint::Words(t) => {
+                if draw {
+                    text(t, cx, y, size, c);
+                }
+                cx += crate::ui::width(t, size);
+            }
+            Hint::Key(k) => {
+                let ks = if k.chars().count() > 3 { size * 0.72 } else { size * 0.9 };
+                let kw = (crate::ui::width(k, ks) + size * 0.7).max(size * 1.45);
+                if draw {
+                    crate::ui::plate(cx, y - size * 1.02, kw, size * 1.38, col(DARK, 0.85), Color::new(0.706, 0.761, 0.882, 0.6));
+                    crate::ui::text_c(k, cx + kw / 2.0, y - (size - ks) * 0.35, ks, col(WHITE, 1.0));
+                }
+                cx += kw;
+            }
+            Hint::Gap => cx += size * 1.2,
+        }
+    }
+    cx - x
+}
+
+/// `hints`, ending at `right`.
+fn hints_r(parts: &[Hint], right: f32, y: f32, size: f32, c: Color) {
+    let w = hints(parts, 0.0, y, size, c, false);
+    hints(parts, right - w, y, size, c, true);
+}
+
 fn draw_loadout(app: &App, w: f32, h: f32, icons: &mut Vec<GunIcon>) {
     let (mx, my) = crate::controller::mouse_position();
     let top = loadout_top(h);
     let kd = sim::kit(app.kit_choice);
     let tc = team_col(app.my_team);
     use crate::bindings::Action;
+    let classes = [Action::ClassVanguard, Action::ClassBreacher, Action::ClassMarksman].map(|a| key_hint(app, a));
+    let (np, ns) = (key_hint(app, Action::NextPrimary), key_hint(app, Action::NextSidearm));
     let titles = [
-        format!(
-            "CLASS   {} / {} / {}",
-            key_hint(app, Action::ClassVanguard),
-            key_hint(app, Action::ClassBreacher),
-            key_hint(app, Action::ClassMarksman)
-        ),
-        format!("PRIMARY   {} next", key_hint(app, Action::NextPrimary)),
-        format!("SIDEARM   {} next", key_hint(app, Action::NextSidearm)),
+        vec![Hint::Words("CLASS"), Hint::Key(&classes[0]), Hint::Key(&classes[1]), Hint::Key(&classes[2])],
+        vec![Hint::Words("PRIMARY"), Hint::Key(&np), Hint::Words("next")],
+        vec![Hint::Words("SIDEARM"), Hint::Key(&ns), Hint::Words("next")],
     ];
     for (c, title) in titles.iter().enumerate() {
-        text(title, loadout_col(w, c as u8).0 + 14.0, top + 98.0, 18.0, col(WHITE, 0.6));
+        hints(title, loadout_col(w, c as u8).0 + 14.0, top + 98.0, 16.0, col(WHITE, 0.88), true);
     }
     // The chosen primary and sidearm, large, either side of the heading.
     // Pointing at a row shows that weapon instead.
@@ -306,7 +347,8 @@ fn draw_loadout(app: &App, w: f32, h: f32, icons: &mut Vec<GunIcon>) {
             3 => {
                 let n = sim::SKINS.len();
                 let s = sim::SKINS[app.skin_choice as usize % n];
-                text(&format!("LOOK   {} next", key_hint(app, Action::NextLook)), x + 10.0, y - 8.0, 18.0, col(WHITE, 0.6));
+                let nl = key_hint(app, Action::NextLook);
+                hints(&[Hint::Words("LOOK"), Hint::Key(&nl), Hint::Words("next")], x + 10.0, y - 8.0, 16.0, col(WHITE, 0.88), true);
                 (s.0, s.1, true, format!("{} / {}", app.skin_choice as usize % n + 1, n))
             }
             _ => {
@@ -352,16 +394,14 @@ fn draw_loadout(app: &App, w: f32, h: f32, icons: &mut Vec<GunIcon>) {
         let skin = sim::fix_weapon_skin(id, app.wskins[id as usize % 20]);
         if sim::weapon_skins_for(id).len() > 1 {
             let over = mx >= bx && mx < bx + bw && my >= top + 4.0 && my < top + 88.0;
-            text_r(
-                &format!(
-                    "{} FINISH   {} or click",
-                    sim::weapon_skin(skin).name,
-                    key_hint(app, if k == 0 { Action::PrimaryFinish } else { Action::SidearmFinish })
-                ),
+            let finish = format!("{} FINISH", sim::weapon_skin(skin).name);
+            let key = key_hint(app, if k == 0 { Action::PrimaryFinish } else { Action::SidearmFinish });
+            hints_r(
+                &[Hint::Words(&finish), Hint::Key(&key), Hint::Words("or click")],
                 bx + bw - 4.0,
                 top + 20.0,
                 14.0,
-                col(WHITE, if over { 1.0 } else { 0.7 }),
+                col(WHITE, if over { 1.0 } else { 0.85 }),
             );
         }
         icons.push(GunIcon { wid: id, skin, cx: bx + bw / 2.0, cy: top + 54.0, w: bw - 30.0, h: 64.0, turn: true });
@@ -371,17 +411,54 @@ fn draw_loadout(app: &App, w: f32, h: f32, icons: &mut Vec<GunIcon>) {
 /// Lobby click targets: one card per map, the READY button, then one
 /// chip per game mode.
 #[allow(clippy::type_complexity)]
-pub fn lobby_rects(w: f32, _h: f32) -> (Vec<(f32, f32, f32, f32)>, (f32, f32, f32, f32), Vec<(f32, f32, f32, f32)>) {
-    let pw = (w - 40.0).min(1080.0);
-    let x0 = w / 2.0 - pw / 2.0;
+pub fn lobby_rects(w: f32, h: f32) -> (Vec<(f32, f32, f32, f32)>, (f32, f32, f32, f32), Vec<(f32, f32, f32, f32)>) {
+    let head = LobbyHead::new(w, h);
+    let (x0, pw) = (head.x0, head.pw);
     let n = ferrite_shared::map::MAPS.len();
     let gap = 12.0;
     let cw = (pw - gap * (n as f32 - 1.0)) / n as f32;
-    let cards = (0..n).map(|k| (x0 + k as f32 * (cw + gap), 120.0, cw, 62.0)).collect();
+    let cards = (0..n).map(|k| (x0 + k as f32 * (cw + gap), head.cards, cw, 62.0)).collect();
     let m = ferrite_shared::MODES.len();
     let mw = (pw - gap * (m as f32 - 1.0)) / m as f32;
-    let modes = (0..m).map(|k| (x0 + k as f32 * (mw + gap), 186.0, mw, 24.0)).collect();
-    (cards, (x0 + pw - 240.0, 34.0, 240.0, 48.0), modes)
+    let modes = (0..m).map(|k| (x0 + k as f32 * (mw + gap), head.cards + 72.0, mw, 26.0)).collect();
+    (cards, (x0 + pw - 240.0, head.top + 2.0, 240.0, 48.0), modes)
+}
+
+/// The lobby's header. The wordmark grows with the screen (it is placed in
+/// key-art pixels), so the briefing beside it and everything below are
+/// laid out from where it actually ends, not at fixed heights.
+struct LobbyHead {
+    /// The panel's left edge and width.
+    x0: f32,
+    pw: f32,
+    /// Left edge of the briefing beside the wordmark, and its top.
+    hx: f32,
+    top: f32,
+    /// Bottom of the header band, and the top of the map cards.
+    bottom: f32,
+    cards: f32,
+}
+
+impl LobbyHead {
+    /// From the top of the briefing to the baseline of its last line.
+    const TEXT_H: f32 = 98.0;
+
+    fn new(w: f32, h: f32) -> Self {
+        let pw = (w - 40.0).min(1080.0);
+        let x0 = w / 2.0 - pw / 2.0;
+        let k = crate::ui::art_scale(w, h);
+        let (lx, ly, lw) = crate::ui::LOBBY_LOGO;
+        let logo_right = (lx + lw) * k;
+        let logo_bottom = (ly + lw * 316.0 / 1634.0) * k;
+        let top = ly * k;
+        let bottom = logo_bottom.max(top + Self::TEXT_H) + 14.0;
+        LobbyHead { x0, pw, hx: (logo_right + 30.0).max(x0), top, bottom, cards: bottom + 16.0 }
+    }
+
+    /// Top of the roster panel, under the mode chips.
+    fn roster(&self) -> f32 {
+        self.cards + 72.0 + 26.0 + 16.0
+    }
 }
 
 /// "4:05" from a number of seconds.
@@ -413,41 +490,54 @@ fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
     draw_rectangle(0.0, 0.0, w, h, col(DARK, 1.0));
     crate::ui::backdrop(&app.lobby_bg, w, h);
     draw_rectangle(0.0, 0.0, w, h, col(DARK, 0.5));
+    let head = LobbyHead::new(w, h);
+    // A band under the header so its small print reads over any art.
+    draw_rectangle(0.0, 0.0, w, head.bottom, col(DARK, 0.55));
     let (lx, ly, lw) = crate::ui::LOBBY_LOGO;
     crate::ui::logo(&app.art, w, h, lx, ly, lw);
     let pw = (w - 40.0).min(1080.0);
     let x0 = w / 2.0 - pw / 2.0;
     let tc = team_col(app.my_team);
     let (mx, my) = crate::controller::mouse_position();
-    let hx = (500.0 * crate::ui::art_scale(w, h)).max(x0);
+    let (hx, ty) = (head.hx, head.top);
     let soon = snap.phase_secs > 0.05 && snap.phase_secs <= 3.0;
     let status = if snap.phase_secs > 0.05 {
         format!("MATCH STARTS IN 00:{:02.0}", snap.phase_secs.ceil())
     } else {
         "WAITING FOR PLAYERS".to_string()
     };
-    text("PRE-MATCH BRIEFING", hx, 36.0, 15.0, Color::new(0.718, 0.863, 1.0, 1.0));
-    text(&status, hx, 66.0, 30.0, col(if soon { WARNING } else { WHITE }, 1.0));
+    text("PRE-MATCH BRIEFING", hx, ty + 12.0, 15.0, Color::new(0.718, 0.863, 1.0, 1.0));
+    text(&status, hx, ty + 43.0, 30.0, col(if soon { WARNING } else { WHITE }, 1.0));
     text(
         "Vote for the map and the game mode, and choose a loadout. It starts early once everyone is ready.",
         hx,
-        90.0,
+        ty + 68.0,
         17.0,
-        col(WHITE, 0.75),
+        col(WHITE, 0.92),
     );
-    text(
-        &format!(
-            "{} team      R ready      {} chat      Q leave",
-            key_hint(app, crate::bindings::Action::ChangeTeam),
-            key_hint(app, crate::bindings::Action::ChatAll)
-        ),
-        x0,
-        113.0,
-        17.0,
-        col(WHITE, 0.7),
+    let (team, chat) = (key_hint(app, crate::bindings::Action::ChangeTeam), key_hint(app, crate::bindings::Action::ChatAll));
+    hints(
+        &[
+            Hint::Key(&team),
+            Hint::Words("team"),
+            Hint::Gap,
+            Hint::Key("R"),
+            Hint::Words("ready"),
+            Hint::Gap,
+            Hint::Key(&chat),
+            Hint::Words("chat"),
+            Hint::Gap,
+            Hint::Key("Q"),
+            Hint::Words("leave"),
+        ],
+        hx,
+        ty + LobbyHead::TEXT_H,
+        15.0,
+        col(WHITE, 0.92),
+        true,
     );
     if let Some(t) = &app.now_playing {
-        text_r(&format!("now playing: {t}"), x0 + pw, 113.0, 17.0, col(WHITE, 0.7));
+        text_r(&format!("now playing: {t}"), x0 + pw, ty + LobbyHead::TEXT_H, 15.0, col(WHITE, 0.7));
     }
     let (cards, rb, modes) = lobby_rects(w, h);
     if !app.spectator {
@@ -536,7 +626,7 @@ fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
         crate::ui::text_c(if app.ready { "READY" } else { "READY UP" }, rb.0 + rb.2 / 2.0, rb.1 + 32.0, 24.0, col(DARK, 1.0));
     }
     // Who is here.
-    let y0 = 236.0;
+    let y0 = head.roster() + 24.0;
     draw_rectangle(x0 - 12.0, y0 - 24.0, pw + 24.0, loadout_top(h) - (y0 - 24.0) - 8.0, col(DARK, 0.72));
     draw_rectangle(x0 - 12.0, loadout_top(h), pw + 24.0, LOADOUT_H, col(DARK, 0.82));
     // The teams take the left of the panel, the chat the right. People
@@ -571,9 +661,10 @@ fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
     }
     let chat_x = x0 + pw * 0.64;
     draw_line(chat_x - 14.0, y0 - 14.0, chat_x - 14.0, loadout_top(h) - 18.0, 1.0, Color::new(0.706, 0.761, 0.882, 0.38));
-    text("CHAT", chat_x, y0 - 4.0, 15.0, col(WHITE, 0.6));
+    text("CHAT", chat_x, y0 - 4.0, 15.0, col(WHITE, 0.75));
     if !app.chat_open && !app.spectator {
-        text_r("ENTER to type", x0 + pw, y0 - 4.0, 14.0, col(WHITE, 0.45));
+        let key = key_hint(app, crate::bindings::Action::ChatAll);
+        hints_r(&[Hint::Key(&key), Hint::Words("to type")], x0 + pw, y0 - 4.0, 14.0, col(WHITE, 0.8));
     }
 }
 

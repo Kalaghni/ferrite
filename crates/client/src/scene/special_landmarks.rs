@@ -300,6 +300,256 @@ fn volcano(m: &mut Mesh, w: &World) {
     }
 }
 
+/// Height of the cone's faceted surface over (x, z), where it has one.
+fn cone_y(w: &World, root: Vec3, x: f32, z: f32) -> Option<f32> {
+    let step = TAU / 48.0;
+    let a = (z - root.z).atan2(x - root.x).rem_euclid(TAU);
+    let k = (a / step).floor();
+    let u = a / step - k;
+    let corner = |ring: usize, ang: f32| {
+        let mut p = cone_point(root, ring, ang);
+        if ring == 0 {
+            p.y = w.height(p.x, p.z) - 1.0;
+        }
+        p
+    };
+    let q = vec3(x, 0.0, z);
+    for ring in 0..4 {
+        let a = corner(ring, k * step).lerp(corner(ring, (k + 1.0) * step), u);
+        let b = corner(ring + 1, k * step).lerp(corner(ring + 1, (k + 1.0) * step), u);
+        let (ah, bh) = (vec3(a.x, 0.0, a.z), vec3(b.x, 0.0, b.z));
+        let t = (q - ah).dot(bh - ah) / (bh - ah).length_squared().max(1e-4);
+        if (0.0..=1.0).contains(&t) {
+            return Some(a.y + (b.y - a.y) * t);
+        }
+    }
+    None
+}
+
+/// A quad whose lit face points up the slope it lies on.
+fn lie(m: &mut Mesh, a: Vec3, b: Vec3, c: Vec3, d: Vec3, col: Col) {
+    if (b - a).cross(d - a).y >= 0.0 {
+        m.quad(a, b, c, d, col);
+    } else {
+        m.quad(d, c, b, a, col);
+    }
+}
+
+/// The overflow from the crater's northern breach: a molten river from the
+/// rim down the cone into the head of the runner, between banks of its own
+/// crust. It pours over the rim as the fountain starts and runs down in a
+/// few seconds, a white-hot core broken by rafts of crust drifting down it,
+/// smoking and spitting sparks; then it crusts over with the runner.
+fn flank_flow(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, root: Vec3, phase: f32, time: f32) {
+    use ferrite_shared::events::{LAVA_COOLED, LAVA_CRUSTS};
+    if !(26.0..LAVA_COOLED).contains(&phase) {
+        return;
+    }
+    let glow = 1.0 - smooth(LAVA_CRUSTS - 2.0, LAVA_COOLED, phase);
+    let molten = phase < LAVA_CRUSTS;
+    let ground = |x: f32, z: f32| w.height(x, z).max(cone_y(w, root, x, z).unwrap_or(f32::MIN));
+    // The course, in plan: from just over the rim, wandering a little,
+    // straight into the head of the runner.
+    let (ex, ez) = ferrite_shared::map::slag_cathedral::RUNNER[0];
+    let end = vec3(ex - root.x, 0.0, ez - root.z);
+    let (r0, r1) = (10.4, end.length());
+    let north = PI * 0.5;
+    let end_a = end.z.atan2(end.x);
+    let n = ((r1 - r0) / 1.1).ceil() as usize;
+    // (distance along it, centre, half-width of the molten stream, bank width)
+    let mut course: Vec<(f32, Vec3, f32, f32)> = Vec::with_capacity(n + 1);
+    for i in 0..=n {
+        let t = i as f32 / n as f32;
+        let r = r0 + (r1 - r0) * t;
+        let settle = smooth(0.78, 1.0, t);
+        let wander = 0.05 * (r * 0.21 + 0.6).sin() + 0.025 * (r * 0.57).sin();
+        let a = (north + wander) * (1.0 - settle) + end_a * settle;
+        let c = root + vec3(a.cos() * r, 0.0, a.sin() * r);
+        // Narrow over the rim, spreading down the slope, gathered into the runner.
+        let hw = 1.0 + 1.5 * smooth(0.0, 0.55, t) - 0.6 * smooth(0.82, 1.0, t) + 0.18 * (r * 0.9).sin() * (1.0 - settle);
+        let bank = 0.4 + 0.35 * t;
+        let s = course.last().map_or(0.0, |&(s, p, _, _)| s + (c - p).length());
+        course.push((s, c, hw, bank));
+    }
+    // Run on a little way into the runner, over the head of its own lava.
+    let (nx, nz) = ferrite_shared::map::slag_cathedral::RUNNER[1];
+    if let Some(&(s, c, hw, bank)) = course.last() {
+        let d = (vec3(nx, 0.0, nz) - vec3(ex, 0.0, ez)).normalize_or_zero();
+        course.push((s + 1.6, c + d * 1.6, hw, bank));
+    }
+    let total = course.last().map_or(0.0, |c| c.0);
+    let reach = total * ((phase - 26.0) / 3.5).clamp(0.0, 1.0);
+    let left = |i: usize| {
+        let (a, b) = (course[i.saturating_sub(1)].1, course[(i + 1).min(course.len() - 1)].1);
+        let d = (b - a).normalize_or_zero();
+        vec3(d.z, 0.0, -d.x)
+    };
+    let at = |c: Vec3, l: Vec3, off: f32, lift: f32| {
+        let p = c + l * off;
+        vec3(p.x, ground(p.x, p.z) + lift, p.z)
+    };
+    // Cooling lava darkens to a crust long before it stops glowing at all.
+    let cool = |c: Col, k: f32| -> Col {
+        let g = (glow * k).powi(3);
+        [c[0] * g + 0.075 * (1.0 - g), c[1] * g + 0.062 * (1.0 - g), c[2] * g + 0.058 * (1.0 - g), c[3] * g]
+    };
+    let lava: Col = [1.0, 0.29, 0.045, 1.0];
+    let white: Col = [1.0, 0.73, 0.25, 1.0];
+    let crust: Col = [0.085, 0.07, 0.066, 0.0];
+    let pulse = 0.85 + 0.15 * (time * 3.1).sin();
+    for i in 0..course.len() - 1 {
+        let ((s0, c0, w0, b0), (s1, c1, w1, b1)) = (course[i], course[i + 1]);
+        if s0 >= reach {
+            break;
+        }
+        // Clip at the front, which bulges into a rounded lobe while it runs.
+        let t = ((reach - s0) / (s1 - s0)).min(1.0);
+        let c1 = c0.lerp(c1, t);
+        let (l0, l1) = (left(i), left(i + 1));
+        let front = |s: f32| if molten && reach < total { ((reach - s) / 3.0).clamp(0.4, 1.0).sqrt() } else { 1.0 };
+        let (w0, w1) = (w0 * front(s0), w1 * front(s0 + (s1 - s0) * t));
+        // The last few metres settle to the level of the lava in the runner.
+        let sink = |s: f32| 1.0 - 0.8 * smooth(total - 6.0, total, s);
+        let (k0, k1) = (sink(s0), sink(s0 + (s1 - s0) * t));
+        // Across the stream from one side: the foot of the crust bank, its
+        // crest, the molten edge, and the convex surface to the middle.
+        let cut = |w: f32, b: f32, k: f32| [(-w - b, 0.02), (-w - b * 0.4, 0.34 * k), (-w, 0.16 * k), (-w * 0.5, 0.2 * k), (0.0, 0.22 * k)];
+        let (h0, h1) = (cut(w0, b0, k0), cut(w1, b1, k1));
+        for side in [-1.0f32, 1.0] {
+            let p = |c: Vec3, l: Vec3, h: [(f32, f32); 5], k: usize| at(c, l, h[k].0 * side, h[k].1);
+            for k in 0..4 {
+                let col = match k {
+                    0 => crust,
+                    1 => cool(shade(lava, 0.42), 0.8),
+                    _ => cool(lava, 1.0),
+                };
+                lie(m, p(c0, l0, h0, k), p(c0, l0, h0, k + 1), p(c1, l1, h1, k + 1), p(c1, l1, h1, k), col);
+            }
+        }
+        let k = i as u32;
+        if molten {
+            // The white-hot core, broken where crust drifts down over it.
+            let drift = (s0 - time * 3.2).rem_euclid(8.5);
+            let core = (0.3 + 0.22 * hash01(k, 771) + if drift < 2.6 { 0.0 } else { 0.18 }) * (0.9 + 0.1 * pulse);
+            let (y0, y1) = (0.25 * k0, 0.25 * k1);
+            lie(m, at(c0, l0, -w0 * core, y0), at(c0, l0, w0 * core, y0), at(c1, l1, w1 * core, y1), at(c1, l1, -w1 * core, y1), white);
+            // Heat shimmer over the stream, sliding with it.
+            let a = (time * 1.4 - s0 * 0.08 + hash01(k, 772)).fract();
+            add.quad(
+                at(c0, l0, -w0 * 1.4, 0.5),
+                at(c0, l0, w0 * 1.4, 0.5),
+                at(c1, l1, w1 * 1.4, 0.5),
+                at(c1, l1, -w1 * 1.4, 0.5),
+                [1.0, 0.42, 0.08, (0.12 + 0.14 * (a * TAU).sin().abs()) * glow],
+            );
+        } else if glow > 0.02 && hash01(k, 773) < 0.7 {
+            // Cooling: glowing cracks in the crust.
+            let c = at(c0.lerp(c1, 0.5), l0, (hash01(k, 774) - 0.5) * w0, 0.27);
+            let a = hash01(k, 775) * PI;
+            let d = vec3(a.cos(), 0.0, a.sin()) * w0 * 0.7;
+            beam(
+                m,
+                c - d,
+                c + d,
+                0.09,
+                0.02,
+                [lava[0] * glow + 0.08 * (1.0 - glow), lava[1] * glow + 0.06 * (1.0 - glow), lava[2] * glow, glow],
+            );
+        }
+        if i % 3 == 0 {
+            soft(add, at(c0, l0, 0.0, 1.6), w0 * 2.4, 2.4, [1.0, 0.3, 0.04, 0.26 * glow * pulse]);
+        }
+    }
+    if !molten || reach <= 0.0 {
+        return;
+    }
+    // Where along the course distance `s` lies: centre, left, half-width.
+    let station = |s: f32| {
+        let i = course.iter().rposition(|c| c.0 <= s).unwrap_or(0).min(course.len() - 2);
+        let (a, b) = (course[i], course[i + 1]);
+        let t = ((s - a.0) / (b.0 - a.0)).clamp(0.0, 1.0);
+        (a.1.lerp(b.1, t), left(i), a.2 + (b.2 - a.2) * t)
+    };
+    // Rafts of crust riding the current.
+    for k in 0..18u32 {
+        let speed = 2.6 + hash01(k, 781) * 1.6;
+        let s = (hash01(k, 782) * total + time * speed).rem_euclid(total);
+        if s > reach - 1.0 || s > total - 6.0 {
+            continue;
+        }
+        let (c, l, hw) = station(s);
+        let off = (hash01(k, 783) - 0.5) * hw * 0.9;
+        let size = 0.3 + hash01(k, 784) * 0.45;
+        let spin = hash01(k, 785) * TAU + time * 0.3;
+        let fwd = vec3(-l.z, 0.0, l.x);
+        let corner = |j: u32| {
+            let a = spin + j as f32 * TAU / 4.0 + hash01(k * 4 + j, 786) * 0.5;
+            let p = c + l * off + (l * a.cos() + fwd * a.sin()) * size * (0.7 + 0.5 * hash01(k * 4 + j, 787));
+            vec3(p.x, ground(p.x, p.z) + 0.29, p.z)
+        };
+        lie(m, corner(0), corner(1), corner(2), corner(3), [0.11, 0.06, 0.045, 0.12]);
+    }
+    // The bright front while it runs, smoke off the whole stream, and spatter.
+    if reach < total {
+        let (c, l, hw) = station(reach);
+        soft(add, at(c, l, 0.0, 1.0), hw * 2.0, 1.8, [1.0, 0.62, 0.2, 0.6 * pulse]);
+    }
+    for k in 0..14u32 {
+        let age = (time * (0.16 + hash01(k, 791) * 0.08) + hash01(k, 792)).fract();
+        let (c, l, hw) = station(hash01(k, 793) * reach);
+        let p = at(c, l, (hash01(k, 794) - 0.5) * hw, 0.8) + vec3(age * 3.0, age * 9.0, 0.0);
+        let rad = 1.0 + age * 3.2;
+        soft(alpha, p, rad, rad * 0.8, [0.15, 0.12, 0.12, (1.0 - age) * (age * 6.0).min(1.0) * 0.14]);
+    }
+    for k in 0..36u32 {
+        let (c, l, hw) = station(reach - hash01(k, 795).powf(1.6) * reach);
+        let age = (time * (0.7 + hash01(k, 796) * 0.6) + hash01(k, 797)).fract();
+        let p = at(c, l, (hash01(k, 798) - 0.5) * hw * 1.6, 0.3) + Vec3::Y * (age * (1.0 - age) * 4.0 * (0.4 + hash01(k, 799)));
+        let r = 0.03 + hash01(k, 800) * 0.04;
+        cross(add, p, r, r * 2.0, [1.0, 0.55, 0.12, (1.0 - age) * 0.9]);
+    }
+}
+
+/// A sound from the volcano. Cosmetic: no network event, no damage.
+pub enum Cue {
+    /// The ground rumbling as it builds and while the fountain plays; a few
+    /// seconds long, cued again before it ends.
+    Rumble,
+    /// The eruption itself, once, as the fountain bursts out.
+    Blast,
+}
+
+/// How often the rumble is cued while it lasts, in seconds.
+const RUMBLE_EVERY: f32 = 2.5;
+
+/// Volcano sounds falling due between world times `from` and `to`, where
+/// they come from, and how loud (0 to 1).
+pub fn cues(w: &World, from: f32, to: f32) -> Vec<(Cue, Vec3, f32)> {
+    use ferrite_shared::events::ERUPTION_PERIOD;
+    let mut out = Vec::new();
+    if w.map != ferrite_shared::map::slag_cathedral::MAP_ID || !(from.is_finite() && to.is_finite()) || to <= from || to - from > 5.0 {
+        return out; // a clock jump (a new round, the killcam) starts nothing
+    }
+    let vent = volcano_origin(w) + Vec3::Y * 47.0;
+    let (c0, c1) = ((from.max(0.0) / ERUPTION_PERIOD).floor() as u32, (to.max(0.0) / ERUPTION_PERIOD).floor() as u32);
+    for c in c0..=c1 {
+        let at = c as f32 * ERUPTION_PERIOD + 26.0;
+        if at > from && at <= to && eruption(w.seed, at).erupts {
+            out.push((Cue::Blast, vent, 1.0));
+        }
+    }
+    let first = (from / RUMBLE_EVERY).floor() as i64 + 1;
+    let last = (to / RUMBLE_EVERY).floor() as i64;
+    for k in first..=last {
+        let e = eruption(w.seed, k as f32 * RUMBLE_EVERY);
+        let loud = (e.warning * 0.7 + e.fountain * 0.6 + e.ash * 0.2).min(1.0);
+        if loud > 0.05 {
+            out.push((Cue::Rumble, vent, loud));
+        }
+    }
+    out
+}
+
 pub fn atmosphere(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World, time: f32) {
     if w.map == 5 {
         let root = mast_origin(w);
@@ -376,33 +626,7 @@ fn volcano_atmosphere(m: &mut Mesh, alpha: &mut Mesh, add: &mut Mesh, w: &World,
     // The crater breaches on its northern flank and the overflow runs down
     // into the runner that carries it onto the field (`events::lava_flow`).
     if state.erupts {
-        let phase = state.age + 26.0;
-        let glow = smooth(26.5, 30.0, phase)
-            * (1.0 - smooth(ferrite_shared::events::LAVA_CRUSTS - 2.0, ferrite_shared::events::LAVA_COOLED, phase));
-        if glow > 0.0 {
-            let north = PI * 0.5;
-            let (sx, sz) = ferrite_shared::map::slag_cathedral::RUNNER[0];
-            let path = [
-                cone_point(root, 2, north) + vec3(0.0, -0.4, 0.0),
-                cone_point(root, 1, north + 0.03),
-                cone_point(root, 0, north - 0.02) + Vec3::Y * 0.4,
-                vec3(sx, w.height(sx, sz) + 0.1, sz),
-            ];
-            let hot = [
-                HOT[0] * glow + 0.08 * (1.0 - glow),
-                HOT[1] * glow + 0.07 * (1.0 - glow),
-                HOT[2] * glow + 0.06 * (1.0 - glow),
-                HOT[3] * glow,
-            ];
-            for (k, pair) in path.windows(2).enumerate() {
-                beam(m, pair[0] + Vec3::Y * 0.3, pair[1] + Vec3::Y * 0.3, 3.4 - k as f32 * 0.4, 0.6, hot);
-                beam(m, pair[0] + Vec3::Y * 0.62, pair[1] + Vec3::Y * 0.62, 1.2, 0.1, [1.0 * glow, 0.62 * glow, 0.18 * glow, glow]);
-                for j in 0..4 {
-                    let p = pair[0].lerp(pair[1], (j as f32 + 0.5) / 4.0) + Vec3::Y * 1.2;
-                    soft(add, p, 3.2, 2.0, [1.0, 0.3, 0.04, 0.22 * glow]);
-                }
-            }
-        }
+        flank_flow(m, alpha, add, w, root, state.age + 26.0, time);
     }
     // The plume rains fine incandescent fragments after its main fountain.
     for k in 0..55u32 {
@@ -460,6 +684,30 @@ mod tests {
                 assert!(m.triangles() + a.triangles() + glow.triangles() < 5000);
             }
         }
+    }
+
+    #[test]
+    fn an_eruption_is_heard_once_and_rumbles_around_it() {
+        let w = World::with_map(0xFE221, ferrite_shared::map::slag_cathedral::MAP_ID);
+        // Cycle 0 erupts for this seed; walk it in frame-sized steps.
+        let mut blasts = 0;
+        let mut rumbles = Vec::new();
+        let mut t = 0.0f32;
+        while t < ERUPTION_PERIOD {
+            for (cue, _, loud) in cues(&w, t, t + 0.25) {
+                match cue {
+                    Cue::Blast => blasts += 1,
+                    Cue::Rumble => rumbles.push((t, loud)),
+                }
+            }
+            t += 0.25;
+        }
+        assert_eq!(blasts, 1);
+        assert!(rumbles.iter().any(|r| r.0 < 26.0) && rumbles.iter().any(|r| r.0 > 30.0), "rumble before and after the blast");
+        assert!(rumbles.iter().all(|r| r.1 > 0.0 && r.1 <= 1.0));
+        // A clock jump starts nothing; another map hears nothing.
+        assert!(cues(&w, 0.0, 60.0).is_empty());
+        assert!(cues(&World::with_map(0xFE221, 0), 25.9, 26.1).is_empty());
     }
 
     #[test]

@@ -200,6 +200,11 @@ pub struct Menu {
     shop_sel: [u8; 2],
     shop_weapon: usize,
     shop_note: Option<String>,
+    /// Armory: the soldier's and the gun's turn once dragged by hand (until
+    /// then they sway on their own), and the drag under way: which model
+    /// (0 soldier, 1 gun) and the pointer's last x.
+    turn: [Option<f32>; 2],
+    drag: Option<(usize, f32)>,
     /// Step of the introduction.
     pub ob_step: u8,
     last: f64,
@@ -307,6 +312,15 @@ fn clicked() -> bool {
     !CAPTURING_INPUT.with(Cell::get) && controller::left_pressed()
 }
 
+/// How far the armory's soldier (0) or gun (1) sways on its own at `now`.
+fn sway(which: usize, now: f64) -> f32 {
+    if which == 0 {
+        (now as f32 * 0.45).sin() * 0.75
+    } else {
+        (now as f32 * 0.8).sin() * 0.6
+    }
+}
+
 /// Plain button. `solid` is the fill for a call to action; without one it
 /// is dark glass that picks up a cobalt edge under the pointer.
 fn button(x: f32, y: f32, w: f32, h: f32, label: &str, solid: Option<mq::Color>, size: f32) -> bool {
@@ -399,6 +413,8 @@ impl Menu {
             shop_sel: [7, 6],
             shop_weapon: 0,
             shop_note: None,
+            turn: [None; 2],
+            drag: None,
             ob_step: 0,
             last: 0.0,
             error: None,
@@ -754,6 +770,8 @@ impl Menu {
 
     fn go(&mut self, page: u8) {
         self.page = page;
+        self.turn = [None; 2];
+        self.drag = None;
         self.binding_capture = None;
         self.binding_note = None;
         if page == 3 {
@@ -866,7 +884,7 @@ impl Menu {
             v.pos = vec3(b.x, world.height(b.x, b.z), b.z);
             v.yaw = std::f32::consts::FRAC_PI_2;
             scene::soldier(&mut opaque, &mut alpha, world, &v, time, false);
-            let swing = v.yaw + (time * 0.45).sin() * 0.75;
+            let swing = v.yaw + self.turn[0].unwrap_or_else(|| sway(0, now));
             let target = v.pos + vec3(0.0, 1.0, 0.0);
             eye = target + vec3(swing.sin() * 3.5, 0.45, swing.cos() * 3.5);
             let to = (target - eye).normalize();
@@ -1656,9 +1674,8 @@ impl Menu {
                     ui::text("A round won pays 120 to 240 credits, a round lost 45 to 165: the better", x, sh - 40.0, 15.0, th::QUIET);
                     ui::text("your score, the more. Standard-issue looks and finishes are free.", x, sh - 22.0, 15.0, th::QUIET);
                     // The gun itself, top right, turning in its finish.
-                    if fin && sw - (x + w + 60.0) > 380.0 {
-                        let (gw, gh) = (360.0, 132.0);
-                        let (gx, gy) = (sw - gw - 40.0, 92.0);
+                    let gun_panel = (fin && sw - (x + w + 60.0) > 380.0).then_some((sw - 400.0, 92.0, 360.0, 132.0));
+                    if let Some((gx, gy, gw, gh)) = gun_panel {
                         ui::plate(gx, gy, gw, gh, th::GLASS, th::STROKE);
                         ui::text(
                             &format!("{}  /  {}", sim::weapon_def(wid).name.to_uppercase(), name),
@@ -1676,9 +1693,29 @@ impl Menu {
                             sh - (gy + gh / 2.0 + 10.0),
                             gw - 50.0,
                             gh - 46.0,
-                            (now as f32 * 0.8).sin() * 0.6,
+                            self.turn[1].unwrap_or_else(|| sway(1, now)),
                         );
                     }
+                    // Click and drag to turn the soldier (the open screen
+                    // right of the page) or the gun (its panel).
+                    let (mx, _) = controller::mouse_position();
+                    if !mq::is_mouse_button_down(mq::MouseButton::Left) {
+                        self.drag = None;
+                    } else if let Some((which, last)) = self.drag {
+                        // Dragging right brings the near side of the model right.
+                        let k = if which == 0 { -0.012 } else { 0.014 };
+                        let turn = self.turn[which].get_or_insert_with(|| sway(which, now));
+                        *turn += (mx - last) * k;
+                        self.drag = Some((which, mx));
+                    }
+                    if clicked() {
+                        if gun_panel.is_some_and(|(gx, gy, gw, gh)| hit(gx, gy, gw, gh)) {
+                            self.drag = Some((1, mx));
+                        } else if mx > x + w + 40.0 {
+                            self.drag = Some((0, mx));
+                        }
+                    }
+                    ui::text_r("DRAG TO TURN", sw - 40.0, sh - 22.0, 15.0, th::QUIET);
                 }
                 5 => {
                     // The introduction: four short pages, any of which can be skipped.

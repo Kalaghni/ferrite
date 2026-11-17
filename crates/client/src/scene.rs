@@ -843,7 +843,7 @@ mod relay;
 #[path = "scene/slag_cathedral.rs"]
 mod slag_cathedral;
 #[path = "scene/special_landmarks.rs"]
-mod special_landmarks;
+pub mod special_landmarks;
 #[path = "scene/spillway.rs"]
 pub mod spillway;
 #[path = "scene/tunnels.rs"]

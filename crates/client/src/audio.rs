@@ -329,6 +329,12 @@ pub enum Sfx {
     /// Flood water roaring out of the culverts and down the channel; a few
     /// seconds long, cued again before it ends while the water runs.
     Rush,
+    /// The volcano's deep, uneven ground rumble while it builds and erupts;
+    /// a few seconds long, cued again before it ends.
+    Rumble,
+    /// The volcano blowing: a huge low boom, spatter, and a long rolling
+    /// echo off the hills.
+    Eruption,
     Count,
 }
 
@@ -587,6 +593,86 @@ fn rush() -> Vec<f32> {
         .collect()
 }
 
+/// Deep ground rumble: sub-bass noise heaving unevenly, with a low growl
+/// under it, faded in and out so copies cued every two and a half seconds
+/// join into one sound.
+fn rumble() -> Vec<f32> {
+    let dur = 4.0;
+    let mut rng = Rng::new(0x7A1A);
+    let (mut lo, mut lo2, mut lo3, mut mid, mut mid2) = (0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    let mut ph = 0.0f32;
+    (0..(dur * SR) as usize)
+        .map(|i| {
+            let t = i as f32 / SR;
+            let n = rng.range(-1.0, 1.0);
+            lo += (n - lo) * 0.006;
+            lo2 += (lo - lo2) * 0.01;
+            lo3 += (lo2 - lo3) * 0.02;
+            mid += (n - mid) * 0.04;
+            mid2 += (mid - mid2) * 0.06;
+            ph += (34.0 + 6.0 * (t * 0.8).sin()) / SR * std::f32::consts::TAU;
+            let heave = 0.6 + 0.4 * ((t * 1.7).sin() * (t * 0.63 + 0.4).sin()).abs();
+            let fade = (t / 1.0).min(1.0) * (1.0 - ((t - dur + 1.1) / 1.1).clamp(0.0, 1.0));
+            let s = fade * fade * (3.0 - 2.0 * fade);
+            ((lo3 * 60.0 + mid2 * 3.0 + ph.sin() * 0.35) * heave * s * 0.9).tanh() * 0.85
+        })
+        .collect()
+}
+
+/// The volcano blowing, heard from the field: a crack, a deep falling boom
+/// and a roar of noise, rocks and spatter clattering down for a few
+/// seconds, and the whole of it rolling back off the hills.
+fn eruption() -> Vec<f32> {
+    let dur = 7.0;
+    let n = (dur * SR) as usize;
+    let tau = std::f32::consts::TAU;
+    let mut rng = Rng::new(0xE2A9);
+    let (mut body, mut body2, mut crack) = (0.0f32, 0.0f32, 0.0f32);
+    let mut ph = 0.0f32;
+    let mut tick = 0.0f32;
+    let mut dry = Vec::with_capacity(n);
+    for i in 0..n {
+        let t = i as f32 / SR;
+        let w = rng.range(-1.0, 1.0);
+        body += (w - body) * 0.025;
+        body2 += (body - body2) * 0.08;
+        crack += (w - crack) * 0.3;
+        ph += (26.0 + 46.0 * (-t / 0.5).exp()) / SR * tau;
+        let boom = ph.sin() * (-t / 1.3).exp() * 1.1;
+        let roar = body2 * 7.0 * (-t / 1.9).exp() * (t / 0.03).min(1.0);
+        let blast = crack * (-t / 0.07).exp() * 0.9;
+        // Falling rock and spatter: sparse knocks, thinning out.
+        let rate = 26.0 * (-((t - 0.4).max(0.0)) / 1.4).exp();
+        if t > 0.3 && rng.range(0.0, 1.0) < rate / SR {
+            tick = rng.range(0.25, 0.6);
+        }
+        tick *= 0.9965;
+        let spatter = crack * tick;
+        dry.push(boom + roar + blast + spatter);
+    }
+    // The valley answers: two late, dull repeats.
+    let mut echo = 0.0f32;
+    let mut wet = vec![0.0f32; n];
+    for i in 0..n {
+        let mut s = dry[i];
+        for (d, g) in [(0.62, 0.42), (1.45, 0.26), (2.6, 0.14)] {
+            let k = (d * SR) as usize;
+            if i >= k {
+                s += dry[i - k] * g;
+            }
+        }
+        echo += (s - echo) * 0.35;
+        wet[i] = echo;
+    }
+    (0..n)
+        .map(|i| {
+            let t = i as f32 / SR;
+            let env = (t / 0.01).min(1.0).powi(2) * (1.0 - ((t - dur + 1.4) / 1.2).clamp(0.0, 1.0)).powi(2);
+            (wet[i] * env * 0.9).tanh() * 0.9
+        })
+        .collect()
+}
+
 /// A boot on dirt: a dull thud with a little grit, nothing sharp.
 fn footstep() -> Vec<f32> {
     let mut rng = Rng::new(6);
@@ -655,6 +741,8 @@ impl Audio {
             (Sfx::Siren, siren()),
             (Sfx::Clank, clank()),
             (Sfx::Rush, rush()),
+            (Sfx::Rumble, rumble()),
+            (Sfx::Eruption, eruption()),
         ];
         // Reload: two metallic clicks.
         let mut reload = vec![0.0; (0.5 * SR) as usize];
@@ -685,6 +773,8 @@ impl Audio {
             Sfx::Siren,
             Sfx::Clank,
             Sfx::Rush,
+            Sfx::Rumble,
+            Sfx::Eruption,
         ];
         for (id, samples) in defs {
             for (k, gain) in PANS.iter().enumerate() {
@@ -751,9 +841,15 @@ mod music_tests {
 
     #[test]
     fn monument_sounds_are_finite_audible_and_fade_out() {
-        for (name, pcm, secs) in
-            [("creak", creak(), 1.6), ("groan", groan(), 2.6), ("siren", siren(), 8.0), ("clank", clank(), 2.2), ("rush", rush(), 3.2)]
-        {
+        for (name, pcm, secs) in [
+            ("creak", creak(), 1.6),
+            ("groan", groan(), 2.6),
+            ("siren", siren(), 8.0),
+            ("clank", clank(), 2.2),
+            ("rush", rush(), 3.2),
+            ("rumble", rumble(), 4.0),
+            ("eruption", eruption(), 7.0),
+        ] {
             assert_eq!(pcm.len(), (SR * secs) as usize, "{name} length");
             assert!(pcm.iter().all(|s| s.is_finite() && s.abs() <= 1.0), "{name} clips or is not finite");
             let loud = pcm.iter().fold(0.0f32, |m, s| m.max(s.abs()));

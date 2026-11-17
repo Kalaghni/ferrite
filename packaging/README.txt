@@ -10,6 +10,8 @@ NEW IN v0.13
   20 m and a top deck at 36.75 m.
   Tunnel portals are one rock face, with no floating plate or open
   corners (v0.13.1: inside the cave too).
+  v0.13.2: the volcano rumbles and booms, lava pours down its cone,
+  killcams always reach the kill, drag to turn models in the armory.
   Everyone in a match needs v0.13.0, including the dedicated server.
 
 NEW IN v0.12

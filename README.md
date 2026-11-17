@@ -1,4 +1,4 @@
-# FERRITE 0.13.1
+# FERRITE 0.13.2
 
 ![The FERRITE launcher: host, join or change settings](docs/launcher.png)
 
@@ -27,8 +27,9 @@ v0.7 adds text chat, a melee strike, a killcam, player icons, callsigns backed b
 - **Spillway's gate deck and flood.** C stands on the old floodgate's deck, raised over the channel, with bridges and stairs. After each siren test the gates open and the channel floods to 1.9 m for about 45 seconds, and the water is deadly. See the [Spillway guide](docs/maps/spillway.md).
 - **Relay's great mast.** BACKBONE now stands on the north flank, the same distance from both spawns, and its ladders can be climbed to a caged platform at 20 m and a top deck at 36.75 m. See the [Relay guide](docs/maps/relay.md#backbone-the-great-mast).
 - **Tunnel portals.** The rock round the mine and cave openings is one continuous face, with no floating plate over the sign and no gaps at the corners; v0.13.1 also closes the corners of the cave's mouths seen from inside.
+- **v0.13.2.** The volcano rumbles and blows with a boom you hear across the map, its lava pours down the cone as a molten river, killcams always reach the kill, the armory's soldier and gun turn when you drag them, and the lobby header has room on larger screens.
 
-The network protocol changed (20), so everyone in a match needs v0.13.0, including the dedicated server. See the [v0.13.0](docs/release-notes/v0.13.0.md) and [v0.13.1](docs/release-notes/v0.13.1.md) release notes.
+The network protocol changed (20), so everyone in a match needs v0.13.0, including the dedicated server. See the [v0.13.0](docs/release-notes/v0.13.0.md), [v0.13.1](docs/release-notes/v0.13.1.md) and [v0.13.2](docs/release-notes/v0.13.2.md) release notes.
 
 ## v0.12
 
@@ -114,8 +115,8 @@ Either way the game keeps itself current: the launcher checks this repository's 
 **macOS:** the build is not signed with an Apple Developer ID, so a copy downloaded in a browser is blocked by Gatekeeper. The simplest way round it is to download from Terminal, which does not get flagged:
 
 ```sh
-curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.13.1/ferrite-v0.13.1-macos-universal.tar.gz | tar xz
-./ferrite-v0.13.1-macos-universal/ferrite
+curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.13.2/ferrite-v0.13.2-macos-universal.tar.gz | tar xz
+./ferrite-v0.13.2-macos-universal/ferrite
 ```
 
 If you already downloaded it in a browser, run `xattr -dr com.apple.quarantine .` in the unpacked folder once.
