@@ -12,6 +12,7 @@ mod hud;
 mod ident;
 mod menu;
 mod net;
+mod plan;
 mod scene;
 mod touch;
 mod ui;
@@ -1862,6 +1863,26 @@ async fn play(
             if pressed(mq::KeyCode::R) {
                 app.ready = !app.ready;
             }
+            // Maps the snapshot can count votes for, and what will be played.
+            let (ballot, next_map, next_mode) =
+                app.net.latest().map_or((0, 0, 0), |s| (s.votes.len().min(ferrite_shared::map::MAPS.len()) as u8, s.next_map, s.next_mode));
+            // The arrow keys move your vote; the first press lands on what
+            // will be played.
+            let step = |cur: u8, next: u8, n: u8, back: bool| {
+                if cur >= n {
+                    next.min(n - 1)
+                } else {
+                    (cur + if back { n - 1 } else { 1 }) % n
+                }
+            };
+            let (left, right) = (pressed(mq::KeyCode::Left), pressed(mq::KeyCode::Right));
+            if (left || right) && ballot > 0 {
+                app.vote = step(app.vote, next_map, ballot, left);
+            }
+            let (up, down) = (pressed(mq::KeyCode::Up), pressed(mq::KeyCode::Down));
+            if up || down {
+                app.mode_vote = step(app.mode_vote, next_mode, ferrite_shared::MODES.len() as u8, up);
+            }
             if !picked && controller::left_pressed() {
                 let (mx, my) = controller::mouse_position();
                 let inside = |r: (f32, f32, f32, f32)| mx >= r.0 && mx < r.0 + r.2 && my >= r.1 && my < r.1 + r.3;
@@ -1873,7 +1894,7 @@ async fn play(
                     }
                 }
                 for (k, r) in cards.into_iter().enumerate() {
-                    if inside(r) {
+                    if inside(r) && k < ballot as usize {
                         app.vote = if app.vote == k as u8 { 255 } else { k as u8 };
                         picked = true;
                     }
