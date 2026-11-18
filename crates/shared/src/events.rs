@@ -160,6 +160,44 @@ pub fn flood(seed: u64, time: f32) -> Flood {
     Flood { gates, level, reach, age: phase - WATER_ARRIVES }
 }
 
+/// Canopy's crown gust: every `GUST_PERIOD` seconds wind comes through the
+/// tree and furls the shade curtains round the root well. From `GUST_WARN`
+/// the wind rises and the cranks lock; at `GUST_FURL` every curtain rolls
+/// up; the cranks unlock at `GUST_CALM`. It never hurts anyone.
+pub const GUST_PERIOD: f32 = 120.0;
+pub const GUST_WARN: f32 = 24.0;
+pub const GUST_FURL: f32 = 30.0;
+pub const GUST_CALM: f32 = 54.0;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Gust {
+    /// Seconds into the window.
+    pub phase: f32,
+    /// The wind is rising: seconds until the curtains furl.
+    pub warning: Option<f32>,
+    /// The cranks cannot be worked.
+    pub locked: bool,
+    /// The wind is through: every curtain is held up.
+    pub furl: bool,
+    /// 0..1, how hard it blows (for leaves, cloth and sound).
+    pub strength: f32,
+}
+
+pub fn canopy_gust(time: f32) -> Gust {
+    let phase = time.rem_euclid(GUST_PERIOD);
+    let warning = (GUST_WARN..GUST_FURL).contains(&phase).then_some(GUST_FURL - phase);
+    let strength = if phase < GUST_WARN || phase >= GUST_CALM + 4.0 {
+        0.0
+    } else if phase < GUST_FURL {
+        (phase - GUST_WARN) / (GUST_FURL - GUST_WARN) * 0.6
+    } else if phase < GUST_CALM {
+        1.0 - 0.3 * ((phase - GUST_FURL) / (GUST_CALM - GUST_FURL))
+    } else {
+        0.7 * (1.0 - (phase - GUST_CALM) / 4.0)
+    };
+    Gust { phase, warning, locked: (GUST_WARN..GUST_CALM).contains(&phase), furl: (GUST_FURL..GUST_CALM).contains(&phase), strength }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

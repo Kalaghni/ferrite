@@ -1139,6 +1139,41 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
         }
     }
 
+    // ---- Canopy: the shade cranks and the crown gust ----
+    if app.world.map == ferrite_shared::map::canopy::MAP_ID {
+        use ferrite_shared::map::canopy;
+        let gust = ferrite_shared::events::canopy_gust(app.world.clock);
+        if let Some(left) = gust.warning {
+            let msg = format!("WIND RISING  -  THE SHADES FURL IN {}", left.ceil() as u32);
+            text_c(&msg, cx, h * 0.2, 22.0, col(WARNING, 0.75 + 0.25 * (now as f32 * 6.0).sin()));
+        } else if gust.furl {
+            text_c("THE WIND IS THROUGH  -  SHADES HELD UP", cx, h * 0.2, 18.0, col(WHITE, 0.7));
+        }
+        if playing && app.st.ride == 0 {
+            if let Some(k) = canopy::crank_at(&app.world, app.st.pos, sim::view_dir(app.yaw, 0.0)) {
+                use crate::bindings::Action;
+                let key = key_hint(app, Action::Use);
+                let down = app.world.shades[k] > 0.5;
+                let y = h * 0.66;
+                if gust.locked {
+                    text_c("THE WIND HAS THE SHADES  -  CRANK LOCKED", cx, y, 18.0, col(WARNING, 0.9));
+                } else {
+                    let what = if down { "ROLL UP THE SHADE" } else { "LET DOWN THE SHADE" };
+                    let parts = [Hint::Words("HOLD"), Hint::Key(&key), Hint::Words(what)];
+                    let wd = hints(&parts, 0.0, y, 18.0, col(WHITE, 0.95), false);
+                    hints(&parts, cx - wd / 2.0, y, 18.0, col(WHITE, 0.95), true);
+                    let full = canopy::CRANK_HOLD_TICKS as f32 / ferrite_shared::TICK_HZ as f32;
+                    let t = (app.crank_hold / full).clamp(0.0, 1.0);
+                    if t > 0.0 {
+                        let bw = 220.0;
+                        draw_rectangle(cx - bw / 2.0, y + 14.0, bw, 6.0, col(DARK, 0.7));
+                        draw_rectangle(cx - bw / 2.0, y + 14.0, bw * t, 6.0, col(WHITE, 0.95));
+                    }
+                }
+            }
+        }
+    }
+
     // ---- world-space markers ----
     for (k, p) in app.world.points.iter().enumerate() {
         if !point_used(snap.mode, k) {

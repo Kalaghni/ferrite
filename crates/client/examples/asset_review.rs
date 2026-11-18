@@ -72,7 +72,11 @@ async fn main() {
     let output = args.get(1);
     let pose = args.get(2).map(String::as_str).unwrap_or("idle");
     let map = map_by_name(mode).unwrap_or(0);
-    let w = World::with_map(0xFE221, map);
+    let mut w = World::with_map(0xFE221, map);
+    // REVIEW_SHADES=down shows Canopy's shade curtains let down.
+    if std::env::var("REVIEW_SHADES").is_ok_and(|v| v == "down") {
+        w.shades = [1.0; 2];
+    }
     let dmask = match args.get(4).map(String::as_str) {
         Some("broken") => w.features.iter().fold(0, |mask, f| mask | (1u64 << f.bit)),
         Some(mask) => mask.strip_prefix("0x").map_or_else(|| mask.parse().ok(), |hex| u64::from_str_radix(hex, 16).ok()).unwrap_or(0),
@@ -172,6 +176,7 @@ async fn main() {
             }
         } else if !gallery {
             scene::crates(&mut opaque, &w, dmask);
+            scene::shades(&mut opaque, &w, time);
             scene::beacons(
                 &mut opaque,
                 &mut alpha,

@@ -133,6 +133,8 @@ pub struct Player {
     pub hp: f32,
     pub alive: bool,
     pub respawn_at: u32,
+    /// Ticks Use has been held at a shade crank (Canopy).
+    pub crank: u16,
     pub last_dmg_tick: u32,
     pub last_seq: u32,
     pub last_cmd_tick: u32,
@@ -381,6 +383,8 @@ pub struct Game {
     pub flags: [Flag; 2],
     pub pickups: Vec<Pickup>,
     next_pickup: u16,
+    /// Canopy's shade banks.
+    pub shades: Shades,
     rng: Rng,
 }
 
@@ -430,6 +434,7 @@ impl Game {
             round_end: 0,
             flags: [Flag { state: 0, pos: Vec3::ZERO, carrier: 0, since: 0 }; 2],
             pickups: Vec::new(),
+            shades: Shades::default(),
             next_pickup: 0,
             rng: Rng::new(cfg.seed ^ 0x5EED),
             cfg,
@@ -921,6 +926,7 @@ impl Game {
             }
         }
         let out = sim::step(&mut self.players[i].st, &cmd, &self.world, self.dmask);
+        self.work_crank(i, &cmd);
         if out.fired {
             self.fire(i, &cmd, out.heat);
         }
@@ -1473,8 +1479,11 @@ impl Game {
                 let c = self.flags[f].carrier;
                 let held = c < self.players.len() && self.players[c].alive && self.players[c].team == enemy;
                 if !held {
-                    // The carrier fell (or left): the flag lies where they were.
-                    let pos = self.flags[f].pos;
+                    // The carrier fell (or left): the flag lies where they were,
+                    // except that on Canopy's boughs it drops through to the
+                    // floor below, so it is always on ground anyone can reach.
+                    let pos = self.dropped_flag_rest(self.flags[f].pos);
+                    self.flags[f].pos = pos;
                     if self.world.danger(pos, 0.5) {
                         self.flags[f] = Flag { state: 0, pos: home, carrier: 0, since: t };
                         self.feed.push(Feed::Flag { flag: f as u8, by: SPECTATOR_ID, what: flag_ev::RETURNED });
@@ -1636,10 +1645,10 @@ impl Game {
     }
 
     /// Votes per map from the players in the lobby.
-    pub fn votes(&self) -> [u8; 8] {
-        let mut v = [0u8; 8];
+    pub fn votes(&self) -> [u8; MAX_VOTE_MAPS] {
+        let mut v = [0u8; MAX_VOTE_MAPS];
         for p in self.players.iter().filter(|p| p.bot.is_none()) {
-            if (p.vote as usize) < ferrite_shared::map::MAPS.len() {
+            if (p.vote as usize) < ferrite_shared::map::MAPS.len().min(MAX_VOTE_MAPS) {
                 v[p.vote as usize] += 1;
             }
         }
@@ -1651,7 +1660,7 @@ impl Game {
     pub fn lobby_choice(&self) -> u8 {
         let v = self.votes();
         let best = *v.iter().max().unwrap_or(&0);
-        if best == 0 || v[self.lobby_map as usize % 8] == best {
+        if best == 0 || v[self.lobby_map as usize % MAX_VOTE_MAPS] == best {
             return self.lobby_map;
         }
         v.iter().position(|&n| n == best).unwrap_or(0) as u8
@@ -1729,6 +1738,81 @@ impl Game {
         }
     }
 
+    /// Where a flag dropped at `pos` comes to rest. On Canopy a flag let
+    /// go of well above the ground falls through the walkway to whatever is
+    /// below it; on other maps it stays put.
+    fn dropped_flag_rest(&self, pos: Vec3) -> Vec3 {
+        use ferrite_shared::map::canopy;
+        if self.world.map != canopy::MAP_ID || pos.y - self.world.height(pos.x, pos.z) < 2.5 {
+            return pos;
+        }
+        let from = pos - Vec3::Y * 0.7;
+        let t = self.world.raycast(from, Vec3::NEG_Y, 60.0, self.dmask).map_or(0.0, |h| h.t);
+        let rest = from - Vec3::Y * t;
+        let inside = self.world.blocks.iter().any(|b| {
+            let q = rest + Vec3::Y * 0.3;
+            q.cmpgt(b.min).all() && q.cmplt(b.max).all()
+        });
+        if t < 0.05 || inside {
+            // Nowhere sensible below: lay it on the ground by the line of drop.
+            return Vec3::new(pos.x, self.world.height(pos.x, pos.z), pos.z);
+        }
+        rest
+    }
+
+    /// Canopy's shade banks: a player holding Use at a crank, facing it,
+    /// lets that bank down or rolls it up. The crown gust locks the cranks
+    /// and furls every curtain while it blows.
+    fn work_crank(&mut self, i: usize, cmd: &Cmd) {
+        use ferrite_shared::map::canopy;
+        if self.world.map != canopy::MAP_ID {
+            return;
+        }
+        let gust = ferrite_shared::events::canopy_gust(self.world.clock);
+        let t = self.tick;
+        let p = &mut self.players[i];
+        let fwd = sim::view_dir(cmd.yaw, 0.0);
+        let bank = if cmd.more & btn2::USE != 0 && p.alive && p.st.ride == 0 && p.st.cooldown == 0 && !gust.locked {
+            canopy::crank_at(&self.world, p.st.pos, fwd)
+        } else {
+            None
+        };
+        let Some(k) = bank else {
+            p.crank = 0;
+            return;
+        };
+        if t < self.shades.rest[k] {
+            p.crank = 0;
+            return;
+        }
+        p.crank += 1;
+        if p.crank >= canopy::CRANK_HOLD_TICKS {
+            p.crank = 0;
+            self.shades.down[k] = !self.shades.down[k];
+            self.shades.rest[k] = t + canopy::CRANK_REST_TICKS;
+        }
+    }
+
+    /// Roll the shade banks toward where they are wanted, the gust holding
+    /// them up, and tell the world how far down they hang.
+    fn tick_shades(&mut self) {
+        use ferrite_shared::map::canopy;
+        if self.world.map != canopy::MAP_ID {
+            return;
+        }
+        let gust = ferrite_shared::events::canopy_gust(self.world.clock);
+        if gust.furl {
+            self.shades.down = [false; 2];
+        }
+        let step = 1.0 / (ferrite_shared::TICK_HZ as f32 * canopy::SHADE_SECS);
+        for k in 0..2 {
+            let goal = if self.shades.down[k] { 1.0 } else { 0.0 };
+            let p = &mut self.shades.pos[k];
+            *p += (goal - *p).clamp(-step, step);
+        }
+        self.world.shades = self.shades.pos;
+    }
+
     fn reset_round(&mut self) {
         let (next, mode) = (self.next_map(), self.next_mode());
         self.start_round(next, mode);
@@ -1747,6 +1831,8 @@ impl Game {
         }
         self.reset_field();
         self.dmask = 0;
+        self.shades = Shades::default();
+        self.world.shades = [0.0; 2];
         // The same map can repeat: restore routes through intact structures,
         // as well as their colliders, before choosing the next spawns.
         self.nav = Nav::build(&self.world);
@@ -1776,6 +1862,7 @@ impl Game {
         // Timed hazards (the lava runner, the flood) follow the world clock
         // that clients draw them by.
         self.world.clock = ferrite_shared::world_clock(t as f64);
+        self.tick_shades();
         for p in self.players.iter_mut() {
             p.credits = (p.credits + 1.0).min(12.0);
             p.st.surge = t < p.surge_until;
@@ -2038,6 +2125,7 @@ impl Game {
                 FlagNet { state: fl.state, carrier: fl.carrier.min(255) as u8, pos: fl.pos.to_array() }
             }),
             pickups: self.pickups.iter().map(|p| NetPickup { id: p.id, kind: p.kind, pos: NetPickup::enc(p.pos.to_array()) }).collect(),
+            shades: self.shades.pos.map(|p| (p.clamp(0.0, 1.0) * 255.0).round() as u8),
         }
     }
 
@@ -2093,6 +2181,15 @@ fn load_records(path: Option<&std::path::Path>) -> std::collections::HashMap<Who
     m
 }
 
+/// Canopy's two shade banks (west, east): how far each is let down, whether
+/// it is wanted down, and the tick until which its crank rests.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Shades {
+    pub pos: [f32; 2],
+    pub down: [bool; 2],
+    pub rest: [u32; 2],
+}
+
 fn dummy() -> Player {
     Player {
         id: 0,
@@ -2115,6 +2212,7 @@ fn dummy() -> Player {
         hp: 0.0,
         alive: false,
         respawn_at: 0,
+        crank: 0,
         last_dmg_tick: 0,
         last_seq: 0,
         last_cmd_tick: 0,

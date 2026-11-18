@@ -89,6 +89,75 @@ pub const LINES: [&[(f32, f32, f32)]; 3] = [
 /// How near a dock a player must stand to take a line.
 pub const DOCK_REACH: f32 = 1.5;
 
+/// Shade curtains round the root well, west bank: cloth hung across the
+/// plane x = `SHADE_X`, over these stretches of z, from a drum at
+/// `SHADE_TOP` down to `SHADE_TOP - SHADE_DROP` when fully let down. The
+/// east bank is the half-turn mirror. Cloth stops sight, never bullets.
+pub const SHADE_X: f32 = -18.0;
+pub const SHADE_SPANS: [(f32, f32); 2] = [(8.0, 24.0), (-24.0, -8.0)];
+pub const SHADE_TOP: f32 = 7.4;
+pub const SHADE_DROP: f32 = 6.4;
+/// Seconds for a curtain to roll up or down.
+pub const SHADE_SECS: f32 = 0.6;
+/// The west bank's crank, on the inward face of the west trunk, and how
+/// near (and facing it) a player works it; holding Use this long toggles
+/// the bank, which then rests this long before it can be worked again.
+pub const CRANK: (f32, f32) = (-21.4, 0.0);
+pub const CRANK_REACH: f32 = 2.2;
+pub const CRANK_HOLD_TICKS: u16 = 72;
+pub const CRANK_REST_TICKS: u32 = 360;
+
+/// The crank of bank `k` (0 west, 1 east), at its height.
+pub fn crank(w: &World, k: usize) -> Vec3 {
+    let s = if k == 0 { 1.0 } else { -1.0 };
+    let (x, z) = (CRANK.0 * s, CRANK.1 * s);
+    Vec3::new(x, w.height(x, z) + 1.1, z)
+}
+
+/// The bank whose crank a player at `p` facing `fwd` (horizontal) can work.
+pub fn crank_at(w: &World, p: Vec3, fwd: Vec3) -> Option<usize> {
+    (0..2).find(|&k| {
+        let c = crank(w, k);
+        let d = Vec3::new(c.x - p.x, 0.0, c.z - p.z);
+        d.length() < CRANK_REACH && (c.y - p.y).abs() < 2.0 && d.normalize_or_zero().dot(fwd) > 0.4
+    })
+}
+
+/// The cloth panels of bank `k`: (x of the plane, z0, z1).
+pub fn shade_panels(k: usize) -> [(f32, f32, f32); 2] {
+    let s = if k == 0 { 1.0 } else { -1.0 };
+    SHADE_SPANS.map(|(z0, z1)| {
+        let (a, b) = (z0 * s, z1 * s);
+        (SHADE_X * s, a.min(b), a.max(b))
+    })
+}
+
+/// Whether the sight line a-b passes through let-down cloth, with the banks
+/// let down by `shades` (0 up, 1 down).
+pub fn screened(shades: [f32; 2], a: Vec3, b: Vec3) -> bool {
+    for (k, &down) in shades.iter().enumerate() {
+        if down < 0.02 {
+            continue;
+        }
+        let bottom = SHADE_TOP - SHADE_DROP * down.min(1.0);
+        for (x, z0, z1) in shade_panels(k) {
+            let dx = b.x - a.x;
+            if dx.abs() < 1e-5 {
+                continue;
+            }
+            let t = (x - a.x) / dx;
+            if !(0.0..=1.0).contains(&t) {
+                continue;
+            }
+            let p = a + (b - a) * t;
+            if p.z >= z0 && p.z <= z1 && p.y >= bottom && p.y <= SHADE_TOP {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Open potting shelters: roofs on four posts, cover from the boughs for
 /// the ground fight. West-authored centres; each is 8 x 6 m.
 pub const SHELTERS: [(f32, f32); 4] = [(-108.0, -48.0), (-56.0, -6.0), (-34.0, 62.0), (-50.0, -62.0)];

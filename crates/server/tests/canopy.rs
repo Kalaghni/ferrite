@@ -221,3 +221,175 @@ fn the_boughs_are_mirrored_through_the_centre() {
         }
     }
 }
+
+// ------------------------------------------------------------ shades
+
+use ferrite_server::{Config, Game};
+use ferrite_shared::events::{canopy_gust, GUST_CALM, GUST_FURL, GUST_PERIOD, GUST_WARN};
+use ferrite_shared::{mode, TICK_HZ};
+
+fn game() -> (Game, usize) {
+    let cfg = Config {
+        port: 0,
+        per_team: 1,
+        mode: mode::CONQUEST,
+        map: canopy::MAP_ID,
+        lobby_secs: 0,
+        log: false,
+        discover: false,
+        ..Default::default()
+    };
+    let mut g = Game::new(cfg);
+    let me = g.join_team("tester", 0).expect("slot");
+    for _ in 0..30 {
+        g.tick();
+    }
+    for i in 0..g.players.len() {
+        if i != me {
+            let p = &mut g.players[i];
+            p.alive = false;
+            p.hp = 0.0;
+            p.respawn_at = u32::MAX;
+        }
+    }
+    g.players[me].bot = None;
+    (g, me)
+}
+
+/// Stand in front of the west crank, facing it, while the wind is calm.
+fn at_crank(g: &mut Game, me: usize) -> f32 {
+    let c = canopy::crank(&g.world, 0);
+    let spot = Vec3::new(c.x + 1.2, 0.0, c.z);
+    let p = &mut g.players[me];
+    p.alive = true;
+    p.hp = 100.0;
+    p.st = PState::spawn(Vec3::new(spot.x, g.world.height(spot.x, spot.z) + 0.02, spot.z), 0);
+    // Facing west, toward the trunk.
+    -std::f32::consts::FRAC_PI_2
+}
+
+/// Run the game clock on to a calm moment in the gust's window.
+fn calm(g: &mut Game) {
+    while canopy_gust(g.world.clock).locked || canopy_gust(g.world.clock).phase > GUST_WARN - 8.0 {
+        g.tick();
+    }
+}
+
+#[test]
+fn holding_use_at_a_crank_lets_its_shade_down_and_the_gust_furls_it() {
+    let (mut g, me) = game();
+    calm(&mut g);
+    let yaw = at_crank(&mut g, me);
+    let mut seq = 1000;
+    // A tap does nothing; a full hold lets the west bank down.
+    for _ in 0..20 {
+        seq += 1;
+        g.apply_cmd(me, Cmd { seq, yaw, more: btn2::USE, ..Default::default() });
+        g.tick();
+    }
+    assert!(!g.shades.down[0]);
+    seq += 1;
+    g.apply_cmd(me, Cmd { seq, yaw, ..Default::default() });
+    g.tick();
+    for _ in 0..canopy::CRANK_HOLD_TICKS + 2 {
+        seq += 1;
+        g.apply_cmd(me, Cmd { seq, yaw, more: btn2::USE, ..Default::default() });
+        g.tick();
+    }
+    assert!(g.shades.down[0] && !g.shades.down[1], "the west bank only");
+    for _ in 0..60 {
+        g.tick();
+    }
+    assert!(g.world.shades[0] > 0.99, "fully let down in well under a second");
+    // Sight across the west panel is now screened; bullets still pass.
+    let (a, b) = (Vec3::new(-30.0, 3.0, 16.0), Vec3::new(-6.0, 3.0, 16.0));
+    assert!(g.world.screened(a, b));
+    assert!(g.world.los(a, b, 0));
+    // The gust comes through and rolls it up, whoever wants it down.
+    while !canopy_gust(g.world.clock).furl {
+        g.tick();
+    }
+    for _ in 0..60 {
+        g.tick();
+    }
+    assert!(!g.shades.down[0] && g.world.shades[0] < 0.01);
+    assert!(!g.world.screened(a, b));
+}
+
+#[test]
+fn the_cranks_rest_after_use_and_lock_in_the_wind() {
+    let (mut g, me) = game();
+    calm(&mut g);
+    let yaw = at_crank(&mut g, me);
+    let mut seq = 1000;
+    let mut hold = |g: &mut Game, n: u16| {
+        for _ in 0..n {
+            seq += 1;
+            g.apply_cmd(me, Cmd { seq, yaw, more: btn2::USE, ..Default::default() });
+            g.tick();
+        }
+        seq += 1;
+        g.apply_cmd(me, Cmd { seq, yaw, ..Default::default() });
+        g.tick();
+    };
+    hold(&mut g, canopy::CRANK_HOLD_TICKS + 2);
+    assert!(g.shades.down[0]);
+    // Straight away again: the crank is resting.
+    hold(&mut g, canopy::CRANK_HOLD_TICKS + 2);
+    assert!(g.shades.down[0], "a resting crank does not turn");
+    // In the wind it is locked.
+    while !canopy_gust(g.world.clock).locked {
+        g.tick();
+    }
+    g.shades.down[0] = false;
+    hold(&mut g, canopy::CRANK_HOLD_TICKS + 2);
+    assert!(!g.shades.down[0], "locked in the gust");
+}
+
+#[test]
+fn the_gust_keeps_its_timetable() {
+    let at = |t: f32| canopy_gust(t);
+    assert!(at(5.0).warning.is_none() && !at(5.0).locked && at(5.0).strength == 0.0);
+    assert_eq!(at(GUST_WARN + 1.0).warning.map(|s| s.round()), Some((GUST_FURL - GUST_WARN - 1.0).round()));
+    assert!(at(GUST_WARN + 1.0).locked && !at(GUST_WARN + 1.0).furl);
+    assert!(at(GUST_FURL + 1.0).furl && at(GUST_FURL + 1.0).strength > 0.9);
+    assert!(!at(GUST_CALM + 1.0).locked && !at(GUST_CALM + 1.0).furl);
+    assert_eq!(at(GUST_PERIOD + 5.0), at(5.0));
+    let _ = TICK_HZ;
+}
+
+#[test]
+fn a_flag_dropped_on_the_boughs_falls_to_the_floor() {
+    let cfg = Config {
+        port: 0,
+        per_team: 1,
+        mode: mode::CTF,
+        map: canopy::MAP_ID,
+        lobby_secs: 0,
+        log: false,
+        discover: false,
+        ..Default::default()
+    };
+    let mut g = Game::new(cfg);
+    let me = g.join_team("tester", 0).expect("slot");
+    for _ in 0..30 {
+        g.tick();
+    }
+    g.players[me].bot = None;
+    // Carry the enemy flag up onto the north span of the circuit, then fall.
+    let at = Vec3::new(-20.0, BOUGH_Y + 0.02, 48.0);
+    let p = &mut g.players[me];
+    p.alive = true;
+    p.st = PState::spawn(at, 0);
+    g.flags[1] = ferrite_server::Flag { state: 1, pos: at, carrier: me, since: g.tick };
+    g.tick();
+    let p = &mut g.players[me];
+    p.alive = false;
+    p.hp = 0.0;
+    p.respawn_at = u32::MAX;
+    g.tick();
+    let f = g.flags[1];
+    assert_eq!(f.state, 2, "dropped");
+    assert!(f.pos.y < BOUGH_Y - 5.0, "fell through to {:?}", f.pos);
+    assert!((f.pos.y - g.world.height(f.pos.x, f.pos.z)).abs() < 1.0, "on the floor at {:?}", f.pos);
+}

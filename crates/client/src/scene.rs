@@ -586,6 +586,11 @@ pub fn build_sky() -> Mesh {
     m
 }
 
+/// Canopy's shade curtains, drawn every frame as they roll.
+pub fn shades(m: &mut Mesh, w: &World, time: f32) {
+    canopy::shades(m, w, time);
+}
+
 pub fn crates(m: &mut Mesh, w: &World, dmask: u64) {
     for (i, b) in w.blocks.iter().enumerate() {
         if b.kind != BlockKind::Crate || !w.solid(i, dmask) {

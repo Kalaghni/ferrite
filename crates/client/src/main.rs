@@ -518,6 +518,8 @@ pub struct App {
     land: f32,
     mantling: bool,
     mantle_vis: f32,
+    /// Seconds Use has been held at a shade crank (Canopy), for the HUD.
+    crank_hold: f32,
     slide_vis: f32,
     air_vis: f32,
     strafe_vis: f32,
@@ -1587,6 +1589,7 @@ async fn play(
         land: 0.0,
         mantling: false,
         mantle_vis: 0.0,
+        crank_hold: 0.0,
         slide_vis: 0.0,
         air_vis: 0.0,
         strafe_vis: 0.0,
@@ -2256,6 +2259,20 @@ async fn play(
         // Lava and flood damage have no attacker, so no hit event arrives for
         // them: hold the damage overlay up, pulsing, while we stand in them.
         app.world.clock = app.net.world_time(now);
+        // Canopy's shade banks roll toward where the server has them.
+        if let Some(s) = app.net.latest() {
+            let step = dt / ferrite_shared::map::canopy::SHADE_SECS;
+            for k in 0..2 {
+                let goal = s.shades[k] as f32 / 255.0;
+                let p = &mut app.world.shades[k];
+                *p += (goal - *p).clamp(-step, step);
+            }
+        }
+        let at_crank = app.alive
+            && !app.spectator
+            && app.world.map == ferrite_shared::map::canopy::MAP_ID
+            && ferrite_shared::map::canopy::crank_at(&app.world, app.st.pos, sim::view_dir(app.yaw, 0.0)).is_some();
+        app.crank_hold = if at_crank && app.captured && app.bind_down(bindings::Action::Use) { app.crank_hold + dt } else { 0.0 };
         if app.alive && !app.spectator && app.world.hazard(app.st.pos).is_some() {
             app.dmg_flash = app.dmg_flash.max(0.75 + 0.25 * (now as f32 * 7.0).sin());
         }
@@ -2691,6 +2708,7 @@ async fn play(
                 .collect();
             scene::beacons(&mut opaque, &mut alpha, &mut add, &app.world, &owners, world_t, visual_dmask);
             scene::ambience(&mut opaque, &mut alpha, &mut add, &app.world, eye, cam_right, cam_up, world_t);
+            scene::shades(&mut opaque, &app.world, world_t);
             if s.mode == mode::CTF {
                 for (f, fl) in s.flags.iter().enumerate() {
                     let carried = fl.state == 1;

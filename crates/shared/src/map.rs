@@ -268,6 +268,9 @@ pub struct World {
     pub ladders: Vec<Ladder>,
     /// Seedlines a player can ride (Canopy's harvest slings).
     pub lines: Vec<Seedline>,
+    /// How far Canopy's two shade banks are let down (0 up, 1 down). The
+    /// server sets it every tick and clients from each snapshot.
+    pub shades: [f32; 2],
 }
 
 fn hash(x: i32, z: i32, seed: u32) -> f32 {
@@ -442,6 +445,7 @@ impl World {
             clock: 0.0,
             ladders: Vec::new(),
             lines: Vec::new(),
+            shades: [0.0; 2],
         };
         for (i, (x, z)) in def.points.iter().enumerate() {
             w.points[i] = vec3(*x, w.height(*x, *z), *z);
@@ -654,6 +658,12 @@ impl World {
             t0 = t1;
         }
         best
+    }
+
+    /// Whether shade cloth hangs across the sight line a-b. Like leaves it
+    /// stops sight and not bullets.
+    pub fn screened(&self, a: Vec3, b: Vec3) -> bool {
+        self.map == canopy::MAP_ID && canopy::screened(self.shades, a, b)
     }
 
     pub fn los(&self, a: Vec3, b: Vec3, dmask: u64) -> bool {

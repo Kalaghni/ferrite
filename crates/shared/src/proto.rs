@@ -567,7 +567,7 @@ pub struct Snapshot {
     /// Map being played, and the one the rotation moves to next round.
     pub map: u8,
     pub next_map: u8,
-    pub votes: [u8; 8],
+    pub votes: [u8; MAX_VOTE_MAPS],
     /// Game mode (index into `MODES`), the one the next round will use,
     /// and the lobby's votes per mode.
     pub mode: u8,
@@ -581,7 +581,12 @@ pub struct Snapshot {
     /// Capture the flag: each team's flag.
     pub flags: [FlagNet; 2],
     pub pickups: Vec<NetPickup>,
+    /// Canopy's shade banks, how far let down (0 up, 255 down).
+    pub shades: [u8; 2],
 }
+
+/// Maps the lobby can count votes for.
+pub const MAX_VOTE_MAPS: usize = 16;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct RosterEntry {

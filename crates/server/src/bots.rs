@@ -238,6 +238,10 @@ pub fn think(g: &Game, i: usize, b: &mut Bot) -> Cmd {
             if !flash && d > 2.5 && g.world.foliage(eye, chest) {
                 continue;
             }
+            // Shade cloth hides a soldier whatever they do.
+            if g.world.screened(eye, chest) {
+                continue;
+            }
             let mut score = d;
             // Whoever has our flag comes first.
             if g.mode == mode::CTF && g.flags[me.team as usize % 2].state == 1 && g.flags[me.team as usize % 2].carrier == j {
