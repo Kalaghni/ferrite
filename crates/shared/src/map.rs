@@ -4,6 +4,7 @@
 //! symmetric under a 180-degree rotation so neither team has a terrain
 //! advantage.
 
+pub mod canopy;
 pub mod fallen_giant;
 pub mod landmarks;
 pub mod relay;
@@ -53,7 +54,7 @@ pub struct MapDef {
     pub ground: [[f32; 3]; 3],
 }
 
-pub static MAPS: [MapDef; 7] = [
+pub static MAPS: [MapDef; 8] = [
     MapDef {
         name: "FOUNDRY VALLEY",
         blurb: "Autumn steelworks, boiler hall and a covered service culvert",
@@ -102,6 +103,13 @@ pub static MAPS: [MapDef; 7] = [
         points: slag_cathedral::POINTS,
         bases: BASES_XZ,
         ground: [[0.28, 0.29, 0.29], [0.42, 0.37, 0.31], [0.37, 0.36, 0.34]],
+    },
+    MapDef {
+        name: "CANOPY",
+        blurb: "Fight through a hollow giant fig - ride the seedlines, pull the shade down",
+        points: canopy::POINTS,
+        bases: BASES_XZ,
+        ground: [[0.19, 0.39, 0.25], [0.56, 0.47, 0.31], [0.29, 0.24, 0.16]],
     },
 ];
 
@@ -254,6 +262,10 @@ fn raw_height(x: f32, z: f32, s: u32) -> f32 {
 /// The lie of the land before objectives are levelled. Each map's shape is
 /// built from terms that are unchanged by (x, z) -> (-x, -z).
 fn shape(x: f32, z: f32, s: u32, map: u8) -> f32 {
+    // Canopy is authored in final metres.
+    if map % MAPS.len() as u8 == canopy::MAP_ID {
+        return canopy::shape(x, z, raw_height(x, z, s) * 0.03);
+    }
     // Every feature was designed on the original footprint; sample it there.
     let (x, z) = (x / SPREAD, z / SPREAD);
     match map % MAPS.len() as u8 {
@@ -395,6 +407,7 @@ impl World {
             4 => w.build_spillway(&mut rng),
             5 => w.build_relay(&mut rng),
             slag_cathedral::MAP_ID => slag_cathedral::build(&mut w, &mut rng),
+            canopy::MAP_ID => canopy::build(&mut w, &mut rng),
             _ => w.build_structures(&mut rng),
         }
         w
@@ -517,6 +530,8 @@ impl World {
         }
         if self.map == spillway::MAP_ID && k == crate::NUM_POINTS / 2 {
             spillway::on_deck(self, pos)
+        } else if self.map == canopy::MAP_ID {
+            canopy::on_pad(self, k, pos)
         } else {
             d.y.abs() < 7.0
         }
@@ -697,6 +712,7 @@ impl World {
         !landmarks::reserved(self.map, cx, cz, r, r)
             && !fallen_giant::reserved(self.map, cx, cz, r, r)
             && !relay::reserved(self.map, cx, cz, r, r)
+            && !canopy::reserved(self.map, cx, cz, r, r)
             && !self.tunnel_reserved(cx, cz, r)
             && !self.blocks.iter().any(|b| cx + r > b.min.x && cx - r < b.max.x && cz + r > b.min.z && cz - r < b.max.z)
     }

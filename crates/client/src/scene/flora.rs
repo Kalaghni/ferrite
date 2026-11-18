@@ -135,8 +135,32 @@ static MOODS: [Mood; 5] = [
     },
 ];
 
-/// The classic maps' moods. Relay and Slag Cathedral paint their own.
+/// CANOPY: a bright afternoon before a tropical squall; warm sun through a
+/// break in the cloud, a blue-grey storm bank behind the crown.
+static CANOPY: Mood = Mood {
+    fog: [0.56, 0.70, 0.65, 0.0052],
+    sun: Vec3::new(0.0, 0.766, -0.643),
+    tone: [[1.02, 0.93, 0.70], [0.37, 0.52, 0.55], [0.20, 0.31, 0.20]],
+    zenith: [0.18, 0.39, 0.47],
+    glow: [0.84, 0.86, 0.71],
+    disc: 0.85,
+    clouds: 32,
+    cloud: [0.88, 0.90, 0.88],
+    belly: [0.38, 0.44, 0.50],
+    range: [0.26, 0.40, 0.34],
+    mist: (0.55, 2.0),
+    motes: [1.0, 0.96, 0.70, 0.6],
+    dust: 0.0,
+    leaves: true,
+    birds: 4,
+};
+
+/// The classic maps' moods and Canopy's. Relay and Slag Cathedral paint
+/// their own.
 pub fn mood(map: u8) -> Option<&'static Mood> {
+    if map == super::canopy::ID {
+        return Some(&CANOPY);
+    }
     MOODS.get(map as usize)
 }
 
@@ -282,6 +306,28 @@ struct Biome {
     /// Weeds per metre along the foot of walls.
     weeds: f32,
 }
+
+/// CANOPY: lush, broad-leaved and wet; coral flowers, ferns everywhere, a
+/// jungle wall beyond the fence.
+static CANOPY_BIOME: Biome = Biome {
+    bushes: 560,
+    bush: [[0.16, 0.38, 0.20], [0.24, 0.46, 0.22], [0.12, 0.30, 0.22]],
+    tall: 0.28,
+    tall_tint: [0.80, 1.05, 0.78],
+    flowers: 700,
+    petals: &[[0.96, 0.46, 0.42], [0.98, 0.78, 0.30], [0.95, 0.92, 0.86], [0.86, 0.36, 0.56]],
+    ferns: 0.95,
+    scrub: 60,
+    reeds: 0,
+    deadwood: 40,
+    litter: true,
+    ivy: 0.8,
+    moss: 0.7,
+    saplings: 90,
+    backdrop: 900,
+    pine: 0.0,
+    weeds: 1.0,
+};
 
 static BIOMES: [Biome; 6] = [
     // FOUNDRY VALLEY: an overgrown autumn meadow.
@@ -766,7 +812,7 @@ fn moss(m: &mut Mesh, b: &Block, i: usize, r: &mut Rng) {
 
 /// Plant a map's undergrowth into its static mesh.
 pub fn grow(m: &mut Mesh, w: &World) {
-    let Some(b) = BIOMES.get(w.map as usize) else { return };
+    let Some(b) = (if w.map == super::canopy::ID { Some(&CANOPY_BIOME) } else { BIOMES.get(w.map as usize) }) else { return };
     let seed = (w.seed as u32) ^ 0xF10A;
     // The ground under each objective, not the objective: Spillway's C stands
     // on a deck over the channel.

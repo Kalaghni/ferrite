@@ -272,6 +272,11 @@ pub fn build_world_profiled(w: &World) -> (Mesh, Profile) {
             continue;
         }
         let g = groups[i]; // shade of the group, so coplanar faces match
+        if w.map == canopy::ID && b.kind == BlockKind::Trunk {
+            canopy::block(&mut m, w, b, i);
+            meter.mark(&mut prof, &m, "canopy");
+            continue;
+        }
         if w.map == slag_cathedral::ID {
             slag_cathedral::block(&mut m, b, g);
             meter.mark(&mut prof, &m, "slag cathedral");
@@ -830,6 +835,8 @@ mod weapons;
 pub use players::*;
 pub use weapons::*;
 
+#[path = "scene/canopy.rs"]
+mod canopy;
 #[path = "scene/fallen_giant.rs"]
 mod fallen_giant;
 #[path = "scene/flora.rs"]
