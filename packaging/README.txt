@@ -1,103 +1,9 @@
 FERRITE - 12v12 front-line conquest
 https://github.com/Kalaghni/ferrite
 
-NEW IN v0.13
-  Slag Cathedral: eruptions send lava down a runner across the south of
-  the map for half a minute. Cross on the gratings or go round.
-  Spillway: C stands on a raised gate deck, and after each siren test
-  the channel below floods. Stay out of the water.
-  Relay: climb the ladders of BACKBONE, the great mast, to a platform at
-  20 m and a top deck at 36.75 m.
-  Tunnel portals are one rock face, with no floating plate or open
-  corners (v0.13.1: inside the cave too).
-  v0.13.2: the volcano rumbles and booms, lava pours down its cone,
-  killcams always reach the kill, drag to turn models in the armory.
-  v0.13.3: a new FERRITE logo and app icon. v0.13.4: the icon is the
-  //F mark on the dark tile.
-  Everyone in a match needs v0.13.0, including the dedicated server.
-
-NEW IN v0.12
-  Quarry's mine and Ridgeline's cave run underground: in at one end,
-  under the hill and out at the other.
-  The Fallen Giant really crashed: broken hull, buckled frames that block
-  the long shot through C, cover at C, and wreckage you can hide behind.
-  Monuments over Foundry Valley, the Quarry and Spillway.
-  Every weapon finish has its own pattern, material and detail.
-  Cinematic camera: P to fly, F1 hides the HUD, F12 saves a screenshot.
-  Safer online play (session handshake, server limits) and map events in
-  step for everyone.
-  Updates are checked against published SHA-256 sums; a version that
-  fails to start is rolled back by itself (SETTINGS > VIDEO > ROLL BACK).
-  Everyone in a match needs v0.12.0, including the dedicated server.
-
-NEW IN v0.11
-  Landmarks on every map: workshops, mine adits, ranger lodges, container
-  passages and tunnels on the original four, giant machinery overhead, a
-  mast beyond Relay and an erupting volcano beyond Slag Cathedral.
-  The Fallen Giant: a crashed cargo aircraft across Ridgeline's saddle,
-  with point C inside its hold.
-  Grenades can breach marked wall panels, drop walkways and stop machines.
-  A new round puts them back.
-  Soldiers rebuilt to match the launcher art, and about twice the detail
-  on every map.
-  Bots no longer see through trees.
-  Also includes everything from v0.10 below, not released on its own.
-  Everyone in a match needs v0.11.0, including the dedicated server.
-
-NEW IN v0.10
-  Four game modes: Conquest, Team Deathmatch (fast), Capture the Flag
-  (slow) and Stronghold (hold the centre). Pick one on HOST & PLAY, or
-  MIXED for a new one each round; the lobby can vote for another.
-  Kill streaks: at 3, 5 and 7 kills your target drops armour, overdrive
-  or overcharge. Other kills may leave a health pack or ammunition.
-  Walk over a pickup to take it - so can anyone else.
-  Credits: every round pays, a win far more than a loss. Spend them in
-  the ARMORY on seven new weapon finishes and six new soldier looks.
-  Everything from earlier versions stays free.
-  A first launch opens with a short introduction and 400 credits.
-  The classic maps each have their own time of day and weather, far more
-  growing on them, wind in the grass, falling leaves, mist and birds.
-  Touch controls: an on-screen stick and buttons. Try them with --touch
-  or SETTINGS > CONTROLS > MOUSE > TOUCH CONTROLS.
-  Everyone in a match needs v0.10.0, including the dedicated server.
-
-NEW IN v0.9.2
-  Every map is spread out by half again, with buildings, sheds, tanks,
-  lookouts and ruins in the new ground between the objectives. Players
-  spawn spread across open ground, away from other players.
-  Pick your team in the lobby (M). Your sight for each weapon is
-  remembered. Number keys change your loadout only while the loadout
-  panel is open. F11 toggles fullscreen. Lava shows the damage overlay.
-  Everyone in a match needs v0.9.2, including the dedicated server.
-
-NEW IN v0.9.1
-  New song in the music rotation: "Barbed Wire" by breadKernel. It plays
-  on the launcher, and in matches when music during matches is on.
-  v0.9.0 and v0.9.1 players can share a match.
-
-NEW IN v0.9
-  Slag Cathedral: a bell foundry on the scale of a cathedral, with a vaulted
-  casting nave, raised galleries, covered service lanes and a dedicated map
-  score. Enable music during matches to hear it while fighting.
-  Two lava channels cross its casting floor. Standing in one burns you;
-  use the grated bridges or take a running jump.
-  Relay: the four antenna masts are now towers you can climb. Walk the
-  stair to a railed deck 6 or 9 metres up. Rails stop you falling, not
-  bullets; the two plate parapets are the cover.
-  Everyone in a match needs v0.9.0, including the dedicated server.
-
-NEW IN v0.8
-  Two new maps: Spillway (drained waterworks) and Relay (highland signal
-  station). The original four maps keep their layouts.
-  All six soldier looks have faceted armor, team-marked field packs and
-  improved movement and weapon animations based on the launcher artwork.
-  Existing guns and sights have cleaner models, fitted mounts and open
-  aiming apertures.
-  Six finishes fit every gun: Oxide, Arctic, Woodland, Midnight, Hazard and
-  Sandstorm. In the loadout, click the large primary/sidearm models or use
-  7 / 8 to cycle finishes. Choices are saved per weapon and appear on the
-  equipped gun immediately. A different pending gun receives its selected
-  finish when deployed. The weapon roster and gameplay statistics are unchanged.
+WHAT'S NEW
+  What each release added:
+  https://github.com/Kalaghni/ferrite/blob/main/CHANGELOG.md
 
 PLAY
   Run ferrite (ferrite.exe on Windows). The home screen lets you:
@@ -162,6 +68,7 @@ CONTROLS
   LMB fire       RMB aim          R reload        G grenade
   Q/F/wheel swap to sidearm       T change sight  L loadout
   M change team  Tab scoreboard   F3 net stats    -/= mouse sensitivity
+  E use: ride a seedline or work a shade crank (Canopy)
   V or middle mouse: melee (a kill from behind)
   Enter or Y: chat to everyone    U: chat to your team    (Tab switches)
   In the lobby, R is the ready key.
