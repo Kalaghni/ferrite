@@ -1739,25 +1739,39 @@ impl Game {
     }
 
     /// Where a flag dropped at `pos` comes to rest. On Canopy a flag let
-    /// go of well above the ground falls through the walkway to whatever is
-    /// below it; on other maps it stays put.
+    /// go of well above the ground (on a bough, a stair, a seedline) falls
+    /// to the nearest open ground below, where anyone - bots included -
+    /// can walk to it; on other maps it stays put.
     fn dropped_flag_rest(&self, pos: Vec3) -> Vec3 {
         use ferrite_shared::map::canopy;
         if self.world.map != canopy::MAP_ID || pos.y - self.world.height(pos.x, pos.z) < 2.5 {
             return pos;
         }
-        let from = pos - Vec3::Y * 0.7;
-        let t = self.world.raycast(from, Vec3::NEG_Y, 60.0, self.dmask).map_or(0.0, |h| h.t);
-        let rest = from - Vec3::Y * t;
-        let inside = self.world.blocks.iter().any(|b| {
-            let q = rest + Vec3::Y * 0.3;
-            q.cmpgt(b.min).all() && q.cmplt(b.max).all()
-        });
-        if t < 0.05 || inside {
-            // Nowhere sensible below: lay it on the ground by the line of drop.
-            return Vec3::new(pos.x, self.world.height(pos.x, pos.z), pos.z);
+        let open = |x: f32, z: f32| {
+            let g = self.world.height(x, z);
+            !self.world.blocks.iter().enumerate().any(|(i, b)| {
+                self.world.solid(i, self.dmask)
+                    && b.min.y < g + 1.9
+                    && b.max.y > g + 0.1
+                    && x > b.min.x - 0.7
+                    && x < b.max.x + 0.7
+                    && z > b.min.z - 0.7
+                    && z < b.max.z + 0.7
+            })
+        };
+        let (bx, bz) = (ferrite_shared::map::HALF_X - 2.0, ferrite_shared::map::HALF_Z - 2.0);
+        for ring in 0..40 {
+            let r = ring as f32;
+            let n = if ring == 0 { 1 } else { 8 + ring * 4 };
+            for k in 0..n {
+                let a = k as f32 / n as f32 * std::f32::consts::TAU;
+                let (x, z) = ((pos.x + a.cos() * r).clamp(-bx, bx), (pos.z + a.sin() * r).clamp(-bz, bz));
+                if open(x, z) {
+                    return Vec3::new(x, self.world.height(x, z), z);
+                }
+            }
         }
-        rest
+        Vec3::new(pos.x, self.world.height(pos.x, pos.z), pos.z)
     }
 
     /// Canopy's shade banks: a player holding Use at a crank, facing it,

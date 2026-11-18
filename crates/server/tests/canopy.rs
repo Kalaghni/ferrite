@@ -358,6 +358,74 @@ fn the_gust_keeps_its_timetable() {
     let _ = TICK_HZ;
 }
 
+/// Kill a carrier of the enemy flag at `at` and return where it lands.
+fn drop_flag_at(at: Vec3) -> Vec3 {
+    let cfg = Config {
+        port: 0,
+        per_team: 1,
+        mode: mode::CTF,
+        map: canopy::MAP_ID,
+        lobby_secs: 0,
+        log: false,
+        discover: false,
+        ..Default::default()
+    };
+    let mut g = Game::new(cfg);
+    let me = g.join_team("tester", 0).expect("slot");
+    for _ in 0..30 {
+        g.tick();
+    }
+    g.players[me].bot = None;
+    let p = &mut g.players[me];
+    p.alive = true;
+    p.st = PState::spawn(at, 0);
+    g.flags[1] = ferrite_server::Flag { state: 1, pos: at, carrier: me, since: g.tick };
+    g.tick();
+    let p = &mut g.players[me];
+    p.alive = false;
+    p.hp = 0.0;
+    p.respawn_at = u32::MAX;
+    g.tick();
+    assert_eq!(g.flags[1].state, 2, "dropped");
+    reachable(&g.world, g.flags[1].pos);
+    g.flags[1].pos
+}
+
+/// Nothing solid stands where a flag lies, so anyone can walk to it.
+fn reachable(w: &World, f: Vec3) {
+    assert!((f.y - w.height(f.x, f.z)).abs() < 0.05, "on the ground at {f:?}");
+    let body = |b: &ferrite_shared::map::Block| {
+        b.min.y < f.y + 1.9
+            && b.max.y > f.y + 0.1
+            && f.x > b.min.x - 0.5
+            && f.x < b.max.x + 0.5
+            && f.z > b.min.z - 0.5
+            && f.z < b.max.z + 0.5
+    };
+    assert!(!w.blocks.iter().any(body), "a flag at {f:?} is inside or against something solid");
+}
+
+#[test]
+fn flags_dropped_up_the_tree_land_on_open_ground() {
+    let w = world(0);
+    let mut spots = vec![
+        Vec3::new(-20.0, BOUGH_Y + 0.02, 48.0),
+        // Half way up flight one of the stair, over the root mass.
+        Vec3::new(canopy::FLIGHT_ONE.0 + 7.0, 9.0, canopy::FLIGHT_ONE.1),
+        Vec3::new(canopy::LANDING.0, 12.0, canopy::LANDING.1),
+    ];
+    // Along every seedline.
+    for line in &w.lines {
+        for k in 1..8 {
+            spots.push(line.sample(line.len() * k as f32 / 8.0).0);
+        }
+    }
+    for at in spots {
+        let f = drop_flag_at(at);
+        assert!(f.distance(Vec3::new(at.x, f.y, at.z)) < 14.0, "{at:?} sent the flag far off to {f:?}");
+    }
+}
+
 #[test]
 fn a_flag_dropped_on_the_boughs_falls_to_the_floor() {
     let cfg = Config {
