@@ -963,6 +963,115 @@ impl Menu {
         self.save();
     }
 
+    /// Host & Play's map list, on glass down the right of the screen beside
+    /// the live view: a plan of the map under the pointer (or the chosen
+    /// one) marked for game mode `mode`, its name and blurb, then a row per
+    /// map. Clicking a row chooses it. Nothing is drawn when the window is
+    /// too narrow for it (see `rail_at`).
+    fn map_rail(&mut self, left: f32, top: f32, sw: f32, sh: f32, mode: Option<u8>) {
+        let n = MAPS.len();
+        let Some((x, w)) = Self::rail_at(left, sw) else { return };
+        let (ix, iw) = (x + 16.0, w - 32.0);
+        let mut y = top + 28.0;
+        // The plan as wide as the rail, unless the rows need its room.
+        let (gap, caption) = (6.0, 98.0);
+        let rows = |h: f32| n as f32 * h + (n as f32 - 1.0) * gap;
+        let plan_h = (iw / crate::plan::ASPECT).min(sh - 56.0 - (y + 14.0) - caption - rows(26.0)).max(0.0);
+        let rows_top = y + 14.0 + plan_h + caption;
+        let row_h = ((sh - 56.0 - rows_top - rows(0.0)) / n as f32).clamp(22.0, 46.0);
+        let bottom = rows_top + rows(row_h) + 16.0;
+        mq::draw_rectangle(x, top, w, bottom - top, ui::fade(th::INK, 0.74));
+        mq::draw_rectangle_lines(x, top, w, bottom - top, 2.0, th::STROKE);
+        ui::text("MAP", ix, y, 18.0, th::MUTED);
+        ui::text_r(&format!("{n} BATTLEFIELDS"), ix + iw, y, 15.0, th::QUIET);
+        y += 14.0;
+
+        // Rows first, so the plan above knows which one is under the pointer.
+        let mut focus = self.map % n as u8;
+        let mut picked = None;
+        for k in 0..n {
+            let ry = rows_top + k as f32 * (row_h + gap);
+            let on = self.map as usize % n == k;
+            let over = hit(ix, ry, iw, row_h);
+            if over {
+                focus = k as u8;
+                if clicked() {
+                    picked = Some(k as u8);
+                }
+            }
+            ui::plate(
+                ix,
+                ry,
+                iw,
+                row_h,
+                if on || over { th::PANEL_RAISED } else { th::GLASS_STRONG },
+                if on {
+                    th::WHITE
+                } else if over {
+                    th::COBALT
+                } else {
+                    th::STROKE
+                },
+            );
+            if on {
+                mq::draw_rectangle(ix, ry, 4.0, row_h, th::EMBER);
+            }
+            let mut tx = ix + 14.0;
+            if row_h >= 32.0 {
+                let ph = row_h - 8.0;
+                let marks = crate::plan::Marks { flip: false, mode, alpha: 1.0 };
+                crate::plan::draw(k as u8, tx, ry + 4.0, ph * crate::plan::ASPECT, ph, marks);
+                tx += ph * crate::plan::ASPECT + 12.0;
+            } else {
+                crate::plan::swatch(k as u8, tx, ry + 4.0, 16.0, row_h - 8.0, 1.0);
+                tx += 26.0;
+            }
+            let size = (row_h * 0.5).clamp(15.0, 20.0);
+            ui::text(MAPS[k].name, tx, ry + row_h / 2.0 + size * 0.3, size, if on || over { th::WHITE } else { th::MUTED });
+            if on {
+                ui::text_r("SELECTED", ix + iw - 12.0, ry + row_h / 2.0 + 5.0, 14.0, th::EMBER_BRIGHT);
+            }
+        }
+        if let Some(k) = picked {
+            self.map = k;
+        }
+
+        // The plan and what it shows.
+        let def = &MAPS[focus as usize];
+        if plan_h >= 40.0 {
+            let marks = crate::plan::Marks { flip: false, mode, alpha: 1.0 };
+            let plan_w = plan_h * crate::plan::ASPECT;
+            let px = ix + (iw - plan_w) / 2.0;
+            crate::plan::draw(focus, px, y, plan_w, plan_h, marks);
+            mq::draw_rectangle_lines(px, y, plan_w, plan_h, 1.0, th::STROKE);
+            let legend = match mode {
+                Some(m) => format!("{} OBJECTIVES", MODES[m as usize % MODES.len()].name),
+                None => "ALL OBJECTIVES".to_string(),
+            };
+            let lw = ui::width(&legend, 13.0) + 14.0;
+            if lw < plan_w * 0.6 {
+                mq::draw_rectangle(px + plan_w - lw, y + plan_h - 20.0, lw, 20.0, ui::fade(th::INK, 0.8));
+                ui::text(&legend, px + plan_w - lw + 7.0, y + plan_h - 6.0, 13.0, th::MUTED);
+            }
+        }
+        y += plan_h + 30.0;
+        ui::text(def.name, ix, y, 24.0, th::WHITE);
+        let chosen = focus == self.map % n as u8;
+        let state = if chosen { "SELECTED" } else { "CLICK TO SELECT" };
+        ui::text_r(state, ix + iw, y, 14.0, if chosen { th::EMBER_BRIGHT } else { th::COBALT_BRIGHT });
+        for (i, line) in crate::hud::wrap(def.blurb, 16.0, iw, iw).iter().take(3).enumerate() {
+            ui::text(line, ix, y + 22.0 + i as f32 * 19.0, 16.0, th::MUTED);
+        }
+    }
+
+    /// Left edge and width of the map rail beside a page that ends at
+    /// `left`, if the window is wide enough for one.
+    fn rail_at(left: f32, sw: f32) -> Option<(f32, f32)> {
+        let w = ((sw - left) * 0.6).clamp(290.0, 440.0);
+        let x = sw - w - (sw * 0.03).clamp(16.0, 60.0);
+        (x >= left + 16.0 && !MAPS.is_empty()).then_some((x, w))
+    }
+
     fn drop_map(&mut self) {
         if let Some((_, _, gpu)) = self.preview.take() {
             gpu.destroy();
@@ -1374,37 +1483,55 @@ impl Menu {
                     if Self::page_head(x, y, w, "FIELD OPERATIONS", "HOST & PLAY", th::EMBER_BRIGHT) || esc {
                         self.go(0);
                     }
+                    let top = y;
+                    // The arrow keys step through the maps.
+                    let n = MAPS.len() as u8;
+                    if !capturing && mq::is_key_pressed(mq::KeyCode::Down) {
+                        self.map = (self.map % n + 1) % n;
+                    }
+                    if !capturing && mq::is_key_pressed(mq::KeyCode::Up) {
+                        self.map = (self.map % n + n - 1) % n;
+                    }
                     y += 90.0;
                     self.field(F_BOTS, x, y, 170.0, "PLAYERS PER TEAM", "12", now);
                     self.field(F_MAXBOTS, x + 182.0, y, 110.0, "MAX BOTS", "all", now);
                     self.field(F_HPORT, x + 304.0, y, 90.0, "PORT", &DEFAULT_PORT.to_string(), now);
-                    // Map: click the right side for the next one, the left
-                    // side for the one before.
-                    let (mx, mw) = (x + 406.0, w - 406.0);
-                    let def = &MAPS[self.map as usize % MAPS.len()];
-                    ui::text("MAP", mx, y - 8.0, 18.0, th::MUTED);
-                    let over = hit(mx, y, mw, 38.0);
-                    ui::plate(mx, y, mw, 38.0, th::GLASS_STRONG, if over { th::COBALT } else { th::STROKE });
-                    ui::text_c(def.name, mx + mw / 2.0, y + 26.0, 20.0, th::WHITE);
-                    ui::text("<", mx + 10.0, y + 26.0, 20.0, if over { th::WHITE } else { th::QUIET });
-                    ui::text(">", mx + mw - 20.0, y + 26.0, 20.0, if over { th::WHITE } else { th::QUIET });
-                    if over && clicked() {
-                        let n = MAPS.len() as u8;
-                        let back = controller::mouse_position().0 < mx + mw * 0.3;
-                        self.map = (self.map % n + if back { n - 1 } else { 1 }) % n;
+                    // The map is chosen in the rail at the right; a window
+                    // too narrow for it gets the old picker here: click the
+                    // right side for the next map, the left for the one before.
+                    let rail = Self::rail_at(x + w + 40.0, sw).is_some();
+                    if rail {
+                        y += 66.0;
+                    } else {
+                        let (mx, mw) = (x + 406.0, w - 406.0);
+                        let def = &MAPS[self.map as usize % MAPS.len()];
+                        ui::text("MAP", mx, y - 8.0, 18.0, th::MUTED);
+                        let over = hit(mx, y, mw, 38.0);
+                        ui::plate(mx, y, mw, 38.0, th::GLASS_STRONG, if over { th::COBALT } else { th::STROKE });
+                        ui::text_c(def.name, mx + mw / 2.0, y + 26.0, 20.0, th::WHITE);
+                        ui::text("<", mx + 10.0, y + 26.0, 20.0, if over { th::WHITE } else { th::QUIET });
+                        ui::text(">", mx + mw - 20.0, y + 26.0, 20.0, if over { th::WHITE } else { th::QUIET });
+                        if over && clicked() {
+                            let back = controller::mouse_position().0 < mx + mw * 0.3;
+                            self.map = (self.map % n + if back { n - 1 } else { 1 }) % n;
+                        }
+                        y += 58.0;
+                        ui::text(&format!("{}: {}.", def.name, def.blurb), x, y, 16.0, th::WHITE);
+                        y += 34.0;
                     }
-                    y += 58.0;
-                    ui::text(&format!("{}: {}.", def.name, def.blurb), x, y, 16.0, th::WHITE);
-                    y += 34.0;
 
                     // Game mode: one of the four, or a different one each round.
                     ui::text("GAME MODE", x, y - 8.0, 18.0, th::MUTED);
                     let labels = ["CONQUEST", "DEATHMATCH", "FLAGS", "STRONGHOLD", "MIXED"];
                     let mw = ((w - 32.0) / 5.0).floor();
+                    let mut shown = self.mode;
                     for (i, label) in labels.into_iter().enumerate() {
                         let on = self.mode as usize == i;
                         let bx = x + i as f32 * (mw + 8.0);
                         let over = hit(bx, y, mw, 34.0);
+                        if over {
+                            shown = i as u8;
+                        }
                         ui::plate(
                             bx,
                             y,
@@ -1418,7 +1545,8 @@ impl Menu {
                             self.mode = i as u8;
                         }
                     }
-                    let mn = match MODES.get(self.mode as usize) {
+                    // What the chosen mode is, or the one under the pointer.
+                    let mn = match MODES.get(shown as usize) {
                         Some(m) => format!("{} pace. {}", m.pace[..1].to_string() + &m.pace[1..].to_lowercase(), m.blurb),
                         None => "A different mode every round, unless the lobby votes for one.".to_string(),
                     };
@@ -1426,7 +1554,7 @@ impl Menu {
                     while msize > 12.0 && ui::width(&mn, msize) > w {
                         msize -= 1.0;
                     }
-                    ui::text(&mn, x, y + 54.0, msize, th::WHITE);
+                    ui::text(&mn, x, y + 54.0, msize, if shown == self.mode { th::WHITE } else { th::COBALT_BRIGHT });
                     y += 84.0;
 
                     // Rotation: after each round the server moves to the next map.
@@ -1489,7 +1617,11 @@ impl Menu {
                     if button(x, y, w, 54.0, "START MATCH", Some(th::EMBER), 30.0) || enter {
                         out = Some(self.host_choice());
                     }
-                    ui::text("TAB next field    ENTER start    ESC back", x, sh - 20.0, 18.0, th::QUIET);
+                    let objectives = MODES.get(shown as usize).map(|_| shown);
+                    if rail {
+                        self.map_rail(x + w + 40.0, top - 26.0, sw, sh, objectives);
+                    }
+                    ui::text("TAB next field    UP / DOWN map    ENTER start    ESC back", x, sh - 20.0, 18.0, th::QUIET);
                 }
                 4 => {
                     if Self::page_head(x, y, w, "FIELD OPERATIONS", "ARMORY", th::WARNING) || esc {

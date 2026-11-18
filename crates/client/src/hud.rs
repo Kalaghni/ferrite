@@ -62,7 +62,7 @@ fn pic(t: &macroquad::prelude::Texture2D, x: f32, y: f32, s: f32, a: f32) {
 
 /// Break `s` into lines: the first at most `first` pixels wide, the rest
 /// `rest`. Words too long for a line are cut.
-fn wrap(s: &str, size: f32, first: f32, rest: f32) -> Vec<String> {
+pub(crate) fn wrap(s: &str, size: f32, first: f32, rest: f32) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let mut cur = String::new();
     let room = |n: usize| if n == 0 { first } else { rest };
@@ -273,6 +273,7 @@ fn key_hint(app: &App, action: crate::bindings::Action) -> String {
 
 /// A piece of a hint line: words, a key drawn as a keycap, or a wider gap
 /// between one hint and the next.
+#[derive(Clone, Copy)]
 enum Hint<'a> {
     Words(&'a str),
     Key(&'a str),
@@ -408,20 +409,71 @@ fn draw_loadout(app: &App, w: f32, h: f32, icons: &mut Vec<GunIcon>) {
     }
 }
 
+type Rect = (f32, f32, f32, f32);
+
 /// Lobby click targets: one card per map, the READY button, then one
 /// chip per game mode.
-#[allow(clippy::type_complexity)]
-pub fn lobby_rects(w: f32, h: f32) -> (Vec<(f32, f32, f32, f32)>, (f32, f32, f32, f32), Vec<(f32, f32, f32, f32)>) {
+pub fn lobby_rects(w: f32, h: f32) -> (Vec<Rect>, Rect, Vec<Rect>) {
     let head = LobbyHead::new(w, h);
-    let (x0, pw) = (head.x0, head.pw);
-    let n = ferrite_shared::map::MAPS.len();
-    let gap = 12.0;
-    let cw = (pw - gap * (n as f32 - 1.0)) / n as f32;
-    let cards = (0..n).map(|k| (x0 + k as f32 * (cw + gap), head.cards, cw, 62.0)).collect();
-    let m = ferrite_shared::MODES.len();
-    let mw = (pw - gap * (m as f32 - 1.0)) / m as f32;
-    let modes = (0..m).map(|k| (x0 + k as f32 * (mw + gap), head.cards + 72.0, mw, 26.0)).collect();
-    (cards, (x0 + pw - 240.0, head.top + 2.0, 240.0, 48.0), modes)
+    let vote = VoteLayout::new(&head, h);
+    (vote.cards, (head.x0 + head.pw - 240.0, head.top + 2.0, 240.0, 48.0), vote.modes)
+}
+
+/// The vote under the lobby's header: a grid of map cards with the game
+/// modes in a column at its right. It takes what height the roster can
+/// spare, so cards grow on tall screens, and the grid picks its rows and
+/// columns for however many maps there are.
+struct VoteLayout {
+    cards: Vec<Rect>,
+    modes: Vec<Rect>,
+    /// Baseline of the labels over the grid and the modes, when there is
+    /// room for them.
+    label: Option<f32>,
+    /// Left edge of the mode column.
+    mode_x: f32,
+    /// Bottom of the vote.
+    bottom: f32,
+}
+
+impl VoteLayout {
+    /// Height the vote keeps on small screens (the old row of cards and
+    /// row of mode chips).
+    const MIN_H: f32 = 98.0;
+    /// Room under the vote for the team names and six rows of players.
+    const ROSTER_H: f32 = 168.0;
+    const GAP: f32 = 10.0;
+
+    fn new(head: &LobbyHead, h: f32) -> Self {
+        let (x0, pw, top) = (head.x0, head.pw, head.cards);
+        let vh = (loadout_top(h) - Self::ROSTER_H - top).clamp(Self::MIN_H, 270.0);
+        let label = (vh >= 150.0).then_some(top + 12.0);
+        let gy = top + if label.is_some() { 30.0 } else { 0.0 };
+        let gh = top + vh - gy;
+        let col = (pw * 0.24).clamp(210.0, 280.0);
+        let gw = pw - col - 14.0;
+        let gap = Self::GAP;
+        // Rows for the grid: the most plan each card can show beside a name.
+        let n = ferrite_shared::map::MAPS.len().max(1);
+        let fit = |rows: usize| {
+            let cols = n.div_ceil(rows);
+            let cw = (gw - gap * (cols as f32 - 1.0)) / cols as f32;
+            let ch = (gh - gap * (rows as f32 - 1.0)) / rows as f32;
+            (cols, cw, ch, ch.min((cw - 110.0) / crate::plan::ASPECT))
+        };
+        let rows = (1..=n.min(5)).max_by(|&a, &b| fit(a).3.total_cmp(&fit(b).3)).unwrap_or(1);
+        let (cols, cw, ch, _) = fit(rows);
+        let cards = (0..n).map(|k| (x0 + (k % cols) as f32 * (cw + gap), gy + (k / cols) as f32 * (ch + gap), cw, ch)).collect();
+        // Modes: stacked when they can each have two lines, else two by two.
+        let m = ferrite_shared::MODES.len();
+        let mode_x = x0 + pw - col;
+        let mgap = 10.0;
+        let mrows = if gh >= m as f32 * 40.0 + (m as f32 - 1.0) * mgap { m } else { m.div_ceil(2) };
+        let mcols = m.div_ceil(mrows);
+        let mw = (col - mgap * (mcols as f32 - 1.0)) / mcols as f32;
+        let mh = (gh - mgap * (mrows as f32 - 1.0)) / mrows as f32;
+        let modes = (0..m).map(|k| (mode_x + (k % mcols) as f32 * (mw + mgap), gy + (k / mcols) as f32 * (mh + mgap), mw, mh)).collect();
+        VoteLayout { cards, modes, label, mode_x, bottom: top + vh }
+    }
 }
 
 /// The lobby's header. The wordmark grows with the screen (it is placed in
@@ -454,11 +506,6 @@ impl LobbyHead {
         let bottom = logo_bottom.max(top + Self::TEXT_H) + 14.0;
         LobbyHead { x0, pw, hx: (logo_right + 30.0).max(x0), top, bottom, cards: bottom + 16.0 }
     }
-
-    /// Top of the roster panel, under the mode chips.
-    fn roster(&self) -> f32 {
-        self.cards + 72.0 + 26.0 + 16.0
-    }
 }
 
 /// "4:05" from a number of seconds.
@@ -485,7 +532,7 @@ fn score_word(m: u8) -> &'static str {
     }
 }
 
-fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32) {
+fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32) -> Option<Tip> {
     // Staging-area key art under a scrim, the wordmark top left.
     draw_rectangle(0.0, 0.0, w, h, col(DARK, 1.0));
     crate::ui::backdrop(&app.lobby_bg, w, h);
@@ -515,108 +562,223 @@ fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
         17.0,
         col(WHITE, 0.92),
     );
+    let vote = VoteLayout::new(&head, h);
     let (team, chat) = (key_hint(app, crate::bindings::Action::ChangeTeam), key_hint(app, crate::bindings::Action::ChatAll));
-    hints(
-        &[
-            Hint::Key(&team),
-            Hint::Words("team"),
-            Hint::Gap,
-            Hint::Key("R"),
-            Hint::Words("ready"),
-            Hint::Gap,
-            Hint::Key(&chat),
-            Hint::Words("chat"),
-            Hint::Gap,
-            Hint::Key("Q"),
-            Hint::Words("leave"),
-        ],
-        hx,
-        ty + LobbyHead::TEXT_H,
-        15.0,
-        col(WHITE, 0.92),
-        true,
-    );
-    if let Some(t) = &app.now_playing {
-        text_r(&format!("now playing: {t}"), x0 + pw, ty + LobbyHead::TEXT_H, 15.0, col(WHITE, 0.7));
+    let mut keys = vec![
+        Hint::Key(&team),
+        Hint::Words("team"),
+        Hint::Gap,
+        Hint::Key("R"),
+        Hint::Words("ready"),
+        Hint::Gap,
+        Hint::Key(&chat),
+        Hint::Words("chat"),
+        Hint::Gap,
+        Hint::Key("Q"),
+        Hint::Words("leave"),
+    ];
+    let vote_keys =
+        [Hint::Key("LEFT"), Hint::Key("RIGHT"), Hint::Words("map"), Hint::Gap, Hint::Key("UP"), Hint::Key("DOWN"), Hint::Words("mode")];
+    let playing = app.now_playing.as_ref().map(|t| format!("now playing: {t}"));
+    if vote.label.is_none() && !app.spectator {
+        // No label row over the vote: its keys join the header's, if they
+        // fit beside what is playing.
+        let mut with = keys.clone();
+        with.push(Hint::Gap);
+        with.extend(vote_keys);
+        let room = x0 + pw - playing.as_ref().map_or(0.0, |t| crate::ui::width(t, 15.0) + 24.0) - hx;
+        if hints(&with, hx, ty + LobbyHead::TEXT_H, 15.0, col(WHITE, 0.92), false) <= room {
+            keys = with;
+        }
     }
-    let (cards, rb, modes) = lobby_rects(w, h);
+    hints(&keys, hx, ty + LobbyHead::TEXT_H, 15.0, col(WHITE, 0.92), true);
+    if let Some(t) = &playing {
+        text_r(t, x0 + pw, ty + LobbyHead::TEXT_H, 15.0, col(WHITE, 0.7));
+    }
+    let (_, rb, _) = lobby_rects(w, h);
     if !app.spectator {
         text_r(&format!("{} CREDITS", app.profile.credits), rb.0 - 18.0, rb.1 + 31.0, 20.0, col(WARNING, 0.95));
     }
-    for (k, &(x, y, cw, ch)) in modes.iter().enumerate() {
-        let def = &ferrite_shared::MODES[k];
-        let mine = app.mode_vote == k as u8;
-        let next = snap.next_mode == k as u8;
-        let over = mx >= x && mx < x + cw && my >= y && my < y + ch;
-        draw_rectangle(x, y, cw, ch, col(DARK, 0.82));
+    let maps = &ferrite_shared::map::MAPS;
+    let total: u32 = snap.votes.iter().map(|&v| v as u32).sum();
+    let plural = |n: u32| if n == 1 { "" } else { "s" };
+    if let Some(ly) = vote.label {
+        let blue = Color::new(0.718, 0.863, 1.0, 1.0);
+        text("MAP VOTE", x0, ly, 15.0, blue);
+        let next_map = ferrite_shared::map::map_def(snap.next_map).name;
+        let lead = match total {
+            0 => format!("NEXT  {next_map}  -  no votes yet"),
+            t => format!("NEXT  {next_map}  -  {} of {t} vote{}", snap.votes.get(snap.next_map as usize).copied().unwrap_or(0), plural(t)),
+        };
+        text(&lead, x0 + crate::ui::width("MAP VOTE", 15.0) + 16.0, ly, 15.0, col(WHITE, 0.92));
+        if !app.spectator {
+            hints_r(&vote_keys, vote.mode_x - 14.0, ly, 13.0, col(WHITE, 0.8));
+        }
+        text("GAME MODE", vote.mode_x, ly, 15.0, blue);
+        text_r(&format!("NEXT  {}", ferrite_shared::mode_def(snap.next_mode).name), x0 + pw, ly, 15.0, col(WHITE, 0.92));
+    }
+    let inside = |&(x, y, cw, ch): &Rect| mx >= x && mx < x + cw && my >= y && my < y + ch;
+    // A card's frame: white and heavy, with a NEXT tab on its top edge, for
+    // what will be played; cobalt under the pointer; a hairline otherwise.
+    // Your vote is tinted in your team's colour with a bar down its left.
+    let card = |&(x, y, cw, ch): &Rect, mine: bool, next: bool, over: bool| {
+        draw_rectangle(x, y, cw, ch, if over { Color::new(0.145, 0.173, 0.263, 0.92) } else { col(DARK, 0.82) });
         if mine {
             draw_rectangle(x, y, cw, ch, col(tc, 0.3));
+            draw_rectangle(x, y, 4.0, ch, col(tc, 1.0));
         }
-        draw_rectangle_lines(
-            x,
-            y,
-            cw,
-            ch,
-            if next { 3.0 } else { 2.0 },
-            if next {
-                col(WHITE, 0.95)
-            } else if over {
-                Color::new(0.412, 0.678, 1.0, 1.0)
-            } else {
-                Color::new(0.706, 0.761, 0.882, 0.38)
-            },
-        );
-        let v = snap.mode_votes[k % 4];
-        let label = if cw < 200.0 { def.name.to_string() } else { format!("{}  -  {}", def.name, def.pace) };
-        let size = (15.0 * (cw - 70.0) / crate::ui::width(&label, 15.0).max(1.0)).min(15.0);
-        text(&label, x + 10.0, y + 17.0, size, col(WHITE, if next { 1.0 } else { 0.8 }));
-        let tag = match (next, v) {
-            (true, 0) => "NEXT".to_string(),
-            (true, v) => format!("NEXT  {v}"),
-            (false, 0) => String::new(),
-            (false, v) => v.to_string(),
+        let stroke = if next {
+            col(WHITE, 0.95)
+        } else if over {
+            Color::new(0.412, 0.678, 1.0, 1.0)
+        } else {
+            Color::new(0.706, 0.761, 0.882, 0.38)
         };
-        text_r(&tag, x + cw - 8.0, y + 17.0, 13.0, col(WHITE, 0.9));
+        draw_rectangle_lines(x, y, cw, ch, if next { 3.0 } else { 2.0 }, stroke);
+        if next {
+            let bw = crate::ui::width("NEXT", 11.0) + 12.0;
+            draw_rectangle(x + cw - bw - 8.0, y - 7.0, bw, 14.0, col(WHITE, 0.95));
+            crate::ui::text("NEXT", x + cw - bw - 2.0, y + 4.0, 11.0, col(DARK, 1.0));
+        }
+    };
+    let action = |next: bool, mine: bool| match (next, mine) {
+        (true, true) => "Will be played - click to take your vote back",
+        (true, false) => "Will be played - click to vote for it",
+        (false, true) => "Your vote - click to take it back",
+        _ => "Click to vote",
+    };
+    let count_at = |&(x, y, cw, ch): &Rect, v: &str, size: f32, lit: bool| {
+        text_r(v, x + cw - 10.0, y + ch * 0.5 + size * 0.36, size, col(WHITE, if lit { 1.0 } else { 0.4 }));
+    };
+    let mut tip: Option<Tip> = None;
+
+    // Maps: the plan at the left of the card (at most half its width),
+    // the name and your vote beside it, the count at the right and a meter
+    // of the card's share of the votes along the bottom.
+    let marks = crate::plan::Marks { flip: app.my_team == 1 && !app.spectator, mode: Some(snap.next_mode), alpha: 1.0 };
+    let &(_, _, cw, ch) = vote.cards.first().unwrap_or(&(0.0, 0.0, 0.0, 0.0));
+    let pad = 5.0;
+    let (mut plan_w, mut plan_h) = ((ch - 2.0 * pad) * crate::plan::ASPECT, ch - 2.0 * pad);
+    if plan_w > cw * 0.5 {
+        plan_w = cw * 0.5;
+        plan_h = plan_w / crate::plan::ASPECT;
     }
-    for (k, &(x, y, cw, ch)) in cards.iter().enumerate() {
-        let def = &ferrite_shared::map::MAPS[k];
+    // Too small to read: a swatch of the map's ground instead, and the
+    // plan in the tip.
+    let swatch = plan_h < 22.0;
+    if swatch {
+        (plan_w, plan_h) = (12.0, ch - 2.0 * pad);
+    }
+    let csize = if ch >= 40.0 { 24.0 } else { 18.0 };
+    let text_room = cw - pad - 3.0 - plan_w - 20.0 - crate::ui::width("0", csize) - 8.0;
+    let names: Vec<&str> = maps.iter().map(|m| m.name).collect();
+    let nsize = fit_names(&names, text_room, ch - if swatch { 6.0 } else { 14.0 }, if ch >= 40.0 { 20.0 } else { 16.0 }, 10.0);
+    for (k, r) in vote.cards.iter().enumerate() {
+        let &(x, y, cw, ch) = r;
+        let def = &maps[k];
+        // The snapshot counts votes for so many maps; any past them cannot
+        // be voted for.
+        let votable = k < snap.votes.len();
+        let v = snap.votes.get(k).copied().unwrap_or(0);
         let mine = app.vote == k as u8;
         let next = snap.next_map == k as u8;
-        let over = mx >= x && mx < x + cw && my >= y && my < y + ch;
-        draw_rectangle(x, y, cw, ch, col(DARK, 0.82));
-        if mine {
-            draw_rectangle(x, y, cw, ch, col(tc, 0.3));
+        let over = inside(r) && !app.spectator;
+        card(r, mine, next, over);
+        let (px, py) = (x + pad + if mine { 3.0 } else { 0.0 }, y + (ch - plan_h) / 2.0);
+        let a = if votable { 1.0 } else { 0.45 };
+        if swatch {
+            crate::plan::swatch(k as u8, px, py, plan_w, plan_h, a);
+        } else {
+            crate::plan::draw(k as u8, px, py, plan_w, plan_h, crate::plan::Marks { alpha: a, ..marks });
+            draw_rectangle_lines(px, py, plan_w, plan_h, 1.0, Color::new(0.706, 0.761, 0.882, 0.3));
         }
-        draw_rectangle_lines(
-            x,
-            y,
-            cw,
-            ch,
-            if next { 3.0 } else { 2.0 },
-            if next {
-                col(WHITE, 0.95)
-            } else if over {
-                Color::new(0.412, 0.678, 1.0, 1.0)
-            } else {
-                Color::new(0.706, 0.761, 0.882, 0.38)
-            },
-        );
-        draw_rectangle(x + 12.0, y + ch - 6.0, cw - 24.0, 2.0, col(if mine { tc } else { [0.412, 0.678, 1.0] }, 0.8));
-        // Keep all map names inside their cards as the catalogue grows.
-        let name_size = (20.0 * (cw - 24.0) / crate::ui::width(def.name, 20.0).max(1.0)).min(20.0);
-        text(def.name, x + 12.0, y + 22.0, name_size, col(WHITE, 1.0));
-        let v = snap.votes[k % 8];
-        text(&format!("{} vote{}", v, if v == 1 { "" } else { "s" }), x + 12.0, y + 38.0, 14.0, col(WHITE, 0.75));
-        let tag = match (next, mine) {
-            (true, true) if cw < 230.0 => "VOTED / NEXT",
-            (true, false) if cw < 230.0 => "NEXT MAP",
-            (true, true) => "YOUR VOTE - WILL BE PLAYED",
-            (true, false) => "WILL BE PLAYED",
-            (false, true) => "YOUR VOTE",
-            _ => "",
+        let (tx, tr) = (px + plan_w + 10.0, x + cw - 10.0);
+        let note = if !votable {
+            "NOT ON THE BALLOT"
+        } else if mine {
+            "YOUR VOTE"
+        } else {
+            ""
         };
-        let tag_size = (14.0 * (cw - 24.0) / crate::ui::width(tag, 14.0).max(1.0)).min(14.0);
-        text(tag, x + 12.0, y + 52.0, tag_size.min(13.0), col(WHITE, 0.9));
+        // The name, broken over lines if it must be, and under it the note
+        // when there is room for one.
+        let lines = wrap(def.name, nsize, text_room, text_room);
+        let lh = nsize * NAME_LINE;
+        let with_note = !note.is_empty() && lines.len() as f32 * lh + 16.0 <= ch - 14.0;
+        let block = lines.len() as f32 * lh + if with_note { 16.0 } else { 0.0 };
+        let mut by = y + (ch - 4.0 - block) / 2.0 + nsize * 0.62;
+        for l in &lines {
+            text(l, tx, by, nsize, col(WHITE, if votable { 1.0 } else { 0.5 }));
+            by += lh;
+        }
+        if with_note {
+            text(note, tx, by + 1.0, 13.0, if mine { col(tc, 1.0) } else { col(WHITE, 0.6) });
+        }
+        count_at(r, &if votable { v.to_string() } else { "-".to_string() }, csize, v > 0);
+        let meter_y = y + ch - 7.0;
+        draw_rectangle(tx, meter_y, tr - tx, 2.0, col(WHITE, 0.12));
+        if v > 0 {
+            let share = v as f32 / total.max(1) as f32;
+            draw_rectangle(tx, meter_y, (tr - tx) * share, 2.0, if mine { col(tc, 1.0) } else { Color::new(0.412, 0.678, 1.0, 1.0) });
+        }
+        if over {
+            let foot = if !votable {
+                "This server cannot count votes for it".to_string()
+            } else {
+                let share = match total {
+                    0 => "No votes yet".to_string(),
+                    t => format!("{v} of {t} vote{}", plural(t)),
+                };
+                format!("{share}  -  {}", action(next, mine))
+            };
+            let plan = Some((k as u8, marks));
+            tip = Some(Tip { at: *r, title: def.name.to_string(), body: def.blurb.to_string(), foot, plan });
+        }
+    }
+
+    // Modes: the name, its pace (and your vote) under it, the count.
+    let modes = &ferrite_shared::MODES;
+    let &(_, _, mw, mh) = vote.modes.first().unwrap_or(&(0.0, 0.0, 0.0, 0.0));
+    let mbig = mh >= 40.0;
+    let mcsize = if mbig { 22.0 } else { 16.0 };
+    let mroom = mw - 23.0 - crate::ui::width("0", mcsize) - 8.0;
+    // Full names when they fit on one line, else what `--mode` calls them.
+    let full: Vec<&str> = modes.iter().map(|m| m.name).collect();
+    let short: Vec<String> = modes.iter().map(|m| m.key.to_uppercase()).collect();
+    let mut msize = fit_names(&full, mroom, 16.0, 15.0, 10.0);
+    let use_short = msize < 13.0;
+    if use_short {
+        msize = fit_names(&short.iter().map(String::as_str).collect::<Vec<_>>(), mroom, 16.0, 15.0, 10.0);
+    }
+    for (k, r) in vote.modes.iter().enumerate() {
+        let &(x, y, _, ch) = r;
+        let def = &modes[k];
+        let mine = app.mode_vote == k as u8;
+        let next = snap.next_mode == k as u8;
+        let over = inside(r) && !app.spectator;
+        card(r, mine, next, over);
+        let v = snap.mode_votes.get(k).copied().unwrap_or(0);
+        let tx = x + if mine { 13.0 } else { 10.0 };
+        let name = if use_short { short[k].as_str() } else { def.name };
+        if mbig {
+            text(name, tx, y + ch * 0.5 - 2.0, msize, col(WHITE, 1.0));
+            let pace = format!("{} PACE", def.pace);
+            let with = format!("{pace}  -  YOUR VOTE");
+            let line = if mine && crate::ui::width(&with, 12.0) <= mroom { with } else { pace };
+            text(&line, tx, y + ch * 0.5 + 13.0, 12.0, if mine { col(tc, 1.0) } else { col(WHITE, 0.72) });
+        } else {
+            text(name, tx, y + ch * 0.5 + msize * 0.35, msize, col(WHITE, 1.0));
+        }
+        count_at(r, &v.to_string(), mcsize, v > 0);
+        if over {
+            let foot = match v as u32 {
+                0 => action(next, mine).to_string(),
+                n => format!("{n} vote{}  -  {}", plural(n), action(next, mine)),
+            };
+            // How the mode would lie on the map that will be played.
+            let plan = Some((snap.next_map, crate::plan::Marks { mode: Some(k as u8), ..marks }));
+            tip = Some(Tip { at: *r, title: format!("{}  -  {} PACE", def.name, def.pace), body: def.blurb.to_string(), foot, plan });
+        }
     }
     if !app.spectator {
         let over = mx >= rb.0 && mx < rb.0 + rb.2 && my >= rb.1 && my < rb.1 + rb.3;
@@ -626,7 +788,7 @@ fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
         crate::ui::text_c(if app.ready { "READY" } else { "READY UP" }, rb.0 + rb.2 / 2.0, rb.1 + 32.0, 24.0, col(DARK, 1.0));
     }
     // Who is here.
-    let y0 = head.roster() + 24.0;
+    let y0 = vote.bottom + 16.0 + 24.0;
     draw_rectangle(x0 - 12.0, y0 - 24.0, pw + 24.0, loadout_top(h) - (y0 - 24.0) - 8.0, col(DARK, 0.72));
     draw_rectangle(x0 - 12.0, loadout_top(h), pw + 24.0, LOADOUT_H, col(DARK, 0.82));
     // The teams take the left of the panel, the chat the right. People
@@ -666,6 +828,64 @@ fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
         let key = key_hint(app, crate::bindings::Action::ChatAll);
         hints_r(&[Hint::Key(&key), Hint::Words("to type")], x0 + pw, y0 - 4.0, 14.0, col(WHITE, 0.8));
     }
+    tip
+}
+
+/// Line height of a lobby card's name, over its size.
+const NAME_LINE: f32 = 0.92;
+
+/// The largest size, from `max` down to `min`, at which each of `names`
+/// breaks between words into lines no wider than `room`, and those lines
+/// stand no taller than `height`.
+fn fit_names(names: &[&str], room: f32, height: f32, max: f32, min: f32) -> f32 {
+    let fits = |s: f32| {
+        names
+            .iter()
+            .all(|n| n.split(' ').all(|w| crate::ui::width(w, s) <= room) && wrap(n, s, room, room).len() as f32 * s * NAME_LINE <= height)
+    };
+    let mut s = max;
+    while s > min && !fits(s) {
+        s -= 1.0;
+    }
+    s
+}
+
+/// What a lobby card says about itself under the pointer.
+struct Tip {
+    /// The card it belongs to.
+    at: Rect,
+    title: String,
+    body: String,
+    foot: String,
+    /// A plan to show beside the words, marked for a game mode.
+    plan: Option<(u8, crate::plan::Marks)>,
+}
+
+/// A tip on glass under its card, or over it when there is no room below:
+/// a title, the plan beside the words, and what a click does.
+fn draw_tip(t: &Tip, w: f32, h: f32) {
+    let (x, y, cw, ch) = t.at;
+    let tw = (cw + 200.0).clamp(420.0, 500.0).min(w - 32.0);
+    let (plan_w, plan_h) = if t.plan.is_some() { (176.0, 176.0 / crate::plan::ASPECT) } else { (0.0, 0.0) };
+    let words_x = if t.plan.is_some() { plan_w + 28.0 } else { 14.0 };
+    let lines = wrap(&t.body, 16.0, tw - words_x - 14.0, tw - words_x - 14.0);
+    let body_h = (lines.len() as f32 * 20.0).max(plan_h);
+    let th = 40.0 + body_h + 34.0;
+    let tx = x.min(w - 16.0 - tw).max(16.0);
+    let ty = if y + ch + 8.0 + th <= h - 8.0 { y + ch + 8.0 } else { (y - 8.0 - th).max(8.0) };
+    let cobalt = Color::new(0.412, 0.678, 1.0, 1.0);
+    draw_rectangle(tx, ty, tw, th, Color::new(0.047, 0.063, 0.125, 0.95));
+    draw_rectangle_lines(tx, ty, tw, th, 2.0, cobalt);
+    draw_rectangle(tx, ty, 4.0, th, cobalt);
+    text(&t.title, tx + 14.0, ty + 27.0, 20.0, col(WHITE, 1.0));
+    if let Some((id, marks)) = t.plan {
+        crate::plan::draw(id, tx + 14.0, ty + 40.0, plan_w, plan_h, marks);
+        draw_rectangle_lines(tx + 14.0, ty + 40.0, plan_w, plan_h, 1.0, Color::new(0.706, 0.761, 0.882, 0.4));
+    }
+    for (k, l) in lines.iter().enumerate() {
+        text(l, tx + words_x, ty + 54.0 + k as f32 * 20.0, 16.0, col(WHITE, 0.88));
+    }
+    text(&t.foot, tx + 14.0, ty + th - 13.0, 14.0, Color::new(0.718, 0.863, 1.0, 1.0));
 }
 
 fn draw_team_pick(app: &App, w: f32, h: f32) {
@@ -1757,9 +1977,7 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
     // ---- lobby, death screen and loadout ----
     let dead = !app.alive && !app.spectator;
     let panel = app.loadout_shown();
-    if app.lobby {
-        draw_lobby(app, snap, w, h);
-    }
+    let lobby_tip = if app.lobby { draw_lobby(app, snap, w, h) } else { None };
     if let Some(k) = app.kc.as_ref().filter(|_| !app.lobby) {
         // Killcam: say whose eyes these are, and how long is left to wait.
         let title = format!("KILLCAM   {}  -  {}", app.name(k.killer), sim::weapon_def(k.weapon).name);
@@ -1872,6 +2090,9 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
         text_c("CONNECTION LOST - waiting for server", cx, cy - 60.0, 30.0, Color::new(1.0, 0.4, 0.2, 1.0));
     }
     draw_chat(app, w, h, now);
+    if let Some(t) = &lobby_tip {
+        draw_tip(t, w, h);
+    }
     crate::touch::draw();
     icons
 }
