@@ -4,8 +4,9 @@
 //! collision is read from the shared layout (`ferrite_shared::map::canopy`),
 //! so what is drawn is what is stood on; the high crown above it is scenery.
 use super::hash01;
+use super::slag_cathedral::beam;
 use crate::gfx::{rgb, shade, Col, Mesh};
-use ferrite_shared::glam::vec3;
+use ferrite_shared::glam::{vec3, Vec3};
 use ferrite_shared::map::{canopy as layout, Block, BlockKind, World};
 
 pub const ID: u8 = layout::MAP_ID;
@@ -49,4 +50,51 @@ pub fn block(m: &mut Mesh, _w: &World, b: &Block, i: usize) {
         }
     }
     let _ = rgb;
+}
+
+/// Faded turquoise for the reserve's fittings, dull brass for its pulleys.
+const FITTING: Col = [0.24, 0.52, 0.50, 0.0];
+const BRASS: Col = [0.62, 0.50, 0.26, 0.0];
+const CABLE: Col = [0.14, 0.13, 0.12, 0.0];
+/// The guide runs this far above a rider's feet: the pulley over the sling.
+pub const GUIDE_LIFT: f32 = 2.45;
+
+/// The seedlines' fixed guides: a cable over each rider's path, a pulley at
+/// every bend, and at each dock a post with a turquoise collar and a
+/// painted landing.
+pub fn build(m: &mut Mesh, w: &World) {
+    if w.map != ID {
+        return;
+    }
+    let lift = Vec3::Y * GUIDE_LIFT;
+    for line in &w.lines {
+        let pts: Vec<Vec3> = line.pts.iter().map(|&p| p + lift).collect();
+        for k in 0..pts.len() - 1 {
+            beam(m, pts[k], pts[k + 1], 0.07, 0.07, CABLE);
+        }
+        for &p in &pts[1..pts.len() - 1] {
+            m.cuboid(p - vec3(0.22, 0.22, 0.22), p + vec3(0.22, 0.22, 0.22), BRASS);
+        }
+        for &d in [line.pts[0], line.pts[line.pts.len() - 1]].iter() {
+            // The dock: a post beside the landing up past the cable head,
+            // and the landing itself painted on the floor.
+            let side = vec3(0.9, 0.0, 0.0);
+            let top = d + lift + Vec3::Y * 0.6;
+            m.cuboid(d + side - vec3(0.09, 0.0, 0.09), top + side + vec3(0.09, 0.0, 0.09), shade(FITTING, 0.9));
+            m.cuboid(top + side - vec3(0.16, 0.5, 0.16), top + side + vec3(0.16, 0.0, 0.16), FITTING);
+            beam(m, top + side - Vec3::Y * 0.2, d + lift + Vec3::Y * 0.4, 0.06, 0.06, shade(FITTING, 0.8));
+            let r = 0.8;
+            m.quad(d + vec3(-r, 0.02, -r), d + vec3(-r, 0.02, r), d + vec3(r, 0.02, r), d + vec3(r, 0.02, -r), FITTING);
+        }
+    }
+}
+
+/// The sling of someone riding a seedline: a strap from the harness up to
+/// the pulley block running on the guide.
+pub fn sling(m: &mut Mesh, feet: Vec3) {
+    let waist = feet + Vec3::Y * 1.0;
+    let block = feet + Vec3::Y * GUIDE_LIFT;
+    beam(m, waist, block - Vec3::Y * 0.15, 0.08, 0.03, [0.86, 0.66, 0.20, 0.0]);
+    m.cuboid(block - vec3(0.14, 0.15, 0.14), block + vec3(0.14, 0.15, 0.14), BRASS);
+    m.cuboid(waist - vec3(0.2, 0.06, 0.16), waist + vec3(0.2, 0.06, 0.16), [0.86, 0.66, 0.20, 0.0]);
 }

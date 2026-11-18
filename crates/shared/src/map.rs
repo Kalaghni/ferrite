@@ -192,6 +192,53 @@ pub struct Ladder {
     pub top: f32,
 }
 
+/// A powered sling on a fixed guide: a rider's feet follow `pts` from the
+/// first dock to the last. The first and last legs are the short climbs
+/// on and off at the docks; see `sim::ride`.
+#[derive(Clone, Debug)]
+pub struct Seedline {
+    pub pts: Vec<Vec3>,
+    /// Distance along the line to each point.
+    pub at: Vec<f32>,
+}
+
+impl Seedline {
+    pub fn new(pts: Vec<Vec3>) -> Seedline {
+        let mut at = vec![0.0];
+        for k in 1..pts.len() {
+            at.push(at[k - 1] + pts[k].distance(pts[k - 1]));
+        }
+        Seedline { pts, at }
+    }
+
+    pub fn len(&self) -> f32 {
+        *self.at.last().unwrap_or(&0.0)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pts.len() < 2
+    }
+
+    /// Feet position, unit direction of travel (first to last) and leg
+    /// index at distance `s`.
+    pub fn sample(&self, s: f32) -> (Vec3, Vec3, usize) {
+        let s = s.clamp(0.0, self.len());
+        let mut k = 0;
+        while k + 2 < self.pts.len() && s > self.at[k + 1] {
+            k += 1;
+        }
+        let (a, b) = (self.pts[k], self.pts[k + 1]);
+        let span = (self.at[k + 1] - self.at[k]).max(1e-4);
+        let t = ((s - self.at[k]) / span).clamp(0.0, 1.0);
+        (a + (b - a) * t, (b - a).normalize_or_zero(), k)
+    }
+
+    /// Whether leg `k` is a dock climb (the first or the last).
+    pub fn dock_leg(&self, k: usize) -> bool {
+        k == 0 || k + 2 == self.pts.len()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Feature {
     pub kind: FeatureKind,
@@ -219,6 +266,8 @@ pub struct World {
     pub clock: f32,
     /// Ladders a player can climb (Relay's mast).
     pub ladders: Vec<Ladder>,
+    /// Seedlines a player can ride (Canopy's harvest slings).
+    pub lines: Vec<Seedline>,
 }
 
 fn hash(x: i32, z: i32, seed: u32) -> f32 {
@@ -392,6 +441,7 @@ impl World {
             tunnels,
             clock: 0.0,
             ladders: Vec::new(),
+            lines: Vec::new(),
         };
         for (i, (x, z)) in def.points.iter().enumerate() {
             w.points[i] = vec3(*x, w.height(*x, *z), *z);

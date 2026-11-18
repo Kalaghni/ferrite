@@ -386,6 +386,8 @@ pub fn build_world_profiled(w: &World) -> (Mesh, Profile) {
     meter.mark(&mut prof, &m, "fallen giant");
     special_landmarks::build(&mut m, w);
     meter.mark(&mut prof, &m, "relay mast / volcano");
+    canopy::build(&mut m, w);
+    meter.mark(&mut prof, &m, "canopy");
     monuments::build(&mut m, w);
     meter.mark(&mut prof, &m, "monuments");
     (m, prof)

@@ -75,6 +75,20 @@ pub const PASSAGES: [f32; 2] = [-20.0, 20.0];
 pub const PASSAGE_HALF: f32 = 3.0;
 pub const PASSAGE_H: f32 = 4.0;
 
+/// Seedlines, west-authored player-foot paths, mirrored to six. Each starts
+/// and ends at a dock with a short climb, so riders clear rails and lips.
+/// The court line's ground dock is set on the ground when the map is built.
+pub const LINES: [&[(f32, f32, f32)]; 3] = [
+    // From the collector court behind B up to the circuit's west corner.
+    &[(-78.0, 6.05, 42.0), (-78.0, 8.4, 42.0), (-48.0, 22.0, 28.0), (-42.0, 22.0, 24.0), (-42.0, BOUGH_Y + 0.05, 24.0)],
+    // Across the north of the well, west corner to the middle of the north edge.
+    &[(-42.0, BOUGH_Y + 0.05, 24.0), (-42.0, 22.0, 24.0), (0.0, 22.0, 48.0), (0.0, BOUGH_Y + 0.05, 48.0)],
+    // On from there to the east corner.
+    &[(0.0, BOUGH_Y + 0.05, 48.0), (0.0, 22.0, 48.0), (42.0, 22.0, 24.0), (42.0, BOUGH_Y + 0.05, 24.0)],
+];
+/// How near a dock a player must stand to take a line.
+pub const DOCK_REACH: f32 = 1.5;
+
 /// Open potting shelters: roofs on four posts, cover from the boughs for
 /// the ground fight. West-authored centres; each is 8 x 6 m.
 pub const SHELTERS: [(f32, f32); 4] = [(-108.0, -48.0), (-56.0, -6.0), (-34.0, 62.0), (-50.0, -62.0)];
@@ -138,9 +152,11 @@ pub fn slabs() -> Vec<(f32, f32, f32, f32)> {
     // The branch stops short of its corner square and its open end.
     let (a, b) = BRANCH;
     out.push((a.0 - BOUGH_HALF, b.1, a.0 + BOUGH_HALF, a.1 - BOUGH_HALF));
-    for k in 0..2 {
-        out.push(seg(CONNECTOR[k], CONNECTOR[k + 1]));
-    }
+    // The connector west, then north to the head of the stair, ending
+    // where the top step does so a climber has headroom.
+    out.push(seg(CONNECTOR[0], CONNECTOR[1]));
+    let (c1, c2) = (CONNECTOR[1], CONNECTOR[2]);
+    out.push((c1.0 - BOUGH_HALF, c1.1 - BOUGH_HALF, c1.0 + BOUGH_HALF, c2.1));
     out
 }
 
@@ -283,6 +299,20 @@ pub fn build(w: &mut World, _rng: &mut Rng) {
         for i in 0..STAIR_STEPS {
             let z1 = tz - i as f32 * STAIR_TREAD;
             put(w, tx - STAIR_HALF, z1 - STAIR_TREAD, tx + STAIR_HALF, z1, mid + (i + 1) as f32 * STAIR_RISE, Step);
+        }
+    }
+
+    // ---- Seedlines: the first three as authored, then their mirrors.
+    for s in [1.0f32, -1.0] {
+        for (k, line) in LINES.iter().enumerate() {
+            let mut pts: Vec<Vec3> = line.iter().map(|&(x, y, z)| Vec3::new(x * s, y, z * s)).collect();
+            if k == 0 {
+                let g = w.height(pts[0].x, pts[0].z) + 0.05;
+                let lift = pts[1].y - pts[0].y;
+                pts[0].y = g;
+                pts[1].y = g + lift;
+            }
+            w.lines.push(super::Seedline::new(pts));
         }
     }
 

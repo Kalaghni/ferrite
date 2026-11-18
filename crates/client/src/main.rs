@@ -1144,6 +1144,9 @@ impl App {
             if self.melee_latch {
                 c.more |= btn2::MELEE;
             }
+            if self.action_down(Action::Use) {
+                c.more |= btn2::USE;
+            }
         }
         self.fire_latch = false;
         self.melee_latch = false;

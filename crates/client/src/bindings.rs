@@ -38,10 +38,11 @@ pub enum Action {
     Cinematic,
     HideHud,
     Screenshot,
+    Use,
 }
 
 impl Action {
-    pub const ALL: [Self; 33] = [
+    pub const ALL: [Self; 34] = [
         Self::Forward,
         Self::Backward,
         Self::StrafeLeft,
@@ -75,6 +76,7 @@ impl Action {
         Self::Cinematic,
         Self::HideHud,
         Self::Screenshot,
+        Self::Use,
     ];
     pub fn id(self) -> &'static str {
         match self {
@@ -111,6 +113,7 @@ impl Action {
             Self::Cinematic => "cinematic_camera",
             Self::HideHud => "hide_hud",
             Self::Screenshot => "screenshot",
+            Self::Use => "use",
         }
     }
     pub fn label(self) -> &'static str {
@@ -148,6 +151,7 @@ impl Action {
             Self::Cinematic => "CINEMATIC CAMERA",
             Self::HideHud => "HIDE HUD",
             Self::Screenshot => "SCREENSHOT",
+            Self::Use => "USE / RIDE",
         }
     }
 }
@@ -407,6 +411,7 @@ impl Default for Bindings {
                 vec![Key(K::P)],
                 vec![Key(K::F1)],
                 vec![Key(K::F12)],
+                vec![Key(K::E)],
             ],
         }
     }

@@ -1105,6 +1105,40 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
         draw_circle(cx, cy, 1.5, Color::new(1.0, 0.2, 0.15, 0.9));
     }
 
+    // ---- seedlines: how to take one, and how to ride ----
+    if playing && !app.world.lines.is_empty() {
+        use crate::bindings::Action;
+        let use_key = key_hint(app, Action::Use);
+        let y = h * 0.66;
+        if app.st.ride > 0 {
+            let (fw, bk, cr, jp) = (
+                key_hint(app, Action::Forward),
+                key_hint(app, Action::Backward),
+                key_hint(app, Action::Crouch),
+                key_hint(app, Action::Jump),
+            );
+            let parts = [
+                Hint::Key(&fw),
+                Hint::Words("reel"),
+                Hint::Gap,
+                Hint::Key(&bk),
+                Hint::Words("back"),
+                Hint::Gap,
+                Hint::Key(&cr),
+                Hint::Words("brake"),
+                Hint::Gap,
+                Hint::Key(&jp),
+                Hint::Words("let go"),
+            ];
+            let wd = hints(&parts, 0.0, y, 16.0, col(WHITE, 0.9), false);
+            hints(&parts, cx - wd / 2.0, y, 16.0, col(WHITE, 0.9), true);
+        } else if app.st.on_ground && sim::dock_at(&app.world, app.st.pos, sim::view_dir(app.yaw, 0.0)).is_some() {
+            let parts = [Hint::Key(&use_key), Hint::Words("RIDE THE SEEDLINE")];
+            let wd = hints(&parts, 0.0, y, 18.0, col(WHITE, 0.95), false);
+            hints(&parts, cx - wd / 2.0, y, 18.0, col(WHITE, 0.95), true);
+        }
+    }
+
     // ---- world-space markers ----
     for (k, p) in app.world.points.iter().enumerate() {
         if !point_used(snap.mode, k) {

@@ -58,6 +58,15 @@ const CLIMB_STEP: f32 = 0.1;
 /// Letting go (jump) pushes you gently back off the rungs.
 const LET_GO: f32 = 1.2;
 pub const SLIDE_TICKS: u8 = 42;
+/// Seedlines: cruising speed forward and back, how quickly the sling gets
+/// there or stops when you let go, crouch braking, the speed of the short
+/// climbs at the docks, and the lift a rider gets jumping off.
+pub const RIDE_MAX: f32 = 14.0;
+pub const RIDE_BACK: f32 = 8.0;
+pub const RIDE_ACCEL: f32 = 28.0;
+pub const RIDE_BRAKE: f32 = 42.0;
+pub const RIDE_DOCK: f32 = 4.0;
+pub const RIDE_JUMP: f32 = 4.0;
 pub const HEAT_MAX: u8 = 100;
 pub const GRENADE_WEAPON: u8 = 3;
 /// Weapon id a melee kill is reported under.
@@ -965,6 +974,17 @@ pub struct PState {
     pub melee: u8,
     /// On a ladder: hands on the rungs, so no gravity and no shooting.
     pub climbing: bool,
+    /// Riding a seedline: 1 + its index in `World::lines`, or 0.
+    pub ride: u8,
+    /// Distance along the line, and speed along it (positive toward its
+    /// last dock).
+    pub ride_s: f32,
+    pub ride_v: f32,
+    /// +1 if the rider got on at the first dock (forward runs along the
+    /// line), -1 if at the last.
+    pub ride_way: i8,
+    /// Use held last tick, so taking a line needs a fresh press.
+    pub use_prev: bool,
 }
 
 impl PState {
@@ -999,6 +1019,11 @@ impl PState {
             burst: 0,
             melee: 0,
             climbing: false,
+            ride: 0,
+            ride_s: 0.0,
+            ride_v: 0.0,
+            ride_way: 1,
+            use_prev: false,
         }
     }
 }
@@ -1162,6 +1187,79 @@ pub fn ladder_at(w: &World, p: Vec3) -> Option<Ladder> {
     })
 }
 
+/// The seedline a player at `p` facing `fwd` takes from a dock there, and
+/// whether they get on at its first dock (else its last). Where lines share
+/// a dock, the one heading most nearly the way the player faces.
+pub fn dock_at(w: &World, p: Vec3, fwd: Vec3) -> Option<(usize, bool)> {
+    let near = |d: Vec3| {
+        let (dx, dz) = (p.x - d.x, p.z - d.z);
+        dx * dx + dz * dz < crate::map::canopy::DOCK_REACH.powi(2) && (p.y - d.y).abs() < 1.2
+    };
+    let mut best: Option<(usize, bool, f32)> = None;
+    for (k, l) in w.lines.iter().enumerate() {
+        if l.is_empty() {
+            continue;
+        }
+        let (a, b) = (l.pts[0], l.pts[l.pts.len() - 1]);
+        for (first, here, there) in [(true, a, b), (false, b, a)] {
+            if near(here) {
+                let away = Vec3::new(there.x - here.x, 0.0, there.z - here.z).normalize_or_zero();
+                let score = away.dot(fwd);
+                if best.is_none_or(|(_, _, s)| score > s) {
+                    best = Some((k, first, score));
+                }
+            }
+        }
+    }
+    best.map(|(k, first, _)| (k, first))
+}
+
+/// One tick on a seedline. Forward reels toward the far dock, back toward
+/// the one you got on at; let go of both to slow to a hang, crouch to brake
+/// hard. The climbs at the docks are slow. Reaching a dock lets go there;
+/// jump lets go anywhere, carrying the sling's speed.
+fn ride(s: &mut PState, w: &World, mz: f32, brake: bool, jump: bool, out: &mut StepOut) {
+    let Some(line) = w.lines.get(s.ride as usize - 1) else {
+        s.ride = 0;
+        return;
+    };
+    let way = s.ride_way as f32;
+    // Speed in the rider's own sense: positive toward the far dock.
+    let mut v = s.ride_v * way;
+    let target = if mz > 0.0 {
+        RIDE_MAX * mz
+    } else if mz < 0.0 {
+        RIDE_BACK * mz
+    } else {
+        0.0
+    };
+    let rate = if brake { RIDE_BRAKE } else { RIDE_ACCEL } * DT;
+    let goal = if brake { 0.0 } else { target };
+    v += (goal - v).clamp(-rate, rate);
+    let (_, _, leg) = line.sample(s.ride_s);
+    if line.dock_leg(leg) {
+        v = v.clamp(-RIDE_DOCK, RIDE_DOCK);
+    }
+    s.ride_v = v * way;
+    let len = line.len();
+    s.ride_s = (s.ride_s + s.ride_v * DT).clamp(0.0, len);
+    let (pos, dir, _) = line.sample(s.ride_s);
+    s.pos = pos;
+    s.vel = dir * s.ride_v;
+    s.on_ground = false;
+    s.crouch = false;
+    if (s.ride_s <= 0.0 && s.ride_v < 0.0) || (s.ride_s >= len && s.ride_v > 0.0) {
+        // At a dock: step off onto it.
+        s.ride = 0;
+        s.vel = Vec3::ZERO;
+        s.pos.y += 0.02;
+    } else if jump {
+        s.ride = 0;
+        s.vel.y += RIDE_JUMP;
+        out.jumped = true;
+    }
+}
+
 /// One tick on a ladder: no gravity, forward climbs, back descends and
 /// crouch slides down. Reaching the ground or a deck below lets go; at the
 /// top the climber steps forward off the rungs onto the deck.
@@ -1257,60 +1355,92 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
     }
     let was_ground = s.on_ground;
     let jump_btn = c.buttons & btn::JUMP != 0;
-    // Ladders: look at the rungs and push forward to take hold (or back,
-    // dropping onto one from above). Jump lets go.
-    let ladder = ladder_at(w, s.pos);
-    match ladder {
-        None => s.climbing = false,
-        Some(l) if s.climbing && jump_btn => {
-            s.climbing = false;
-            s.vel = -l.face * LET_GO;
+    // Seedlines: a fresh press of Use at a dock takes the line, sidearm out.
+    let use_btn = c.more & btn2::USE != 0;
+    let use_press = use_btn && !s.use_prev;
+    s.use_prev = use_btn;
+    if s.ride == 0 && use_press && was_ground && !s.climbing {
+        if let Some((k, first)) = dock_at(w, s.pos, fwd) {
+            let line = &w.lines[k];
+            s.ride = k as u8 + 1;
+            s.ride_s = if first { 0.0 } else { line.len() };
+            s.ride_way = if first { 1 } else { -1 };
+            s.ride_v = 0.0;
+            s.crouch = false;
+            s.slide = 0;
+            s.vel = Vec3::ZERO;
+            if s.slot == 0 {
+                s.slot = 1;
+                std::mem::swap(&mut s.ammo, &mut s.ammo_alt);
+                s.reload = 0;
+                s.cooldown = 0;
+                s.heat = 0;
+                s.burst = 0;
+                s.swap = 16;
+                out.swapped = true;
+                wd = weapon_def(wid(s));
+            }
         }
-        Some(l) if !s.climbing && !jump_btn && !sliding && fwd.dot(l.face) > LADDER_LOOK => {
-            s.climbing = (mz > 0.0 && !crouch_btn) || (mz < 0.0 && !was_ground);
-        }
-        _ => {}
     }
-    let hv = vec3(s.vel.x, 0.0, s.vel.z);
-    if s.climbing {
-        // Hands on the rungs; `climb` moves the player.
-    } else if sliding {
-        // Friction only, plus a little steering.
-        let dv = wish * 2.0 * DT - hv.normalize_or_zero() * (if was_ground { 5.5 } else { 0.5 }) * DT;
-        s.vel.x += dv.x;
-        s.vel.z += dv.z;
-    } else if was_ground || wish != Vec3::ZERO {
-        // Quicker to stop than to start: crisp, but with a little weight.
-        let accel = if !was_ground {
-            16.0
-        } else if wish == Vec3::ZERO {
-            60.0
-        } else {
-            52.0
-        };
-        let dv = wish * speed - hv;
-        let max = accel * DT;
-        let dv = if dv.length() > max { dv.normalize() * max } else { dv };
-        s.vel.x += dv.x;
-        s.vel.z += dv.z;
-    }
-    if was_ground && jump_btn {
-        s.vel.y = JUMP_V;
-        s.slide = 0;
-        out.jumped = true;
-    }
-    // Mantle: hold jump while pushing into a ledge to climb onto it.
-    if jump_btn && mz > 0.0 && !sliding && s.vel.y < MANTLE_V && mantle_top(s, w, dmask, fwd).is_some() {
-        s.vel.y = MANTLE_V + GRAVITY * DT;
-        out.mantle = true;
-    }
-    if let (true, Some(l)) = (s.climbing, ladder) {
-        climb(s, &l, mz, crouch_btn, w, dmask);
+    let riding = s.ride > 0;
+    if riding {
+        ride(s, w, mz, crouch_btn, jump_btn, &mut out);
     } else {
-        s.vel.y -= GRAVITY * DT;
-        let fall = s.vel.y;
-        move_collide(s, w, dmask, out.jumped, was_ground);
-        out.landed = s.on_ground && !was_ground && fall < -5.0;
+        // Ladders: look at the rungs and push forward to take hold (or back,
+        // dropping onto one from above). Jump lets go.
+        let ladder = ladder_at(w, s.pos);
+        match ladder {
+            None => s.climbing = false,
+            Some(l) if s.climbing && jump_btn => {
+                s.climbing = false;
+                s.vel = -l.face * LET_GO;
+            }
+            Some(l) if !s.climbing && !jump_btn && !sliding && fwd.dot(l.face) > LADDER_LOOK => {
+                s.climbing = (mz > 0.0 && !crouch_btn) || (mz < 0.0 && !was_ground);
+            }
+            _ => {}
+        }
+        let hv = vec3(s.vel.x, 0.0, s.vel.z);
+        if s.climbing {
+            // Hands on the rungs; `climb` moves the player.
+        } else if sliding {
+            // Friction only, plus a little steering.
+            let dv = wish * 2.0 * DT - hv.normalize_or_zero() * (if was_ground { 5.5 } else { 0.5 }) * DT;
+            s.vel.x += dv.x;
+            s.vel.z += dv.z;
+        } else if was_ground || wish != Vec3::ZERO {
+            // Quicker to stop than to start: crisp, but with a little weight.
+            let accel = if !was_ground {
+                16.0
+            } else if wish == Vec3::ZERO {
+                60.0
+            } else {
+                52.0
+            };
+            let dv = wish * speed - hv;
+            let max = accel * DT;
+            let dv = if dv.length() > max { dv.normalize() * max } else { dv };
+            s.vel.x += dv.x;
+            s.vel.z += dv.z;
+        }
+        if was_ground && jump_btn {
+            s.vel.y = JUMP_V;
+            s.slide = 0;
+            out.jumped = true;
+        }
+        // Mantle: hold jump while pushing into a ledge to climb onto it.
+        if jump_btn && mz > 0.0 && !sliding && s.vel.y < MANTLE_V && mantle_top(s, w, dmask, fwd).is_some() {
+            s.vel.y = MANTLE_V + GRAVITY * DT;
+            out.mantle = true;
+        }
+        if let (true, Some(l)) = (s.climbing, ladder) {
+            climb(s, &l, mz, crouch_btn, w, dmask);
+        } else {
+            s.vel.y -= GRAVITY * DT;
+            let fall = s.vel.y;
+            move_collide(s, w, dmask, out.jumped, was_ground);
+            out.landed = s.on_ground && !was_ground && fall < -5.0;
+        }
     }
 
     // Weapon timing.
@@ -1319,7 +1449,7 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
     s.swap = s.swap.saturating_sub(1);
     // The barrel cools quickly once you are off the trigger.
     s.heat = s.heat.saturating_sub(if fire_btn && s.cooldown > 0 { 1 } else { 3 });
-    if c.buttons & btn::SWAP != 0 && s.swap == 0 {
+    if c.buttons & btn::SWAP != 0 && s.swap == 0 && s.ride == 0 {
         // Drawing the other weapon is faster than reloading; it cancels a
         // reload in progress.
         s.slot ^= 1;
@@ -1335,7 +1465,7 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
     // Melee: a quick strike with the weapon in hand. It interrupts a
     // reload, and nothing else can be done until the swing is over.
     s.melee = s.melee.saturating_sub(1);
-    if c.more & btn2::MELEE != 0 && s.melee == 0 && s.swap == 0 && !s.climbing {
+    if c.more & btn2::MELEE != 0 && s.melee == 0 && s.swap == 0 && !s.climbing && s.ride == 0 {
         s.melee = MELEE_TICKS;
         s.reload = 0;
         s.burst = 0;
@@ -1348,7 +1478,7 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
         }
     }
     let want_reload = (c.buttons & btn::RELOAD != 0 && s.ammo < wd.mag) || s.ammo == 0;
-    if s.reload == 0 && want_reload && s.melee == 0 {
+    if s.reload == 0 && want_reload && s.melee == 0 && s.ride == 0 {
         s.reload = if s.surge { wd.reload / 2 } else { wd.reload };
         out.reload_started = true;
     }
@@ -1371,7 +1501,7 @@ pub fn step(s: &mut PState, c: &Cmd, w: &World, dmask: u64) -> StepOut {
         s.heat = (s.heat + wd.heat).min(HEAT_MAX);
     }
     s.trig = fire_btn;
-    if c.buttons & btn::GRENADE != 0 && s.grenades > 0 && s.gren_cd == 0 && !s.climbing {
+    if c.buttons & btn::GRENADE != 0 && s.grenades > 0 && s.gren_cd == 0 && !s.climbing && s.ride == 0 {
         s.grenades -= 1;
         s.gren_cd = 50;
         out.threw = true;

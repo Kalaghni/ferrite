@@ -15,7 +15,7 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 /// version, session token, message); a first Hello is answered with a
 /// `Challenge` cookie and only a Hello that returns it gets a slot.
 /// 18: Ridgeline's Fallen Giant replaces the central post and terrain pads.
-pub const PROTO: u32 = 20;
+pub const PROTO: u32 = 21;
 pub const DEFAULT_PORT: u16 = 27500;
 pub const SPECTATOR_ID: u8 = 255;
 
@@ -82,6 +82,8 @@ pub mod btn2 {
     pub const MELEE: u8 = 1;
     /// Movement axes are signed analog values in -127..127.
     pub const ANALOG_MOVE: u8 = 2;
+    /// Use: take a seedline at a dock, work a crank.
+    pub const USE: u8 = 4;
 }
 
 /// Second flag byte: animation state for other players.
@@ -96,6 +98,8 @@ pub mod flag2 {
     pub const ARMOR: u8 = 32;
     /// Overcharged: dealing extra damage.
     pub const POWER: u8 = 64;
+    /// Hanging from a seedline sling.
+    pub const RIDE: u8 = 128;
 }
 
 /// Things lying on the field to be walked over.

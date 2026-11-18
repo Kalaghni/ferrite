@@ -229,6 +229,9 @@ fn hot(c: [f32; 3], k: f32) -> [f32; 3] {
 /// A soldier with planted foot targets and articulated arms. All equipment
 /// follows the same body rig while head and weapon retain an independent aim.
 pub fn soldier(m: &mut Mesh, alpha: &mut Mesh, w: &World, p: &PlayerView, time: f32, blob: bool) {
+    if p.flags2 & ferrite_shared::proto::flag2::RIDE != 0 {
+        super::canopy::sling(m, p.pos);
+    }
     let tc = team_col(p.team);
     let shield = p.flags & flag::SHIELD != 0;
     let glow = if p.flags & flag::SURGE != 0 { 0.35 + 0.25 * (time * 9.0).sin() } else { 0.0 };

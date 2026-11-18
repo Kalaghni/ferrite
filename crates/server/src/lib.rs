@@ -1938,6 +1938,9 @@ impl Game {
                 if p.st.melee > 0 {
                     flags2 |= flag2::MELEE;
                 }
+                if p.st.ride > 0 {
+                    flags2 |= flag2::RIDE;
+                }
                 if self.flags.iter().any(|f| f.state == 1 && f.carrier == p.id as usize) {
                     flags2 |= flag2::CARRIER;
                 }
