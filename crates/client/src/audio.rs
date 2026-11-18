@@ -335,6 +335,12 @@ pub enum Sfx {
     /// The volcano blowing: a huge low boom, spatter, and a long rolling
     /// echo off the hills.
     Eruption,
+    /// Canopy's crown gust coming through the leaves.
+    Gust,
+    /// A shade curtain's drum letting go and the cloth running.
+    Furl,
+    /// A seedline sling's motor under way.
+    Sling,
     Count,
 }
 
@@ -593,6 +599,90 @@ fn rush() -> Vec<f32> {
         .collect()
 }
 
+/// Canopy's crown gust: wind rising through the leaves from far off,
+/// gathering for six seconds into a great rushing sweep as the shades furl,
+/// then easing away. Leaves hiss in gusts over a low roar.
+fn gust() -> Vec<f32> {
+    let dur = 9.0;
+    let mut rng = Rng::new(0x6057);
+    let (mut lo, mut lo2, mut hi_lp, mut hi, mut rustle) = (0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    (0..(dur * SR) as usize)
+        .map(|i| {
+            let t = i as f32 / SR;
+            let n = rng.range(-1.0, 1.0);
+            // The swell: rising to the sweep at six seconds, then away.
+            let swell = if t < 6.0 { (t / 6.0).powf(1.6) } else { 1.0 - ((t - 6.0) / 2.6).clamp(0.0, 1.0).powf(0.7) };
+            // Brighter as it nears.
+            let open = 0.01 + 0.03 * swell;
+            lo += (n - lo) * open;
+            lo2 += (lo - lo2) * 0.08;
+            hi_lp += (n - hi_lp) * 0.4;
+            hi += ((n - hi_lp) - hi) * 0.6;
+            // Leaves: hiss that comes and goes in quick gusts.
+            let flutter = 0.5 + 0.5 * ((t * 3.1).sin() * (t * 7.3 + 1.0).sin()).abs();
+            rustle += (hi * flutter - rustle) * 0.5;
+            let edge = (t / 0.5).min(1.0) * (1.0 - ((t - dur + 0.5) / 0.5).clamp(0.0, 1.0));
+            ((lo2 * 9.0 + rustle * 0.28) * swell * edge * 0.7).clamp(-1.0, 1.0)
+        })
+        .collect()
+}
+
+/// A shade curtain rolling: the wooden drum knocking as its pawl lets go,
+/// a rattle of the ratchet, and the cloth flapping as it runs.
+fn furl() -> Vec<f32> {
+    let dur = 1.0;
+    let mut rng = Rng::new(0xF021);
+    let mut cloth = 0.0f32;
+    (0..(dur * SR) as usize)
+        .map(|i| {
+            let t = i as f32 / SR;
+            let mut s = 0.0;
+            // Two knocks: a hollow drum, tuned low.
+            for (at, f, a) in [(0.02f32, 170.0f32, 0.6f32), (0.13, 230.0, 0.4)] {
+                let u = t - at;
+                if u >= 0.0 {
+                    let e = (-u * 38.0).exp() * (u / 0.002).min(1.0);
+                    s += a * e * ((u * f * std::f32::consts::TAU).sin() + 0.5 * (u * f * 2.7 * std::f32::consts::TAU).sin());
+                }
+            }
+            // The ratchet: quick clicks.
+            if t > 0.12 && t < 0.62 && (t * 34.0).fract() < 0.05 {
+                s += rng.range(-0.25, 0.25);
+            }
+            // Cloth: band noise beating as the panel flaps.
+            let n = rng.range(-1.0, 1.0);
+            cloth += (n - cloth) * 0.18;
+            let flap = 0.5 + 0.5 * (t * 15.0 * std::f32::consts::TAU).sin();
+            let env = (t / 0.12).min(1.0) * (1.0 - ((t - 0.4) / 0.55).clamp(0.0, 1.0));
+            s += cloth * flap * env * 0.9;
+            let edge = (t / 0.003).min(1.0) * (1.0 - ((t - dur + 0.1) / 0.1).clamp(0.0, 1.0));
+            (s * edge * 0.8).clamp(-1.0, 1.0)
+        })
+        .collect()
+}
+
+/// A seedline sling under way: the pulley motor's whine and the hum of the
+/// guide, cued again before it fades while the rider moves, so the copies
+/// run together; silent once they stop.
+fn sling() -> Vec<f32> {
+    let dur = 0.7;
+    let mut rng = Rng::new(0x5119);
+    let mut ph = 0.0f32;
+    let mut lp = 0.0f32;
+    (0..(dur * SR) as usize)
+        .map(|i| {
+            let t = i as f32 / SR;
+            ph += (520.0 + 18.0 * (t * 23.0).sin()) / SR * std::f32::consts::TAU;
+            let whine = ph.sin() * 0.5 + (ph * 2.0).sin() * 0.25 + (ph * 3.0).sin() * 0.12;
+            lp += (rng.range(-1.0, 1.0) - lp) * 0.05;
+            let hum = (ph * 0.25).sin() * 0.3 + lp * 1.2;
+            let env = (t / 0.15).min(1.0) * (1.0 - ((t - dur + 0.25) / 0.25).clamp(0.0, 1.0));
+            let s = env * env * (3.0 - 2.0 * env);
+            ((whine * 0.6 + hum) * s * 0.45).clamp(-1.0, 1.0)
+        })
+        .collect()
+}
+
 /// Deep ground rumble: sub-bass noise heaving unevenly, with a low growl
 /// under it, faded in and out so copies cued every two and a half seconds
 /// join into one sound.
@@ -743,6 +833,9 @@ impl Audio {
             (Sfx::Rush, rush()),
             (Sfx::Rumble, rumble()),
             (Sfx::Eruption, eruption()),
+            (Sfx::Gust, gust()),
+            (Sfx::Furl, furl()),
+            (Sfx::Sling, sling()),
         ];
         // Reload: two metallic clicks.
         let mut reload = vec![0.0; (0.5 * SR) as usize];
@@ -775,6 +868,8 @@ impl Audio {
             Sfx::Rush,
             Sfx::Rumble,
             Sfx::Eruption,
+            Sfx::Furl,
+            Sfx::Sling,
         ];
         for (id, samples) in defs {
             for (k, gain) in PANS.iter().enumerate() {
@@ -849,6 +944,9 @@ mod music_tests {
             ("rush", rush(), 3.2),
             ("rumble", rumble(), 4.0),
             ("eruption", eruption(), 7.0),
+            ("gust", gust(), 9.0),
+            ("furl", furl(), 1.0),
+            ("sling", sling(), 0.7),
         ] {
             assert_eq!(pcm.len(), (SR * secs) as usize, "{name} length");
             assert!(pcm.iter().all(|s| s.is_finite() && s.abs() <= 1.0), "{name} clips or is not finite");

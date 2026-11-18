@@ -520,6 +520,9 @@ pub struct App {
     mantle_vis: f32,
     /// Seconds Use has been held at a shade crank (Canopy), for the HUD.
     crank_hold: f32,
+    /// The shade banks' positions last heard from the server, so a bank
+    /// starting to move can be heard (None until the first snapshot).
+    shade_heard: Option<[u8; 2]>,
     slide_vis: f32,
     air_vis: f32,
     strafe_vis: f32,
@@ -1527,7 +1530,8 @@ async fn play(
         prefs.shadows,
         scene::sun_for(world.map).normalize(),
         bounds,
-    );
+    )
+    .with_scenery(scene::build_scenery(&world));
     let map_name = ferrite_shared::map::map_def(world.map).name;
     let audio = Audio::new(*volume).await;
     let start = mq::get_time();
@@ -1590,6 +1594,7 @@ async fn play(
         mantling: false,
         mantle_vis: 0.0,
         crank_hold: 0.0,
+        shade_heard: None,
         slide_vis: 0.0,
         air_vis: 0.0,
         strafe_vis: 0.0,
@@ -2124,7 +2129,8 @@ async fn play(
                     prefs.shadows,
                     scene::sun_for(app.world.map).normalize(),
                     scene::shadow_bounds(app.world.map),
-                );
+                )
+                .with_scenery(scene::build_scenery(&app.world));
                 std::mem::replace(&mut gpu, fresh).destroy();
                 app.fx = fx::Fx::new();
                 app.corpses.clear();
@@ -2650,6 +2656,44 @@ async fn play(
                 if matches!(cue, scene::special_landmarks::Cue::Blast) {
                     let d = at.distance(eye) / 220.0;
                     app.shake = (app.shake + 0.45 / (1.0 + d * d)).min(1.0);
+                }
+            }
+        }
+        // Canopy: the gust through the crown, curtains rolling, and the
+        // slings' motors.
+        if app.world.map == ferrite_shared::map::canopy::MAP_ID && app.kc.is_none() {
+            use ferrite_shared::events::{canopy_gust, GUST_WARN};
+            use ferrite_shared::map::canopy;
+            if cue_clock.is_finite() && world_t > cue_clock && world_t - cue_clock < 5.0 {
+                let (a, b) = (canopy_gust(cue_clock).phase, canopy_gust(world_t).phase);
+                if a < GUST_WARN && b >= GUST_WARN {
+                    app.audio.play(Sfx::Gust, 0.7);
+                }
+            }
+            if let Some(s) = app.net.latest() {
+                let goal = s.shades.map(|v| if v > 127 { 1u8 } else { 0 });
+                if let Some(was) = app.shade_heard {
+                    for k in 0..2 {
+                        if was[k] != goal[k] {
+                            for (x, z0, z1) in canopy::shade_panels(k) {
+                                let at = vec3(x, canopy::SHADE_TOP, (z0 + z1) * 0.5);
+                                app.audio.play_at(Sfx::Furl, at, eye, 0.5, 45.0);
+                            }
+                        }
+                    }
+                }
+                app.shade_heard = Some(goal);
+            }
+            let beat = |t: f32| (t / 0.5).floor();
+            if beat(time) != beat(time - dt) {
+                for v in app.views.iter() {
+                    let moving = v.vel.0.abs() + v.vel.1.abs() > 1.5;
+                    if v.flags2 & ferrite_shared::proto::flag2::RIDE != 0 && moving && v.pos.distance(eye) < 70.0 {
+                        app.audio.play_at(Sfx::Sling, v.pos + Vec3::Y * 2.4, eye, 0.35, 50.0);
+                    }
+                }
+                if app.alive && app.st.ride > 0 && app.st.ride_v.abs() > 1.5 {
+                    app.audio.play(Sfx::Sling, 0.18 + 0.02 * app.st.ride_v.abs());
                 }
             }
         }

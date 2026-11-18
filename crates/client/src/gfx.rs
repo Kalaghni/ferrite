@@ -664,6 +664,10 @@ pub struct Gpu {
     dummy: TextureId,
     shadow: Option<Shadow>,
     statics: Vec<(Bindings, i32)>,
+    /// Static geometry that is drawn but casts no shadow (a map's distant
+    /// high scenery, which would otherwise shade the whole field).
+    scenery: Vec<(Bindings, i32)>,
+    tex: TextureId,
     sky: Vec<(Bindings, i32)>,
     d_opaque: DynBuf,
     d_alpha: DynBuf,
@@ -711,11 +715,26 @@ fn uniform_meta(images: Vec<String>) -> ShaderMeta {
 }
 
 impl Gpu {
+    /// Add static scenery that is drawn but casts no shadow.
+    pub fn with_scenery(mut self, mesh: Mesh) -> Self {
+        let ctx = unsafe { get_internal_gl() }.quad_context;
+        self.tris += mesh.chunks.iter().map(|c| c.1.len()).sum::<usize>() / 3 + mesh.i.len() / 3;
+        let more = upload_static(ctx, mesh, self.tex);
+        self.scenery.extend(more);
+        self
+    }
+
     /// Free the GPU objects of a finished match.
     pub fn destroy(self) {
         let ctx = unsafe { get_internal_gl() }.quad_context;
         let dynamic = [&self.d_opaque, &self.d_alpha, &self.d_add, &self.d_view, &self.d_view_add, &self.d_overlay];
-        for b in self.statics.iter().chain(self.sky.iter()).map(|(b, _)| b).chain(dynamic.iter().flat_map(|d| d.pages.iter().map(|p| &p.b)))
+        for b in self
+            .statics
+            .iter()
+            .chain(self.scenery.iter())
+            .chain(self.sky.iter())
+            .map(|(b, _)| b)
+            .chain(dynamic.iter().flat_map(|d| d.pages.iter().map(|p| &p.b)))
         {
             for v in &b.vertex_buffers {
                 ctx.delete_buffer(*v);
@@ -850,6 +869,8 @@ impl Gpu {
             shader,
             dummy,
             statics: upload_static(ctx, world_mesh, tex),
+            scenery: Vec::new(),
+            tex,
             sky: upload_static(ctx, sky_mesh, tex),
             d_opaque: DynBuf::new(ctx, 64000, tex),
             d_alpha: DynBuf::new(ctx, 30000, tex),
@@ -1026,7 +1047,7 @@ impl Gpu {
         ctx.apply_pipeline(&self.opaque);
         depth_mask(true);
         ctx.apply_uniforms(UniformsSource::table(&self.uni(f, &f.vp, f.cam, f.sun, [0.0, 1.0, 1.0], true, post)));
-        for (b, n) in &self.statics {
+        for (b, n) in self.statics.iter().chain(self.scenery.iter()) {
             ctx.apply_bindings(b);
             ctx.draw(0, *n, 1);
         }

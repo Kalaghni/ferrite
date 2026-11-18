@@ -106,7 +106,8 @@ async fn main() {
         if gallery { 0 } else { 2048 },
         scene::sun_for(map).normalize(),
         bounds,
-    );
+    )
+    .with_scenery(if gallery { gfx::Mesh::default() } else { scene::build_scenery(&w) });
     let ids: Vec<u8> = (0..sim::WEAPONS.len() as u8).filter(|id| !matches!(*id, 3 | 17)).collect();
     let empty = gfx::Mesh::default();
     let mut frames = 0;

@@ -1020,7 +1020,7 @@ pub fn grow(m: &mut Mesh, w: &World) {
             let t = Tree { base: vec3(px, w.height(px, pz), pz), height, radius, tint, pine };
             // Monuments stand on these slopes; nothing grows through them.
             if !super::monuments::hides_tree(w, &t) {
-                super::tree(m, &t, 100_000 + k * 2);
+                super::tree(m, &t, 100_000 + k * 2, super::leaf_for(w.map));
             }
         }
         // Brush between the trunks.

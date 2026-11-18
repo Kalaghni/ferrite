@@ -859,7 +859,8 @@ impl Menu {
                 self.prefs.shadows.min(2048),
                 scene::sun_for(world.map).normalize(),
                 bounds,
-            );
+            )
+            .with_scenery(scene::build_scenery(&world));
             self.preview = Some((map, world, gpu));
         }
         let Some((_, world, gpu)) = &mut self.preview else { return };

@@ -92,7 +92,7 @@ fn bole(m: &mut Mesh, a: Vec3, ra: f32, b: Vec3, rb: f32, rot: f32, col: Col, se
     }
 }
 
-fn octa(m: &mut Mesh, c: Vec3, r: Vec3, rot: f32, col: Col) {
+pub(crate) fn octa(m: &mut Mesh, c: Vec3, r: Vec3, rot: f32, col: Col) {
     let (s, co) = rot.sin_cos();
     let h = |a: f32, b: f32| c + vec3((a * co - b * s) * r.x, 0.0, (a * s + b * co) * r.z);
     const N: usize = 10;
@@ -364,7 +364,7 @@ pub fn build_world_profiled(w: &World) -> (Mesh, Profile) {
     }
     for (i, t) in w.trees.iter().enumerate() {
         if !monuments::hides_tree(w, t) {
-            tree(&mut m, t, i);
+            tree(&mut m, t, i, leaf_for(w.map));
         }
     }
     meter.mark(&mut prof, &m, "trees");
@@ -396,8 +396,17 @@ pub fn build_world_profiled(w: &World) -> (Mesh, Profile) {
 /// Leaf colours a broadleaf tree's `tint` picks from.
 pub const LEAF: [[f32; 3]; 5] = [[0.74, 0.33, 0.13], [0.86, 0.57, 0.16], [0.63, 0.20, 0.15], [0.42, 0.47, 0.20], [0.24, 0.40, 0.25]];
 
+/// The leaf colours a map's broadleaf trees pick from.
+pub(crate) fn leaf_for(map: u8) -> &'static [[f32; 3]; 5] {
+    if map == canopy::ID {
+        &canopy::LEAF
+    } else {
+        &LEAF
+    }
+}
+
 /// One tree. `i` is its index: mirrored pairs share a turn.
-fn tree(m: &mut Mesh, t: &Tree, i: usize) {
+fn tree(m: &mut Mesh, t: &Tree, i: usize, leaf: &[[f32; 3]; 5]) {
     {
         let r = hash01(i as u32 / 2, 17) * std::f32::consts::TAU;
         let trunk = rgb(0.34, 0.25, 0.18);
@@ -414,7 +423,7 @@ fn tree(m: &mut Mesh, t: &Tree, i: usize) {
                 pyramid(m, base, t.radius * (1.0 - 0.24 * f), t.height * 0.36, r + f, shade(c, 1.0 + 0.1 * f));
             }
         } else {
-            let lc = LEAF[t.tint as usize % 5];
+            let lc = leaf[t.tint as usize % 5];
             let c = rgb(lc[0], lc[1], lc[2]);
             let cen = t.base + vec3(0.0, t.height * 0.72, 0.0);
             octa(m, cen, vec3(t.radius, t.height * 0.34, t.radius), r, c);
@@ -523,6 +532,13 @@ pub use flora::ambience;
 pub fn shadow_bounds(map: u8) -> (Vec3, Vec3) {
     (vec3(-HALF_X - 8.0, -12.0, -HALF_Z - 8.0), vec3(HALF_X + 8.0, if map == slag_cathedral::ID { 52.0 } else { 34.0 }, HALF_Z + 8.0))
 }
+/// A map's high scenery: drawn with the world, but casting no shadow.
+pub fn build_scenery(w: &World) -> Mesh {
+    let mut m = Mesh::default();
+    canopy::crown(&mut m, w);
+    m
+}
+
 pub fn build_sky_for(map: u8) -> Mesh {
     match map {
         slag_cathedral::ID => slag_cathedral::sky(),
