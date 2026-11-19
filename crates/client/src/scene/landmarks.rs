@@ -1,7 +1,7 @@
 //! The working valley: inhabited-looking workshops, mine portals and machinery.
 //! Large silhouettes use shared collision; motion stays above the walking routes.
 use super::hash01;
-use super::slag_cathedral::art::{soft, stencil, wall};
+use super::slag_cathedral::art::{soft, wall};
 use super::slag_cathedral::{beam, girder, pipe};
 use crate::gfx::{rgb, shade, Col, Mesh};
 use ferrite_shared::glam::{vec3, Mat4, Vec3};
@@ -50,14 +50,10 @@ fn breach_local(w: &World, g: &Mat4, s: layout::Site) -> Option<(Vec3, Vec3)> {
     Some((lo, hi))
 }
 
+/// A sign at `p` facing yaw, lettering `pixel` to the dot with its baseline
+/// at `p.y`: a nameboard, or a safety plate when written in `SAFETY`.
 pub(super) fn sign(m: &mut Mesh, g: &Mat4, p: Vec3, yaw: f32, text: &str, pixel: f32, col: Col) {
-    let f = *g * wall(p, yaw);
-    let width = text.len() as f32 * 6.0 * pixel + 0.35;
-    m.obox(&f, vec3(0.0, 0.32, -0.045), vec3(width * 0.5, 0.43, 0.04), DARK);
-    stencil(m, &f, text, pixel, col);
-    for x in [-width * 0.5 + 0.12, width * 0.5 - 0.12] {
-        m.obox(&f, vec3(x, 0.32, 0.015), vec3(0.035, 0.035, 0.025), EDGE);
-    }
+    super::signs::draw(m, &(*g * wall(p, yaw)), text, pixel, col == SAFETY);
 }
 
 pub(super) fn lamp(m: &mut Mesh, g: &Mat4, p: Vec3) {
@@ -128,7 +124,8 @@ fn workshop(m: &mut Mesh, w: &World, side: f32) {
             box_at(m, &g, vec3(k * (s.hx + 0.06), 1.23, z), vec3(0.10, 1.23, 0.075), EDGE);
         }
         box_at(m, &g, vec3(k * (s.hx + 0.06), 2.50, 0.0), vec3(0.10, 0.075, 1.38), EDGE);
-        lamp(m, &g, vec3(2.4, 2.88, k * (s.hz + 0.33)));
+        // Under the nameboard, however low the eaves put it.
+        lamp(m, &g, vec3(2.4, (s.height - 1.6).min(2.88), k * (s.hz + 0.33)));
         let name = ["VALLEY WORKS", "STONE WORKS", "RANGER STATION", "FREIGHT CONTROL"][w.map as usize];
         sign(m, &g, vec3(0.0, s.height - 1.05, k * (s.hz + 0.30)), if k < 0.0 { PI } else { 0.0 }, name, 0.070, PAINT);
         // Rain gutters and drainpipes bolted to the wall.
@@ -189,7 +186,10 @@ fn passage(m: &mut Mesh, w: &World, side: f32) {
         sign(m, &g, vec3(x + k * 0.11, s.height + 0.45, 0.0), k * FRAC_PI_2, title, 0.095, PAINT);
         lamp(m, &g, vec3(x, s.height - 0.48, 0.0));
         // Number boards beside each opening make either entrance recognisable.
-        sign(m, &g, vec3(x + k * 0.12, 1.25, s.hz + 0.42), k * FRAC_PI_2, if side > 0.0 { "WEST" } else { "EAST" }, 0.055, SAFETY);
+        // On its own post, clear of the frame.
+        let z = s.hz + 0.95;
+        rod(m, &g, vec3(x + k * 0.06, 0.0, z), vec3(x + k * 0.06, 1.75, z), 0.04, STEEL);
+        sign(m, &g, vec3(x + k * 0.12, 1.25, z), k * FRAC_PI_2, if side > 0.0 { "WEST" } else { "EAST" }, 0.055, SAFETY);
     }
     for i in 0..=4 {
         let x = -s.hx + 0.35 + (s.hx * 2.0 - 0.7) * i as f32 / 4.0;

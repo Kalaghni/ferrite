@@ -10,8 +10,9 @@ What each FERRITE release added, newest first. The full notes for each release a
 - **The Hollow Crown.** A leaf roof 164 m across with a well of open sky over C, root-wrapped trunks, and rainforest greens in place of autumn.
 - **A new map picker.** HOST & PLAY lists the maps down the right of the screen with a top-down plan of each, marked for the chosen mode. The lobby vote is a grid of map cards with plans, vote counts and meters, the modes in a column beside them, and a tip on each card; the arrow keys move your vote.
 - **Flags on Canopy.** A flag dropped up the tree falls to the nearest open ground, so it is never stranded where only a climber can reach it.
+- **v0.14.1.** HD weapons with rounded parts and fine detail, every setting (key bindings included) reachable from the pause menu during a match, cover props rebuilt with real shapes (Jersey barriers, corrugated containers, sandbag walls, braced crates, storage tanks), and painted enamel nameboards with emblems and lamps in place of the old dot signs.
 
-The network protocol changed (21), so everyone in a match needs v0.14.0, including the dedicated server. See the [v0.14.0 release notes](docs/release-notes/v0.14.0.md).
+The network protocol changed (21), so everyone in a match needs v0.14.0, including the dedicated server. See the [v0.14.0](docs/release-notes/v0.14.0.md) and [v0.14.1](docs/release-notes/v0.14.1.md) release notes.
 
 ## v0.13
 

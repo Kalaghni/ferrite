@@ -105,6 +105,8 @@ pub struct Args {
     no_music: bool,
     /// Verification aid: take the picture while following our killer.
     shot_dead: bool,
+    /// Capture aid: start with the pause overlay's settings open on this tab.
+    pause_settings: Option<u8>,
     /// Verification aid: launcher page to open on.
     menu_page: u8,
     /// Verification aids: freeze the first-person melee strike here; say
@@ -176,6 +178,7 @@ fn parse_args() -> Args {
         vm_reload: None,
         no_music: false,
         shot_dead: false,
+        pause_settings: None,
         menu_page: 0,
         vm_melee: None,
         wskin: None,
@@ -254,6 +257,7 @@ fn parse_args() -> Args {
                 a.shot_dead = true;
                 used = 1;
             }
+            "--pause-settings" => a.pause_settings = Some(val.parse().expect("--pause-settings <0 audio|1 video|2 controls>")),
             "--no-music" => {
                 a.no_music = true;
                 used = 1;
@@ -1291,7 +1295,6 @@ async fn main() {
         let mut loadout = [args.kit, 0, 1, 2, args.side, args.skin];
         loadout[1 + args.kit as usize % 3] = args.prim;
         let mut music = if scripted || args.no_music || args.volume <= 0.0 { Music::silent() } else { Music::new(0.5) };
-        let mut volume = args.volume;
         // Who we are comes from the settings file even on a direct launch.
         // A scripted run reads it but leaves the file alone.
         let mut saved = menu::Menu::load(&args.name, args.port, args.per_team);
@@ -1300,45 +1303,30 @@ async fn main() {
             music.vol = saved.music_vol;
             music.in_match = saved.music_in_match;
         }
-        let mut prefs = saved.prefs.clone();
         if std::env::args().any(|a| a == "--shadows") {
-            prefs.shadows = args.shadows;
+            saved.prefs.shadows = args.shadows;
         }
-        let mut sens = saved.sens;
         if !scripted {
             saved.persist();
         }
+        // The command line's loadout and volume are for this run only.
+        let kept = (saved.loadout, saved.volume);
+        saved.loadout = loadout;
+        saved.volume = args.volume;
         let icon = match args.icon {
             Some(k) => ident::preset(k, k),
             None => saved.icon_rgba(),
         };
-        let mut wskins = saved.wskins;
-        let mut sights = saved.sights;
-        let mut profile = saved.profile.clone();
-        let (_, msg) = play(
-            &args,
-            &args.name,
-            args.team,
-            choice,
-            &mut sens,
-            &mut loadout,
-            &mut volume,
-            &mut music,
-            &art,
-            &prefs,
-            saved.uuid,
-            &icon,
-            &mut wskins,
-            &mut sights,
-            &mut profile,
-        )
-        .await;
+        let uuid = saved.uuid;
+        let (_, msg) = play(&args, &args.name, args.team, choice, &mut saved, &mut music, &art, uuid, &icon).await;
         update::confirm_start(); // it ran: a fresh update works
         if !scripted {
-            saved.profile = profile;
+            saved.loadout = kept.0;
+            // Unless it was changed in the match's settings.
+            if saved.volume == args.volume {
+                saved.volume = kept.1;
+            }
             saved.prefs.fullscreen = is_fullscreen();
-            saved.wskins = wskins;
-            saved.sights = sights;
             saved.persist();
         }
         if let Some(m) = msg {
@@ -1398,26 +1386,8 @@ async fn main() {
             menu::Choice::Host { .. } => None,
         };
         let name = menu.name();
-        let prefs = menu.prefs.clone();
         let (uuid, icon) = (menu.uuid, menu.icon_rgba());
-        let (joined, msg) = play(
-            &args,
-            &name,
-            2,
-            choice,
-            &mut menu.sens,
-            &mut menu.loadout,
-            &mut menu.volume,
-            &mut music,
-            &art,
-            &prefs,
-            uuid,
-            &icon,
-            &mut menu.wskins,
-            &mut menu.sights,
-            &mut menu.profile,
-        )
-        .await;
+        let (joined, msg) = play(&args, &name, 2, choice, &mut menu, &mut music, &art, uuid, &icon).await;
         if music.available() {
             menu.music_vol = music.vol;
             menu.music_in_match = music.in_match;
@@ -1434,6 +1404,45 @@ async fn main() {
     }
 }
 
+/// The renderer for a world: its mesh, sky, scenery and shadow map.
+fn world_gpu(world: &World, shadows: u32) -> gfx::Gpu {
+    gfx::Gpu::new(
+        scene::build_world(world),
+        scene::build_sky_for(world.map),
+        shadows,
+        scene::sun_for(world.map).normalize(),
+        scene::shadow_bounds(world.map),
+    )
+    .with_scenery(scene::build_scenery(world))
+}
+
+/// Bring what the settings page changed into the match. `prefs` holds the
+/// settings last taken; returns whether the shadow quality changed.
+fn take_settings(app: &mut App, menu: &menu::Menu, prefs: &mut menu::Prefs, music: &mut Music, touch_flag: bool) -> bool {
+    app.sens = menu.sens.clamp(0.0004, 0.01);
+    app.audio.volume = menu.volume;
+    app.music_vol = menu.music_vol;
+    app.music_in_match = menu.music_in_match;
+    music.on = menu.music_on;
+    let new = &menu.prefs;
+    if new.fov != prefs.fov {
+        app.base_fov = new.fov;
+    }
+    if new.show_fps != prefs.show_fps {
+        app.show_net = new.show_fps;
+    }
+    if new.touch != prefs.touch {
+        touch::set_enabled(touch_flag || new.touch);
+        app.touch = touch_flag || new.touch;
+    }
+    app.invert_y = new.invert_y;
+    app.toggle_aim = new.toggle_aim;
+    app.bindings = new.bindings.clone();
+    let shadows = new.shadows != prefs.shadows;
+    *prefs = new.clone();
+    shadows
+}
+
 /// Run one match. Returns whether we got into the match, and a message for
 /// the home screen if it ended for a reason other than the player leaving.
 #[allow(clippy::too_many_arguments)]
@@ -1442,18 +1451,14 @@ async fn play(
     name: &str,
     team: u8,
     choice: menu::Choice,
-    sens: &mut f32,
-    loadout: &mut [u8; 6],
-    volume: &mut f32,
+    menu: &mut menu::Menu,
     music: &mut Music,
     art: &ui::Art,
-    prefs: &menu::Prefs,
     uuid: [u8; 16],
     icon: &[u8],
-    wskins: &mut [u8; 20],
-    sights: &mut [u8; 20],
-    profile: &mut menu::Profile,
 ) -> (bool, Option<String>) {
+    // The settings in force: the pause overlay's settings page changes them.
+    let mut prefs = menu.prefs.clone();
     touch::set_enabled(args.touch || prefs.touch);
     let cast = match &args.cine_cast {
         Some(p) => match std::fs::read_to_string(p).map_err(|e| e.to_string()).and_then(|t| cine::parse_cast(&t)) {
@@ -1534,7 +1539,7 @@ async fn play(
     )
     .with_scenery(scene::build_scenery(&world));
     let map_name = ferrite_shared::map::map_def(world.map).name;
-    let audio = Audio::new(*volume).await;
+    let audio = Audio::new(menu.volume).await;
     let start = mq::get_time();
     let hosting = server.as_ref().map(|h: &ferrite_server::ServerHandle| format!("hosting on UDP {}", h.addr.port()));
     let mut app = App {
@@ -1556,10 +1561,10 @@ async fn play(
         spawn_count: 0,
         respawn_in: 0.0,
         killer: SPECTATOR_ID,
-        kit_choice: loadout[0] % 3,
-        prims: [0u8, 1, 2].map(|k| sim::fix_loadout(k, loadout[1 + k as usize], 0).1),
-        side_choice: sim::fix_loadout(0, 0, loadout[4]).2,
-        skin_choice: loadout[5] % sim::SKINS.len() as u8,
+        kit_choice: menu.loadout[0] % 3,
+        prims: [0u8, 1, 2].map(|k| sim::fix_loadout(k, menu.loadout[1 + k as usize], 0).1),
+        side_choice: sim::fix_loadout(0, 0, menu.loadout[4]).2,
+        skin_choice: menu.loadout[5] % sim::SKINS.len() as u8,
         loadout_open: false,
         lobby: false,
         vote: 255,
@@ -1576,7 +1581,7 @@ async fn play(
         reload_latch: false,
         captured: false,
         input_blocked: true,
-        sens: sens.clamp(0.0004, 0.01),
+        sens: menu.sens.clamp(0.0004, 0.01),
         bindings: prefs.bindings.clone(),
         last_mouse: (0.0, 0.0),
         ads: 0.0,
@@ -1652,7 +1657,7 @@ async fn play(
         team_pick: false,
         sights: std::array::from_fn(|w| match args.sight {
             Some(s) => s.min(5),
-            None => sights[w],
+            None => menu.sights[w],
         }),
         stats: Stats::default(),
         hosting,
@@ -1663,7 +1668,7 @@ async fn play(
         chat_buf: String::new(),
         icons: std::collections::HashMap::new(),
         icon_ask: 0.0,
-        wskins: *wskins,
+        wskins: menu.wskins,
         review_wskin: args.wskin,
         melee_latch: false,
         seek: args.seek,
@@ -1671,7 +1676,7 @@ async fn play(
         kc_armed: None,
         kc: None,
         mode_vote: 255,
-        profile: profile.clone(),
+        profile: menu.profile.clone(),
         award: None,
         armor: 0,
         streak: 0,
@@ -1682,6 +1687,12 @@ async fn play(
         cast,
         cast_clock: 0.0,
     };
+    // Capture aid: open the pause overlay's settings page on a tab.
+    if let Some(tab) = args.pause_settings {
+        app.pause_settings = true;
+        menu.open_settings();
+        menu.tab = tab.min(2);
+    }
     if let Some((eye, target)) = args.cine {
         app.cine.script(eye, target, args.cine_fov, args.cine_focus, args.cine_aperture);
     }
@@ -1753,7 +1764,9 @@ async fn play(
         app.now_playing = music.now_playing().map(|t| t.to_string());
 
         // ---- chat: while the box is open it has the keyboard ----
-        TYPING.store(app.chat_open, std::sync::atomic::Ordering::Relaxed);
+        // The settings page, like the chat box, has the keyboard: a key
+        // being assigned must not also act in the match.
+        TYPING.store(app.chat_open || app.pause_settings, std::sync::atomic::Ordering::Relaxed);
         {
             use macroquad::input::{is_key_down as kd, is_key_pressed as kp};
             use mq::KeyCode as K;
@@ -1787,6 +1800,7 @@ async fn play(
                 }
             } else if !app.spectator
                 && !app.auto
+                && !app.pause_settings
                 && !app.team_pick
                 && !app.cine.on
                 && (app.bind_pressed(Action::ChatAll) || app.bind_pressed(Action::ChatTeam))
@@ -1942,8 +1956,10 @@ async fn play(
         } else if app.paused() {
             // Pause overlay: its buttons, or the keys it lists.
             let mut act = None;
-            if back_pressed {
-                act = Some(if app.pause_settings { 18 } else { 0 });
+            if app.pause_settings {
+                // The settings page takes its own clicks and Escape.
+            } else if back_pressed {
+                act = Some(0);
             } else if app.action_pressed(Action::Loadout) {
                 act = Some(1);
             } else if controller::left_pressed() {
@@ -1954,24 +1970,27 @@ async fn play(
                     }
                 }
             }
-            let nudge = |v: f32, up: bool| ((v * 10.0).round() + if up { 1.0 } else { -1.0 }).clamp(0.0, 10.0) / 10.0;
             match act {
                 Some(0) => app.captured = true,
                 Some(1) => {
                     app.captured = true;
                     app.loadout_open = app.alive;
                 }
-                Some(2) => app.pause_settings = true,
+                Some(2) => {
+                    app.pause_settings = true;
+                    // The page starts from what the match is using now
+                    // (the keys may have changed sensitivity or stats).
+                    menu.open_settings();
+                    menu.sens = app.sens;
+                    menu.volume = app.audio.volume;
+                    menu.music_vol = app.music_vol;
+                    menu.music_in_match = app.music_in_match;
+                    menu.prefs.show_fps = app.show_net;
+                    menu.prefs.fullscreen = is_fullscreen();
+                    prefs = menu.prefs.clone();
+                }
                 Some(3) => app.team_pick = true,
                 Some(4) => leave = true,
-                Some(10) => app.sens = (app.sens / 1.1).max(0.0004),
-                Some(11) => app.sens = (app.sens * 1.1).min(0.01),
-                Some(12) => app.audio.volume = nudge(app.audio.volume, false),
-                Some(13) => app.audio.volume = nudge(app.audio.volume, true),
-                Some(14) => app.music_vol = nudge(app.music_vol, false),
-                Some(15) => app.music_vol = nudge(app.music_vol, true),
-                Some(16) | Some(17) => app.music_in_match = !app.music_in_match,
-                Some(18) => app.pause_settings = false,
                 _ => {}
             }
             if act.is_some() {
@@ -2144,14 +2163,7 @@ async fn play(
         if let Some(m) = app.net.latest().map(|s| s.map) {
             if m != app.world.map {
                 app.world = World::with_map(seed, m);
-                let fresh = gfx::Gpu::new(
-                    scene::build_world(&app.world),
-                    scene::build_sky_for(app.world.map),
-                    prefs.shadows,
-                    scene::sun_for(app.world.map).normalize(),
-                    scene::shadow_bounds(app.world.map),
-                )
-                .with_scenery(scene::build_scenery(&app.world));
+                let fresh = world_gpu(&app.world, prefs.shadows);
                 std::mem::replace(&mut gpu, fresh).destroy();
                 app.fx = fx::Fx::new();
                 app.corpses.clear();
@@ -2189,7 +2201,7 @@ async fn play(
             if !app.spectator {
                 app.profile.bank(credits, won);
                 app.award = Some((credits, won, now));
-                *profile = app.profile.clone();
+                menu.profile = app.profile.clone();
             }
         }
         // Chat that has arrived, and the icons of whoever is here.
@@ -2924,6 +2936,17 @@ async fn play(
             gpu.overlay(&over_mesh, mq::screen_width(), sh);
         }
 
+        if app.pause_settings && app.paused() {
+            if menu.match_settings(mq::screen_width(), mq::screen_height()) {
+                app.pause_settings = false;
+            }
+            if take_settings(&mut app, menu, &mut prefs, music, args.touch) {
+                // New shadow quality: the world's renderer is built again.
+                let fresh = world_gpu(&app.world, prefs.shadows);
+                std::mem::replace(&mut gpu, fresh).destroy();
+            }
+        }
+
         if !grabbed {
             controller::draw_cursor();
         }
@@ -2980,13 +3003,13 @@ async fn play(
         }
         mq::next_frame().await
     }
-    *sens = app.sens;
-    *volume = app.audio.volume;
-    *loadout = [app.kit_choice, app.prims[0], app.prims[1], app.prims[2], app.side_choice, app.skin_choice];
-    *wskins = app.wskins;
-    *profile = app.profile.clone();
+    menu.sens = app.sens;
+    menu.volume = app.audio.volume;
+    menu.loadout = [app.kit_choice, app.prims[0], app.prims[1], app.prims[2], app.side_choice, app.skin_choice];
+    menu.wskins = app.wskins;
+    menu.profile = app.profile.clone();
     if args.sight.is_none() {
-        *sights = app.sights; // --sight forces one for this run only
+        menu.sights = app.sights; // --sight forces one for this run only
     }
 
     app.net.bye();

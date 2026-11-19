@@ -181,6 +181,9 @@ pub struct Menu {
     binding_capture: Option<Action>,
     binding_add: bool,
     binding_note: Option<String>,
+    /// The match's settings page opened this frame: the click that opened
+    /// it must not also press something on it.
+    settings_fresh: bool,
     binding_cancel_rect: Option<(f32, f32, f32, f32)>,
     /// That map, built for drawing: (map index, world, renderer).
     preview: Option<(u8, World, gfx::Gpu)>,
@@ -403,6 +406,7 @@ impl Menu {
             binding_capture: None,
             binding_add: false,
             binding_note: None,
+            settings_fresh: false,
             binding_cancel_rect: None,
             preview: None,
             devices: Vec::new(),
@@ -1079,6 +1083,159 @@ impl Menu {
     }
 
     /// Heading shared by the inner pages; returns true when BACK is clicked.
+    /// The settings page under its heading: the AUDIO, VIDEO and CONTROLS
+    /// tabs and their rows. The launcher and the pause overlay both draw it;
+    /// `in_match` leaves out what cannot be done from inside a match.
+    fn settings_body(&mut self, x: f32, mut y: f32, w: f32, sh: f32, in_match: bool) {
+        // Tabs.
+        let tw = ((w - 16.0) / 3.0).floor();
+        for (i, label) in ["AUDIO", "VIDEO", "CONTROLS"].into_iter().enumerate() {
+            let bx = x + i as f32 * (tw + 8.0);
+            let on = self.tab as usize == i;
+            let over = hit(bx, y, tw, 36.0);
+            ui::plate(bx, y, tw, 36.0, if on { th::COBALT } else { th::GLASS_STRONG }, if on || over { th::WHITE } else { th::STROKE });
+            ui::text_c(label, bx + tw / 2.0, y + 25.0, 20.0, if on { th::INK } else { th::MUTED });
+            if over && clicked() {
+                self.tab = i as u8;
+                self.binding_capture = None;
+                self.binding_note = None;
+            }
+        }
+        y += 50.0;
+        // Each row: a label, the value, and - / + to change it.
+        let row = |label: &str, value: String, y: f32| -> i32 {
+            ui::plate(x, y, w, 46.0, th::GLASS_STRONG, th::STROKE);
+            ui::text(label, x + 14.0, y + 30.0, 20.0, th::WHITE);
+            ui::text_c(&value, x + w - 112.0, y + 30.0, 20.0, th::COBALT_BRIGHT);
+            let down = button(x + w - 210.0, y + 6.0, 40.0, 34.0, "-", None, 22.0);
+            let up = button(x + w - 48.0, y + 6.0, 40.0, 34.0, "+", None, 22.0);
+            up as i32 - down as i32
+        };
+        let pct = |v: f32| format!("{:.0}%", v * 100.0);
+        let on_off = |b: bool| if b { "ON".to_string() } else { "OFF".to_string() };
+        match self.tab {
+            0 => {
+                // Output device: step through what is plugged in. The
+                // sound moves across at once, so you can hear the choice.
+                {
+                    ui::plate(x, y, w, 46.0, th::GLASS_STRONG, th::STROKE);
+                    ui::text("OUTPUT", x + 14.0, y + 30.0, 20.0, th::WHITE);
+                    let at = self.audio_device.as_ref().and_then(|id| self.devices.iter().position(|d| &d.0 == id));
+                    let mut name = match (at, &self.audio_device) {
+                        (Some(i), _) => self.devices[i].1.clone(),
+                        (None, Some(_)) => "System default (saved device not connected)".to_string(),
+                        (None, None) => "System default".to_string(),
+                    };
+                    let room = w - 130.0 - 60.0 - 56.0;
+                    while ui::width(&name, 16.0) > room && name.chars().count() > 4 {
+                        name = name.chars().take(name.chars().count() - 4).collect::<String>() + "...";
+                    }
+                    ui::text_c(&name, x + 130.0 + 48.0 + room / 2.0, y + 29.0, 16.0, th::COBALT_BRIGHT);
+                    let n = self.devices.len() as i32 + 1;
+                    let step = button(x + w - 48.0, y + 6.0, 40.0, 34.0, ">", None, 22.0) as i32
+                        - button(x + 130.0, y + 6.0, 40.0, 34.0, "<", None, 22.0) as i32;
+                    if step != 0 && (n > 1 || self.audio_device.is_some()) {
+                        // Slot 0 is the system default, then the devices.
+                        let cur = at.map_or(0, |i| i as i32 + 1);
+                        let next = (cur + step).rem_euclid(n);
+                        self.audio_device = if next == 0 { None } else { Some(self.devices[next as usize - 1].0.clone()) };
+                        quad_snd::set_output_device(self.audio_device.clone());
+                    }
+                    y += 54.0;
+                }
+                if row("MUSIC", on_off(self.music_on), y) != 0 {
+                    self.music_on = !self.music_on; // either button flips it
+                }
+                y += 54.0;
+                if row("MUSIC IN A MATCH", on_off(self.music_in_match), y) != 0 {
+                    self.music_in_match = !self.music_in_match;
+                }
+                y += 54.0;
+                let d = row("MUSIC VOLUME", pct(self.music_vol), y);
+                self.music_vol = ((self.music_vol * 10.0).round() + d as f32).clamp(0.0, 10.0) / 10.0;
+                y += 54.0;
+                let d = row("EFFECTS VOLUME", pct(self.volume), y);
+                self.volume = ((self.volume * 10.0).round() + d as f32).clamp(0.0, 10.0) / 10.0;
+                y += 72.0;
+                ui::text("Music by breadKernel.", x, y, 18.0, th::MUTED);
+                ui::text("Your own .ogg or .wav files in a 'music' folder beside the game", x, y + 24.0, 18.0, th::QUIET);
+                ui::text("join the rotation.", x, y + 46.0, 18.0, th::QUIET);
+            }
+            1 => {
+                if row("FULLSCREEN", on_off(self.prefs.fullscreen), y) != 0 {
+                    self.prefs.fullscreen = !self.prefs.fullscreen;
+                    crate::set_fullscreen(self.prefs.fullscreen);
+                }
+                y += 54.0;
+                let d = row("FIELD OF VIEW", format!("{:.0}", self.prefs.fov), y);
+                self.prefs.fov = (self.prefs.fov + 2.0 * d as f32).clamp(56.0, 90.0);
+                y += 54.0;
+                let levels = [0u32, 2048, 4096];
+                let at = levels.iter().position(|l| *l == self.prefs.shadows).unwrap_or(2) as i32;
+                let d = row("SHADOWS", ["OFF", "LOW", "HIGH"][at as usize].to_string(), y);
+                self.prefs.shadows = levels[(at + d).clamp(0, 2) as usize];
+                y += 54.0;
+                if row("SHOW FPS AND PING", on_off(self.prefs.show_fps), y) != 0 {
+                    self.prefs.show_fps = !self.prefs.show_fps;
+                }
+                y += 54.0;
+                if row("CHECK FOR UPDATES", on_off(self.updates), y) != 0 {
+                    self.updates = !self.updates;
+                }
+                // The version the last update replaced, kept until the next one.
+                if let Some(prev) = self.updater.previous.clone().filter(|_| !in_match) {
+                    y += 54.0;
+                    ui::plate(x, y, w, 46.0, th::GLASS_STRONG, th::STROKE);
+                    ui::text("PREVIOUS VERSION", x + 14.0, y + 30.0, 20.0, th::WHITE);
+                    ui::text_c(&prev, x + w - 230.0, y + 30.0, 20.0, th::COBALT_BRIGHT);
+                    if button(x + w - 140.0, y + 6.0, 132.0, 34.0, "ROLL BACK", None, 18.0) {
+                        self.updater.roll_back(); // then restarts, as after an update
+                    }
+                }
+                y += 72.0;
+                ui::text("Field of view is vertical, in degrees. Aiming down a sight narrows it.", x, y, 18.0, th::QUIET);
+                ui::text("Lower the shadows on an older graphics card. F3 shows FPS in a match.", x, y + 24.0, 18.0, th::QUIET);
+            }
+            _ => self.controls(x, y, w, sh),
+        }
+    }
+
+    /// Called as the pause overlay's settings open: list the sound outputs
+    /// and start with no key assignment under way.
+    pub fn open_settings(&mut self) {
+        self.devices = quad_snd::output_devices();
+        self.binding_capture = None;
+        self.binding_note = None;
+        self.settings_fresh = true;
+    }
+
+    /// The full settings page over a paused match, laid out as in the
+    /// launcher. Returns true when it is closed (BACK or Escape); the
+    /// settings are saved then.
+    pub fn match_settings(&mut self, sw: f32, sh: f32) -> bool {
+        let capturing = self.binding_capture.is_some();
+        CAPTURING_INPUT.with(|active| active.set(capturing || self.settings_fresh));
+        self.settings_fresh = false;
+        self.capture_binding();
+        let k = ui::art_scale(sw, sh);
+        let x = (78.0 * k).max(24.0).floor();
+        let y = (216.0 * k).max(130.0).floor();
+        let w = 660.0f32.min(sw - x - 24.0);
+        mq::draw_rectangle(0.0, 0.0, (x + w + 40.0).min(sw), sh, ui::fade(th::INK, 0.62));
+        let esc = !capturing && (mq::is_key_pressed(mq::KeyCode::Escape) || controller::menu_back());
+        let back = Self::page_head(x, y, w, "MATCH CONTROL", "SETTINGS", th::EMBER_BRIGHT);
+        self.settings_body(x, y + 84.0, w, sh, true);
+        ui::text("ESC back to the match menu", x, sh - 20.0, 18.0, th::QUIET);
+        CAPTURING_INPUT.with(|active| active.set(false));
+        if back || esc {
+            self.binding_capture = None;
+            self.binding_note = None;
+            self.save();
+            return true;
+        }
+        false
+    }
+
     fn page_head(x: f32, y: f32, w: f32, label: &str, title: &str, accent: mq::Color) -> bool {
         ui::text(label, x, y, 15.0, accent);
         ui::text(title, x, y + 34.0, 34.0, th::WHITE);
@@ -2052,125 +2209,7 @@ impl Menu {
                         self.go(0);
                         self.save();
                     }
-                    y += 84.0;
-                    // Tabs.
-                    let tw = ((w - 16.0) / 3.0).floor();
-                    for (i, label) in ["AUDIO", "VIDEO", "CONTROLS"].into_iter().enumerate() {
-                        let bx = x + i as f32 * (tw + 8.0);
-                        let on = self.tab as usize == i;
-                        let over = hit(bx, y, tw, 36.0);
-                        ui::plate(
-                            bx,
-                            y,
-                            tw,
-                            36.0,
-                            if on { th::COBALT } else { th::GLASS_STRONG },
-                            if on || over { th::WHITE } else { th::STROKE },
-                        );
-                        ui::text_c(label, bx + tw / 2.0, y + 25.0, 20.0, if on { th::INK } else { th::MUTED });
-                        if over && clicked() {
-                            self.tab = i as u8;
-                            self.binding_capture = None;
-                            self.binding_note = None;
-                        }
-                    }
-                    y += 50.0;
-                    // Each row: a label, the value, and - / + to change it.
-                    let row = |label: &str, value: String, y: f32| -> i32 {
-                        ui::plate(x, y, w, 46.0, th::GLASS_STRONG, th::STROKE);
-                        ui::text(label, x + 14.0, y + 30.0, 20.0, th::WHITE);
-                        ui::text_c(&value, x + w - 112.0, y + 30.0, 20.0, th::COBALT_BRIGHT);
-                        let down = button(x + w - 210.0, y + 6.0, 40.0, 34.0, "-", None, 22.0);
-                        let up = button(x + w - 48.0, y + 6.0, 40.0, 34.0, "+", None, 22.0);
-                        up as i32 - down as i32
-                    };
-                    let pct = |v: f32| format!("{:.0}%", v * 100.0);
-                    let on_off = |b: bool| if b { "ON".to_string() } else { "OFF".to_string() };
-                    match self.tab {
-                        0 => {
-                            // Output device: step through what is plugged in. The
-                            // sound moves across at once, so you can hear the choice.
-                            {
-                                ui::plate(x, y, w, 46.0, th::GLASS_STRONG, th::STROKE);
-                                ui::text("OUTPUT", x + 14.0, y + 30.0, 20.0, th::WHITE);
-                                let at = self.audio_device.as_ref().and_then(|id| self.devices.iter().position(|d| &d.0 == id));
-                                let mut name = match (at, &self.audio_device) {
-                                    (Some(i), _) => self.devices[i].1.clone(),
-                                    (None, Some(_)) => "System default (saved device not connected)".to_string(),
-                                    (None, None) => "System default".to_string(),
-                                };
-                                let room = w - 130.0 - 60.0 - 56.0;
-                                while ui::width(&name, 16.0) > room && name.chars().count() > 4 {
-                                    name = name.chars().take(name.chars().count() - 4).collect::<String>() + "...";
-                                }
-                                ui::text_c(&name, x + 130.0 + 48.0 + room / 2.0, y + 29.0, 16.0, th::COBALT_BRIGHT);
-                                let n = self.devices.len() as i32 + 1;
-                                let step = button(x + w - 48.0, y + 6.0, 40.0, 34.0, ">", None, 22.0) as i32
-                                    - button(x + 130.0, y + 6.0, 40.0, 34.0, "<", None, 22.0) as i32;
-                                if step != 0 && (n > 1 || self.audio_device.is_some()) {
-                                    // Slot 0 is the system default, then the devices.
-                                    let cur = at.map_or(0, |i| i as i32 + 1);
-                                    let next = (cur + step).rem_euclid(n);
-                                    self.audio_device = if next == 0 { None } else { Some(self.devices[next as usize - 1].0.clone()) };
-                                    quad_snd::set_output_device(self.audio_device.clone());
-                                }
-                                y += 54.0;
-                            }
-                            if row("MUSIC", on_off(self.music_on), y) != 0 {
-                                self.music_on = !self.music_on; // either button flips it
-                            }
-                            y += 54.0;
-                            if row("MUSIC IN A MATCH", on_off(self.music_in_match), y) != 0 {
-                                self.music_in_match = !self.music_in_match;
-                            }
-                            y += 54.0;
-                            let d = row("MUSIC VOLUME", pct(self.music_vol), y);
-                            self.music_vol = ((self.music_vol * 10.0).round() + d as f32).clamp(0.0, 10.0) / 10.0;
-                            y += 54.0;
-                            let d = row("EFFECTS VOLUME", pct(self.volume), y);
-                            self.volume = ((self.volume * 10.0).round() + d as f32).clamp(0.0, 10.0) / 10.0;
-                            y += 72.0;
-                            ui::text("Music by breadKernel.", x, y, 18.0, th::MUTED);
-                            ui::text("Your own .ogg or .wav files in a 'music' folder beside the game", x, y + 24.0, 18.0, th::QUIET);
-                            ui::text("join the rotation.", x, y + 46.0, 18.0, th::QUIET);
-                        }
-                        1 => {
-                            if row("FULLSCREEN", on_off(self.prefs.fullscreen), y) != 0 {
-                                self.prefs.fullscreen = !self.prefs.fullscreen;
-                                crate::set_fullscreen(self.prefs.fullscreen);
-                            }
-                            y += 54.0;
-                            let d = row("FIELD OF VIEW", format!("{:.0}", self.prefs.fov), y);
-                            self.prefs.fov = (self.prefs.fov + 2.0 * d as f32).clamp(56.0, 90.0);
-                            y += 54.0;
-                            let levels = [0u32, 2048, 4096];
-                            let at = levels.iter().position(|l| *l == self.prefs.shadows).unwrap_or(2) as i32;
-                            let d = row("SHADOWS", ["OFF", "LOW", "HIGH"][at as usize].to_string(), y);
-                            self.prefs.shadows = levels[(at + d).clamp(0, 2) as usize];
-                            y += 54.0;
-                            if row("SHOW FPS AND PING", on_off(self.prefs.show_fps), y) != 0 {
-                                self.prefs.show_fps = !self.prefs.show_fps;
-                            }
-                            y += 54.0;
-                            if row("CHECK FOR UPDATES", on_off(self.updates), y) != 0 {
-                                self.updates = !self.updates;
-                            }
-                            // The version the last update replaced, kept until the next one.
-                            if let Some(prev) = self.updater.previous.clone() {
-                                y += 54.0;
-                                ui::plate(x, y, w, 46.0, th::GLASS_STRONG, th::STROKE);
-                                ui::text("PREVIOUS VERSION", x + 14.0, y + 30.0, 20.0, th::WHITE);
-                                ui::text_c(&prev, x + w - 230.0, y + 30.0, 20.0, th::COBALT_BRIGHT);
-                                if button(x + w - 140.0, y + 6.0, 132.0, 34.0, "ROLL BACK", None, 18.0) {
-                                    self.updater.roll_back(); // then restarts, as after an update
-                                }
-                            }
-                            y += 72.0;
-                            ui::text("Field of view is vertical, in degrees. Aiming down a sight narrows it.", x, y, 18.0, th::QUIET);
-                            ui::text("Lower the shadows on an older graphics card. F3 shows FPS in a match.", x, y + 24.0, 18.0, th::QUIET);
-                        }
-                        _ => self.controls(x, y, w, sh),
-                    }
+                    self.settings_body(x, y + 84.0, w, sh, false);
                     ui::text("ESC back", x, sh - 20.0, 18.0, th::QUIET);
                 }
             }

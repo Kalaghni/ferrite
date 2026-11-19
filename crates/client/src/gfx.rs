@@ -40,6 +40,10 @@ pub struct Mesh {
     pub v: Vec<Vertex>,
     pub i: Vec<u16>,
     pub chunks: Vec<(Vec<Vertex>, Vec<u16>)>,
+    /// Fine mode, for models seen up close (guns in hand, in the loadout,
+    /// on near soldiers): boxes have chamfered edges and round shapes twice
+    /// the facets.
+    pub fine: bool,
 }
 
 impl Mesh {
@@ -125,6 +129,15 @@ impl Mesh {
         self.quad(p[0], p[2], p[3], p[1], col); // -Z
     }
 
+    /// Quad with a normal and a colour per corner (smooth, painted curves).
+    pub fn quad_nc(&mut self, p: [Vec3; 4], n: [Vec3; 4], cols: [Col; 4]) {
+        let base = self.reserve(4);
+        for k in 0..4 {
+            self.v.push(Vertex { pos: p[k].to_array(), nrm: n[k].to_array(), col: cols[k] });
+        }
+        self.i.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
     /// Quad with explicit per-vertex normals (for smooth-shaded curves).
     pub fn quad_n(&mut self, p: [Vec3; 4], n: [Vec3; 4], col: Col) {
         let base = self.reserve(4);
@@ -139,8 +152,8 @@ impl Mesh {
     #[allow(clippy::too_many_arguments)]
     pub fn tube(&mut self, m: &Mat4, c: Vec3, r0: f32, r1: f32, half_len: f32, segs: usize, col: Col) {
         // Callers give the count the art was drawn at; every tube is cut
-        // `ROUND` times as fine as that.
-        let segs = segs * ROUND;
+        // `ROUND` times as fine as that, and twice again in fine mode.
+        let segs = segs * ROUND * if self.fine { 2 } else { 1 };
         let tau = std::f32::consts::TAU;
         let nz = m.transform_vector3(Vec3::Z).normalize_or_zero();
         for k in 0..segs {
@@ -172,7 +185,15 @@ impl Mesh {
     }
 
     /// Box of half-extents `half` centred at `center` in the space of `m`.
+    /// In fine mode its edges are chamfered, unless it is too thin to show it.
     pub fn obox(&mut self, m: &Mat4, center: Vec3, half: Vec3, col: Col) {
+        if self.fine {
+            let b = (half.min_element() * 0.38).min(0.006);
+            if b >= 0.0006 {
+                self.chamfer_box(m, center, half, b, col);
+                return;
+            }
+        }
         let mut p = [Vec3::ZERO; 8];
         for (k, c) in p.iter_mut().enumerate() {
             let s =
@@ -180,6 +201,118 @@ impl Mesh {
             *c = m.transform_point3(center + half * s);
         }
         self.corners(p, col);
+    }
+
+    /// A smooth bar along the local Z of `m` through rounded-rectangle
+    /// sections `(z, centre x, centre y, half width, half height)`, given in
+    /// rising z: it can taper, swell and bend. `round` is how much of the
+    /// smaller half each corner's radius takes. Capped at both ends.
+    pub fn loft(&mut self, m: &Mat4, sections: &[(f32, f32, f32, f32, f32)], round: f32, col: Col) {
+        const ARC: usize = 5;
+        let ring = |s: &(f32, f32, f32, f32, f32)| -> Vec<(Vec3, Vec3)> {
+            let (z, cx, cy, hx, hy) = *s;
+            let r = hx.min(hy) * round.clamp(0.0, 1.0);
+            let mut out = Vec::with_capacity(ARC * 4);
+            // Corners counter-clockwise from the bottom right, as seen from +Z.
+            for (k, (sx, sy)) in [(1.0f32, -1.0f32), (1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0)].into_iter().enumerate() {
+                let c = Vec3::new(cx + sx * (hx - r), cy + sy * (hy - r), z);
+                let a0 = -std::f32::consts::FRAC_PI_2 + k as f32 * std::f32::consts::FRAC_PI_2;
+                for q in 0..ARC {
+                    let a = a0 + std::f32::consts::FRAC_PI_2 * q as f32 / (ARC - 1) as f32;
+                    let d = Vec3::new(a.cos(), a.sin(), 0.0);
+                    out.push((c + d * r, d));
+                }
+            }
+            out
+        };
+        let rings: Vec<_> = sections.iter().map(ring).collect();
+        let n = rings[0].len();
+        let last = rings.len() - 1;
+        // Normals lean with the taper: the round normal, with the slope of
+        // the surface along the bar taken out.
+        let normal = |k: usize, i: usize| {
+            let (a, b) = (&rings[k.saturating_sub(1)][i].0, &rings[(k + 1).min(last)][i].0);
+            let t = (*b - *a).normalize_or_zero();
+            let d = rings[k][i].1;
+            let n = (d - t * d.dot(t)).normalize_or_zero();
+            m.transform_vector3(n).normalize_or_zero()
+        };
+        let p = |k: usize, i: usize| m.transform_point3(rings[k][i].0);
+        for k in 0..last {
+            for i in 0..n {
+                let j = (i + 1) % n;
+                self.quad_n(
+                    [p(k, i), p(k, j), p(k + 1, j), p(k + 1, i)],
+                    [normal(k, i), normal(k, j), normal(k + 1, j), normal(k + 1, i)],
+                    col,
+                );
+            }
+        }
+        for (k, s) in [(0usize, -1.0f32), (last, 1.0)] {
+            let sec = sections[k];
+            let mid = m.transform_point3(Vec3::new(sec.1, sec.2, sec.0));
+            let cn = m.transform_vector3(Vec3::Z * s).normalize_or_zero();
+            for i in 0..n {
+                let j = (i + 1) % n;
+                let (a, b) = if s > 0.0 { (p(k, i), p(k, j)) } else { (p(k, j), p(k, i)) };
+                self.quad_n([mid, a, b, b], [cn; 4], col);
+            }
+        }
+    }
+
+    /// A box with every edge cut back by `b`: six faces, twelve chamfers
+    /// and eight corner facets, each wound to face out of the box.
+    pub fn chamfer_box(&mut self, m: &Mat4, center: Vec3, half: Vec3, b: f32, col: Col) {
+        let inner = half - Vec3::splat(b);
+        let mid = m.transform_point3(center);
+        let face = |me: &mut Mesh, local: &[Vec3]| {
+            let p: Vec<Vec3> = local.iter().map(|q| m.transform_point3(center + *q)).collect();
+            let c = p.iter().copied().sum::<Vec3>() / p.len() as f32;
+            let n = (p[1] - p[0]).cross(p[2] - p[0]);
+            let out = n.dot(c - mid) >= 0.0;
+            match (p.len(), out) {
+                (3, true) => me.tri(p[0], p[1], p[2], col),
+                (3, false) => me.tri(p[0], p[2], p[1], col),
+                (_, true) => me.quad(p[0], p[1], p[2], p[3], col),
+                (_, false) => me.quad(p[0], p[3], p[2], p[1], col),
+            }
+        };
+        let axis = |a: usize, v: f32| {
+            let mut e = Vec3::ZERO;
+            e[a] = v;
+            e
+        };
+        for a in 0..3 {
+            let (u, w) = ((a + 1) % 3, (a + 2) % 3);
+            for s in [-1.0f32, 1.0] {
+                // The face, inset from its edges.
+                let at = axis(a, s * half[a]);
+                let q = |su: f32, sw: f32| at + axis(u, su * inner[u]) + axis(w, sw * inner[w]);
+                face(self, &[q(-1.0, -1.0), q(1.0, -1.0), q(1.0, 1.0), q(-1.0, 1.0)]);
+                // The chamfer between this face and the next axis's.
+                for t in [-1.0f32, 1.0] {
+                    let e = |sw: f32| {
+                        (
+                            axis(a, s * half[a]) + axis(u, t * inner[u]) + axis(w, sw * inner[w]),
+                            axis(a, s * inner[a]) + axis(u, t * half[u]) + axis(w, sw * inner[w]),
+                        )
+                    };
+                    let ((p0, p1), (p3, p2)) = (e(-1.0), e(1.0));
+                    face(self, &[p0, p1, p2, p3]);
+                }
+            }
+        }
+        // Corners.
+        for k in 0..8 {
+            let s =
+                Vec3::new(if k & 1 != 0 { 1.0 } else { -1.0 }, if k & 2 != 0 { 1.0 } else { -1.0 }, if k & 4 != 0 { 1.0 } else { -1.0 });
+            let c = |a: usize| {
+                let mut p = inner * s;
+                p[a] = half[a] * s[a];
+                p
+            };
+            face(self, &[c(0), c(1), c(2)]);
+        }
     }
 
     pub fn finish(mut self) -> Vec<(Vec<Vertex>, Vec<u16>)> {

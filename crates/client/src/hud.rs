@@ -948,14 +948,8 @@ pub fn pause_rects(w: f32, h: f32, settings: bool) -> Vec<(u8, f32, f32, f32, f3
     let (x, bw, bh, step) = (62.0 * k, 400.0 * k, 74.0 * k, 88.0 * k);
     let y0 = 290.0 * k;
     let mut v = Vec::new();
-    if settings {
-        for r in 0..4u8 {
-            let y = y0 + r as f32 * step + 12.0 * k;
-            v.push((10 + r * 2, x + bw - 124.0 * k, y, 50.0 * k, 50.0 * k));
-            v.push((11 + r * 2, x + bw - 62.0 * k, y, 50.0 * k, 50.0 * k));
-        }
-        v.push((18, x, y0 + 4.0 * step, bw, bh));
-    } else {
+    // The settings page is the launcher's, drawn by the menu over the match.
+    if !settings {
         for b in 0..5u8 {
             v.push((b, x, y0 + b as f32 * step, bw, bh));
         }
@@ -980,46 +974,23 @@ fn draw_pause(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
     // ---- left: match control ----
     let x = 62.0 * k;
     pic(&app.art.wordmark, 52.0 * k, 30.0 * k, 330.0 * k, 330.0 * k * crate::ui::WORDMARK_ASPECT);
+    if app.pause_settings {
+        // The menu draws the settings page over this, as in the launcher.
+        return;
+    }
     draw_text("MATCH CONTROL", x + 2.0, 150.0 * k, sz(20.0), th::EMBER_BRIGHT);
-    let title = if app.pause_settings {
-        "SETTINGS"
-    } else if app.deployed_once {
-        "PAUSED"
-    } else {
-        "STAND BY"
-    };
+    let title = if app.deployed_once { "PAUSED" } else { "STAND BY" };
     draw_text(title, x, 234.0 * k, 96.0 * k, th::WHITE);
     draw_line(x, 256.0 * k, x + 420.0 * k, 256.0 * k, 1.0, th::STROKE);
-    let rects = pause_rects(w, h, app.pause_settings);
-    if app.pause_settings {
-        let rows = [
-            ("MOUSE SENSITIVITY", format!("{:.2}", app.sens * 1000.0)),
-            ("EFFECTS VOLUME", format!("{:.0}%", app.audio.volume * 100.0)),
-            ("MUSIC VOLUME", format!("{:.0}%", app.music_vol * 100.0)),
-            ("MUSIC IN A MATCH", if app.music_in_match { "ON".to_string() } else { "OFF".to_string() }),
-        ];
-        for (r, (label, value)) in rows.iter().enumerate() {
-            let y = (290.0 + r as f32 * 88.0) * k;
-            crate::ui::plate(x, y, 400.0 * k, 74.0 * k, th::GLASS_STRONG, th::STROKE);
-            draw_text(label, x + 20.0 * k, y + 28.0 * k, sz(18.0), th::MUTED);
-            draw_text(value, x + 20.0 * k, y + 60.0 * k, sz(30.0), th::WHITE);
-        }
-    }
-    for &(id, bx, by, bw, bh) in &rects {
+    for &(id, bx, by, bw, bh) in &pause_rects(w, h, false) {
         let hot = over(bx, by, bw, bh);
-        if (10..18).contains(&id) {
-            crate::ui::plate(bx, by, bw, bh, th::GLASS_STRONG, if hot { th::COBALT } else { th::STROKE });
-            crate::ui::text_c(if id % 2 == 0 { "-" } else { "+" }, bx + bw / 2.0, by + bh * 0.68, sz(30.0), th::WHITE);
-            continue;
-        }
         let label = match id {
             0 if app.deployed_once => "RESUME",
             0 => "DEPLOY",
             1 => "LOADOUT",
             2 => "SETTINGS",
             3 => "CHANGE TEAM",
-            4 => "LEAVE MATCH",
-            _ => "BACK",
+            _ => "LEAVE MATCH",
         };
         let ink = if id == 0 {
             let c = if hot { th::EMBER_BRIGHT } else { th::EMBER };
@@ -2073,7 +2044,8 @@ pub fn draw(app: &App, vp: &Mat4, now: f64, scoped: bool, tris: usize) -> Vec<Gu
         draw_pause(app, snap, w, h);
     }
 
-    if app.show_net {
+    // Not under the settings page, where it would run through its text.
+    if app.show_net && !(app.pause_settings && app.paused()) {
         let s = &app.stats;
         let l = format!(
             "{:.0} fps | ping {:.0} ms | corrections {} (max {:.2} m) | {} tris | {} players drawn",

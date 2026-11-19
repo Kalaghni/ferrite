@@ -257,8 +257,8 @@ pub fn build_world_profiled(w: &World) -> (Mesh, Profile) {
         }
     }
     meter.mark(&mut prof, &m, "terrain");
-    const CONTAINER: [[f32; 3]; 4] = [[0.66, 0.27, 0.16], [0.18, 0.46, 0.48], [0.80, 0.60, 0.18], [0.34, 0.38, 0.47]];
     let groups = shade_groups(w);
+    let steel = props::steel_roles(w);
     let drawn_elsewhere = spillway::owned(w);
     for (i, b) in w.blocks.iter().enumerate() {
         // Breakable route pieces and cabinets are drawn from the current mask
@@ -288,42 +288,12 @@ pub fn build_world_profiled(w: &World) -> (Mesh, Profile) {
         let j = 0.9 + 0.2 * hash01(g as u32, 91);
         match b.kind {
             BlockKind::Crate => {}
-            BlockKind::Concrete => {
-                let k = j * (0.92 + 0.05 * b.tint as f32);
-                m.cuboid(b.min, b.max, rgb(0.63 * k, 0.61 * k, 0.57 * k));
-                // weathered cap
-                m.cuboid(
-                    vec3(b.min.x - 0.04, b.max.y - 0.12, b.min.z - 0.04),
-                    b.max + vec3(0.04, 0.02, 0.04),
-                    rgb(0.5 * k, 0.48 * k, 0.45 * k),
-                );
-                let g = b.min.y + 0.6;
-                m.cuboid(
-                    vec3(b.min.x - 0.06, g, b.min.z - 0.06),
-                    vec3(b.max.x + 0.06, g + 0.35, b.max.z + 0.06),
-                    rgb(0.55 * k, 0.53 * k, 0.5 * k),
-                );
-            }
+            BlockKind::Concrete => props::concrete(&mut m, w, b, j),
             BlockKind::Step => {
                 let k = 0.9 + 0.08 * b.tint as f32;
                 m.cuboid(b.min, b.max, rgb(0.56 * k, 0.54 * k, 0.5 * k));
             }
-            BlockKind::Container => {
-                let c = CONTAINER[b.tint as usize % 4];
-                m.cuboid(b.min, b.max, rgb(c[0] * j, c[1] * j, c[2] * j));
-                let d = rgb(c[0] * 0.55, c[1] * 0.55, c[2] * 0.55);
-                let e = 0.06;
-                let long_x = b.max.x - b.min.x > b.max.z - b.min.z;
-                for t in [0.0f32, 0.25, 0.5, 0.75, 1.0] {
-                    if long_x {
-                        let x = b.min.x + (b.max.x - b.min.x) * t;
-                        m.cuboid(vec3(x - 0.09, b.min.y, b.min.z - e), vec3(x + 0.09, b.max.y + e, b.max.z + e), d);
-                    } else {
-                        let z = b.min.z + (b.max.z - b.min.z) * t;
-                        m.cuboid(vec3(b.min.x - e, b.min.y, z - 0.09), vec3(b.max.x + e, b.max.y + e, z + 0.09), d);
-                    }
-                }
-            }
+            BlockKind::Container => props::container(&mut m, b, j, i),
             BlockKind::Rock => {
                 let k = j * (0.9 + 0.06 * b.tint as f32);
                 let skew = vec3(hash01(i as u32, 3) - 0.5, 0.0, hash01(i as u32, 4) - 0.5) * 0.5;
@@ -334,23 +304,8 @@ pub fn build_world_profiled(w: &World) -> (Mesh, Profile) {
                 taper(&mut m, vec3(b.min.x, y1, b.min.z), vec3(b.max.x, y2, b.max.z), 1.0, 0.8, skew * 0.3, skew * 0.7, shade(c, 1.05));
                 taper(&mut m, vec3(b.min.x, y2, b.min.z), b.max, 0.8, 0.45, skew * 0.7, skew, shade(c, 1.1));
             }
-            BlockKind::Sandbag => {
-                let mid = (b.min.y + b.max.y) * 0.5 + 0.25;
-                m.cuboid(b.min, vec3(b.max.x, mid, b.max.z), rgb(0.62 * j, 0.55 * j, 0.39 * j));
-                m.cuboid(vec3(b.min.x + 0.08, mid, b.min.z + 0.08), b.max - vec3(0.08, 0.0, 0.08), rgb(0.68 * j, 0.6 * j, 0.42 * j));
-            }
-            BlockKind::Metal => {
-                let k = j * (0.9 + 0.2 * b.tint as f32);
-                m.cuboid(b.min, b.max, rgb(0.33 * k, 0.31 * k, 0.32 * k));
-                if b.max.y - b.min.y > 8.0 {
-                    // chimney hazard band
-                    m.cuboid(
-                        vec3(b.min.x - 0.05, b.max.y - 1.6, b.min.z - 0.05),
-                        vec3(b.max.x + 0.05, b.max.y - 0.8, b.max.z + 0.05),
-                        rgb(0.85, 0.38, 0.12),
-                    );
-                }
-            }
+            BlockKind::Sandbag => props::sandbags(&mut m, w, b, j, i),
+            BlockKind::Metal => props::steel(&mut m, w, b, j, steel[i]),
             BlockKind::Trunk => {}
         }
         meter.mark(&mut prof, &m, "blocks");
@@ -612,17 +567,7 @@ pub fn crates(m: &mut Mesh, w: &World, dmask: u64) {
         if b.kind != BlockKind::Crate || !w.solid(i, dmask) {
             continue;
         }
-        let k = 0.9 + 0.07 * b.tint as f32;
-        m.cuboid(b.min, b.max, rgb(0.70 * k, 0.50 * k, 0.26 * k));
-        let d = rgb(0.45 * k, 0.31 * k, 0.16 * k);
-        let e = 0.03;
-        let t = 0.09;
-        for y in [b.min.y + 0.6, b.max.y - t] {
-            m.cuboid(vec3(b.min.x - e, y, b.min.z - e), vec3(b.max.x + e, y + t + e, b.max.z + e), d);
-        }
-        for (cx, cz) in [(b.min.x, b.min.z), (b.max.x, b.min.z), (b.min.x, b.max.z), (b.max.x, b.max.z)] {
-            m.cuboid(vec3(cx - t * 0.5, b.min.y + 0.6, cz - t * 0.5), vec3(cx + t * 0.5, b.max.y, cz + t * 0.5), d);
-        }
+        props::crate_box(m, b);
     }
 }
 
@@ -853,6 +798,10 @@ fn limb(m: &mut Mesh, g: &Mat4, a: Vec3, b: Vec3, r: f32, round: bool, col: Col)
 
 #[path = "scene/players.rs"]
 mod players;
+#[path = "scene/props.rs"]
+mod props;
+#[path = "scene/signs.rs"]
+mod signs;
 #[path = "scene/weapons.rs"]
 mod weapons;
 pub use players::*;

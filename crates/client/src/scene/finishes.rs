@@ -55,8 +55,13 @@ fn plated(kind: WeaponPattern) -> bool {
 /// A bevelled box: the shape of every machined part, painted in a finish.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn receiver(m: &mut Mesh, g: &Mat4, center: Vec3, half: Vec3, col: Col, part: Part, finish: &WeaponSkinDef, detailed: bool) {
-    let bevel = half.x.min(half.y) * 0.3;
-    let ring = [
+    // Up close the corners are rounder and the ends are rounded off too.
+    let fine = m.fine;
+    let bevel = half.x.min(half.y) * if fine { 0.42 } else { 0.3 };
+    let end = if fine { (bevel * 0.75).min(half.z * 0.3) } else { 0.0 };
+    // The length of the straight body between the rounded ends.
+    let hz = half.z - end;
+    let ring8 = [
         (-half.x + bevel, -half.y),
         (half.x - bevel, -half.y),
         (half.x, -half.y + bevel),
@@ -66,6 +71,30 @@ pub(super) fn receiver(m: &mut Mesh, g: &Mat4, center: Vec3, half: Vec3, col: Co
         (-half.x, half.y - bevel),
         (-half.x, -half.y + bevel),
     ];
+    // The section: four flats and four corners. Up close (fine mode) each
+    // corner is rounded in three facets instead of one chamfer. `side[i]`
+    // is which of the eight it belongs to, for its colour.
+    let mut ring: Vec<(f32, f32)> = Vec::with_capacity(16);
+    let mut side: Vec<usize> = Vec::with_capacity(16);
+    for (i, &p) in ring8.iter().enumerate() {
+        ring.push(p);
+        side.push(i);
+        if m.fine && i % 2 == 1 {
+            // Round the corner from this point to the next about its centre.
+            let q = ring8[(i + 1) % 8];
+            let c = (
+                if p.0 > 0.0 || q.0 > 0.0 { half.x - bevel } else { -half.x + bevel },
+                if p.1 > 0.0 || q.1 > 0.0 { half.y - bevel } else { -half.y + bevel },
+            );
+            let (a0, a1) = ((p.1 - c.1).atan2(p.0 - c.0), (q.1 - c.1).atan2(q.0 - c.0));
+            let turn = (a1 - a0).rem_euclid(std::f32::consts::TAU);
+            for k in 1..4 {
+                let a = a0 + turn * k as f32 / 4.0;
+                ring.push((c.0 + bevel * a.cos(), c.1 + bevel * a.sin()));
+                side.push(i);
+            }
+        }
+    }
     let sheen = finish.sheen
         * match part {
             Part::Body => 1.0,
@@ -93,9 +122,56 @@ pub(super) fn receiver(m: &mut Mesh, g: &Mat4, center: Vec3, half: Vec3, col: Co
     let point = |i: usize, z: f32| g.transform_point3(center + vec3(ring[i].0, ring[i].1, z));
     let front = g.transform_point3(center - Vec3::Z * half.z);
     let back = g.transform_point3(center + Vec3::Z * half.z);
-    for i in 0..8 {
-        let j = (i + 1) % 8;
-        let face = match i {
+    let n = ring.len();
+    if fine {
+        // Smooth shading round the corners: each point's normal comes from
+        // the centre of its corner.
+        let normal2 = |p: (f32, f32)| {
+            let c = ((half.x - bevel).copysign(p.0), (half.y - bevel).copysign(p.1));
+            let d = vec3(p.0 - c.0, p.1 - c.1, 0.0);
+            d.normalize_or_zero()
+        };
+        let world_n = |v: Vec3| g.transform_vector3(v).normalize_or_zero();
+        let at = |p: Vec3| g.transform_point3(center + p);
+        for i in 0..n {
+            let j = (i + 1) % n;
+            let face = match side[i] {
+                3 | 5 => edge.unwrap_or(shade(col, 1.0 + 0.3 * sheen)),
+                1 | 7 => edge.map_or(col, |e| mix(e, col, 0.55)),
+                2 | 4 | 6 if plates => ink,
+                _ => col,
+            };
+            let (pi, pj) = (ring[i], ring[j]);
+            let (ni, nj) = (normal2(pi), normal2(pj));
+            let (ci, cj) = (lit(face, pi.1), lit(face, pj.1));
+            let body = |p: (f32, f32), z: f32| vec3(p.0, p.1, z);
+            m.quad_nc(
+                [at(body(pi, -hz)), at(body(pj, -hz)), at(body(pj, hz)), at(body(pi, hz))],
+                [world_n(ni), world_n(nj), world_n(nj), world_n(ni)],
+                [ci, cj, cj, ci],
+            );
+            // The rounded ends: a band turning in to a smaller cap.
+            let (ki, kj, k0) = (lit(cap, pi.1), lit(cap, pj.1), lit(cap, 0.0));
+            for s in [-1.0f32, 1.0] {
+                let inner = |p: (f32, f32), nn: Vec3| vec3(p.0 - nn.x * end, p.1 - nn.y * end, s * half.z);
+                let bend = |nn: Vec3| world_n((nn + Vec3::Z * s).normalize_or_zero());
+                let (oi, oj) = (at(body(pi, s * hz)), at(body(pj, s * hz)));
+                let (ii, ij) = (at(inner(pi, ni)), at(inner(pj, nj)));
+                let tip = at(vec3(0.0, 0.0, s * half.z));
+                let cn = world_n(Vec3::Z * s);
+                if s > 0.0 {
+                    m.quad_nc([oi, oj, ij, ii], [world_n(ni), world_n(nj), bend(nj), bend(ni)], [ci, cj, kj, ki]);
+                    m.quad_nc([tip, ii, ij, ij], [cn; 4], [k0, ki, kj, kj]);
+                } else {
+                    m.quad_nc([oj, oi, ii, ij], [world_n(nj), world_n(ni), bend(ni), bend(nj)], [cj, ci, ki, kj]);
+                    m.quad_nc([tip, ij, ii, ii], [cn; 4], [k0, kj, ki, ki]);
+                }
+            }
+        }
+    }
+    for i in (0..n).filter(|_| !fine) {
+        let j = (i + 1) % n;
+        let face = match side[i] {
             // Upper chamfers catch the light; lower ones are half worn.
             3 | 5 => edge.unwrap_or(shade(col, 1.0 + 0.3 * sheen)),
             1 | 7 => edge.map_or(col, |e| mix(e, col, 0.55)),
@@ -121,9 +197,10 @@ pub(super) fn receiver(m: &mut Mesh, g: &Mat4, center: Vec3, half: Vec3, col: Co
         (vec3(-half.x, -half.y + bevel + inset, 0.0), Vec3::Y, -Vec3::X, side_h),
         (vec3(-half.x + bevel + inset, half.y, 0.0), Vec3::X, Vec3::Y, top_h),
     ];
-    let w = half.z * 2.0 - inset * 4.0;
+    // Paint stays on the straight body, off the rounded ends.
+    let w = hz * 2.0 - inset * 4.0;
     for (n, &(corner, up, normal, h)) in faces.iter().enumerate() {
-        let origin = corner - Vec3::Z * (half.z - inset * 2.0);
+        let origin = corner - Vec3::Z * (hz - inset * 2.0);
         // Triangles laid along +Z then `up` face this way; flip if needed.
         let reverse = Vec3::Z.cross(up).dot(normal) < 0.0;
         let mut emit = |poly: &[(f32, f32)], paint: Paint, layer: u8| {
