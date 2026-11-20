@@ -118,8 +118,20 @@ impl Default for Prefs {
 }
 
 pub enum Choice {
-    Host { port: u16, per_team: usize, max_bots: usize, map: u8, rotate: bool, lobby: u32, skill: f32, mode: u8, mode_rotate: bool },
+    Host {
+        port: u16,
+        per_team: usize,
+        max_bots: usize,
+        map: u8,
+        rotate: bool,
+        lobby: u32,
+        skill: f32,
+        mode: u8,
+        mode_rotate: bool,
+    },
     Join(String),
+    /// FORGE, the map maker.
+    Forge,
     Quit,
 }
 
@@ -1512,6 +1524,10 @@ impl Menu {
                     }
                     if big_button(x + hw + 12.0, y, hw, bh, "SETTINGS", "AUDIO - VIDEO - KEYS", false) {
                         self.go(3);
+                    }
+                    y += bh + 12.0;
+                    if big_button(x, y, w, bh, "MAP MAKER", "BUILD YOUR OWN MAPS  -  PLAY THEM WITH BOTS", false) {
+                        out = Some(Choice::Forge);
                     }
                     y += bh + 12.0;
                     ui::plate(x, y, w, 44.0, th::GLASS_STRONG, if hit(x, y, w, 44.0) { th::COBALT } else { th::STROKE });

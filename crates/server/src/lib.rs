@@ -4,6 +4,7 @@
 
 pub mod bots;
 pub mod net;
+pub mod spawns;
 
 use bots::Bot;
 use ferrite_shared::map::{self, Nav, World};
@@ -97,6 +98,8 @@ pub fn host_name() -> String {
 }
 
 const HIST: usize = 64;
+/// How long a deployment counts against the same spot for the next one.
+const SPAWN_MEMORY: u32 = 10 * TICK_HZ;
 const MAX_REWIND: f64 = 30.0;
 const CAP_RATE: f32 = 0.1;
 const BOT_NAMES: [&str; 32] = [
@@ -385,6 +388,9 @@ pub struct Game {
     next_pickup: u16,
     /// Canopy's shade banks.
     pub shades: Shades,
+    /// Where each team has deployed lately (team, feet, tick), so the next
+    /// arrival goes somewhere else.
+    recent_spawns: Vec<(u8, Vec3, u32)>,
     rng: Rng,
 }
 
@@ -435,6 +441,7 @@ impl Game {
             flags: [Flag { state: 0, pos: Vec3::ZERO, carrier: 0, since: 0 }; 2],
             pickups: Vec::new(),
             shades: Shades::default(),
+            recent_spawns: Vec::new(),
             next_pickup: 0,
             rng: Rng::new(cfg.seed ^ 0x5EED),
             cfg,
@@ -1219,84 +1226,16 @@ impl Game {
         self.feed.push(Feed::Kill { killer: killer_id, victim: j as u8, weapon, head, assist });
     }
 
-    fn spawn_player(&mut self, i: usize) {
+    /// Deploy player `i` now, wherever is best for them.
+    pub fn spawn_player(&mut self, i: usize) {
         if self.players[i].benched {
             return;
         }
         let t = self.tick;
         let team = self.players[i].team;
-        let mut anchor = self.world.bases[team as usize];
-        let mut at_base = true;
-        let order: Vec<usize> = if self.mode != mode::CONQUEST {
-            Vec::new()
-        } else if team == 0 {
-            (0..NUM_POINTS).rev().collect()
-        } else {
-            (0..NUM_POINTS).collect()
-        };
-        if matches!(self.mode, mode::TDM | mode::KOTH) {
-            // Forward spawns keep the fight close: B for EMBER, D for
-            // COBALT, unless the enemy is standing on it.
-            let c = self.world.points[if team == 0 { 1 } else { NUM_POINTS - 2 }];
-            let overrun = self.players.iter().filter(|p| p.alive && p.team != team && (p.st.pos - c).length() < 18.0).count() >= 2;
-            if !overrun {
-                anchor = c;
-                at_base = false;
-            }
-        }
-        for k in order {
-            if self.points[k].owner != team {
-                continue;
-            }
-            let c = self.world.points[k];
-            let threatened = self.players.iter().any(|p| p.alive && p.team != team && (p.st.pos - c).length() < 16.0);
-            if !threatened && self.points[k].progress.abs() > 0.6 {
-                anchor = c;
-                at_base = false;
-                break;
-            }
-        }
-        // Spread arrivals out: try a handful of open spots across the spawn
-        // ground and take the one farthest from anyone already standing
-        // there, weighing nearby enemies more heavily than friends.
-        let mut pos = anchor;
-        let mut best = f32::MIN;
-        let (r0, r1) = if at_base { (4.0, map::BASE_SPAWN_RADIUS) } else { (6.0, 16.0) };
-        let mut found = 0;
-        for _ in 0..40 {
-            let a = self.rng.range(0.0, std::f32::consts::TAU);
-            // Uniform over the ring's area, not bunched at its middle.
-            let r = (r0 * r0 + self.rng.f32() * (r1 * r1 - r0 * r0)).sqrt();
-            let (x, z) = (anchor.x + a.cos() * r, anchor.z + a.sin() * r);
-            // On Spillway's gate deck, on the deck, not the channel under it.
-            let g = self.world.walk_height(x, z);
-            if self.nav.is_blocked(x, z) || self.world.danger(vec3(x, g, z), 1.0) {
-                continue;
-            }
-            let p = vec3(x, g + 0.05, z);
-            let mut score = 0.0f32;
-            let (mut friend, mut foe) = (14.0f32, 40.0f32);
-            for (j, q) in self.players.iter().enumerate() {
-                if j == i || !q.alive {
-                    continue;
-                }
-                let d = (q.st.pos - p).length();
-                if q.team == team {
-                    friend = friend.min(d)
-                } else {
-                    foe = foe.min(d)
-                }
-            }
-            score += friend + foe * 0.6;
-            if score > best {
-                best = score;
-                pos = p;
-            }
-            found += 1;
-            if found >= 8 {
-                break;
-            }
-        }
+        let pos = self.spawn_spot(i, team);
+        self.recent_spawns.retain(|&(_, _, when)| t.saturating_sub(when) < SPAWN_MEMORY);
+        self.recent_spawns.push((team, pos, t));
         let front = match self.mode {
             mode::CONQUEST => self.world.points[self.orders[team as usize].min(NUM_POINTS - 1)],
             mode::CTF => self.world.points[FLAG_POINT[1 - team as usize % 2]],

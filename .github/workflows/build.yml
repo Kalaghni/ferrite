@@ -97,17 +97,17 @@ jobs:
           mkdir -p out
           if [ "${{ matrix.name }}" = "macos-universal" ]; then
             for t in aarch64-apple-darwin x86_64-apple-darwin; do
-              cargo build --release --target "$t" -p ferrite -p ferrite-server
+              cargo build --release --target "$t" -p ferrite -p ferrite-server -p ferrite-forge-mcp
             done
-            for b in ferrite ferrite-server; do
+            for b in ferrite ferrite-server ferrite-forge-mcp; do
               lipo -create -output "out/$b" "target/aarch64-apple-darwin/release/$b" "target/x86_64-apple-darwin/release/$b"
             done
           elif [ "$RUNNER_OS" = "Windows" ]; then
-            cargo build --release -p ferrite -p ferrite-server
-            cp target/release/ferrite.exe target/release/ferrite-server.exe out/
+            cargo build --release -p ferrite -p ferrite-server -p ferrite-forge-mcp
+            cp target/release/ferrite.exe target/release/ferrite-server.exe target/release/ferrite-forge-mcp.exe out/
           else
-            cargo build --release -p ferrite -p ferrite-server
-            cp target/release/ferrite target/release/ferrite-server out/
+            cargo build --release -p ferrite -p ferrite-server -p ferrite-forge-mcp
+            cp target/release/ferrite target/release/ferrite-server target/release/ferrite-forge-mcp out/
           fi
 
       - name: Package
@@ -123,7 +123,7 @@ jobs:
             echo "file=$dir.zip" >> "$GITHUB_OUTPUT"
           else
             cp packaging/start-server.sh "$dir/"
-            chmod +x "$dir/ferrite" "$dir/ferrite-server" "$dir/start-server.sh"
+            chmod +x "$dir/ferrite" "$dir/ferrite-server" "$dir/ferrite-forge-mcp" "$dir/start-server.sh"
             tar -czf "$dir.tar.gz" "$dir"
             echo "file=$dir.tar.gz" >> "$GITHUB_OUTPUT"
           fi

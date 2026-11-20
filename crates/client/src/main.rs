@@ -6,6 +6,11 @@ mod audio;
 mod bindings;
 mod cine;
 mod controller;
+mod forge;
+mod forge_home;
+mod forge_library;
+mod forge_link;
+mod forge_thumbs;
 mod fx;
 mod gfx;
 mod hud;
@@ -142,6 +147,18 @@ pub struct Args {
     cine_cast: Option<String>,
     /// `--shot` (and the screenshot key) at this multiple of the screen size.
     shot_scale: u32,
+    /// `--edit FILE`: open the map maker on a map document.
+    edit: Option<String>,
+    /// Capture aid: the map maker starts with this block selected.
+    edit_select: Option<usize>,
+    edit_folder: Option<String>,
+    /// Open FORGE's start screen (with its "new map" panel, for captures).
+    forge: bool,
+    forge_new: bool,
+    /// Capture aid: open the `--edit` map's autosave without asking.
+    edit_restore: bool,
+    edit_stamp: Option<(String, f32, f32)>,
+    edit_brush: Option<(String, f32, f32)>,
 }
 
 fn parse_args() -> Args {
@@ -198,6 +215,14 @@ fn parse_args() -> Args {
         cine_aperture: None,
         cine_cast: None,
         shot_scale: 1,
+        edit: None,
+        edit_select: None,
+        edit_folder: None,
+        forge: false,
+        forge_new: false,
+        edit_restore: false,
+        edit_stamp: None,
+        edit_brush: None,
     };
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut i = 0;
@@ -220,6 +245,46 @@ fn parse_args() -> Args {
                     std::process::exit(2);
                 }
             },
+            // Host a map document (`.fmap`) made in the map maker.
+            "--map-file" => {
+                let doc =
+                    std::fs::read_to_string(&val).map_err(|e| e.to_string()).and_then(|t| ferrite_shared::map::doc::MapDoc::from_json(&t));
+                match doc.and_then(ferrite_shared::map::doc::install) {
+                    Ok(id) => a.map = Some(id),
+                    Err(e) => {
+                        eprintln!("cannot load map file '{val}': {e}");
+                        std::process::exit(2);
+                    }
+                }
+            }
+            "--edit" => a.edit = Some(val),
+            "--forge" => {
+                a.forge = true;
+                used = 1;
+            }
+            "--edit-restore" => {
+                a.edit_restore = true;
+                used = 1;
+            }
+            "--forge-new" => {
+                a.forge = true;
+                a.forge_new = true;
+                used = 1;
+            }
+            "--edit-select" => a.edit_select = val.parse().ok(),
+            "--edit-folder" => a.edit_folder = Some(val),
+            // NAME@X,Y: stamp a library model with the mouse taken to be at X,Y.
+            // MODE@X,Y: the terrain brush with the mouse taken to be at X,Y.
+            "--edit-brush" => {
+                let (name, at) = val.rsplit_once('@').expect("--edit-brush MODE@X,Y");
+                let (x, y) = at.split_once(',').expect("--edit-brush MODE@X,Y");
+                a.edit_brush = Some((name.to_string(), x.parse().expect("x"), y.parse().expect("y")));
+            }
+            "--edit-stamp" => {
+                let (name, at) = val.rsplit_once('@').expect("--edit-stamp NAME@X,Y");
+                let (x, y) = at.split_once(',').expect("--edit-stamp NAME@X,Y");
+                a.edit_stamp = Some((name.to_string(), x.parse().expect("x"), y.parse().expect("y")));
+            }
             "--tickets" => a.tickets = val.parse().expect("--tickets <n>"),
             "--mode" => match ferrite_shared::mode_by_name(&val) {
                 Some(m) => a.mode = Some(m),
@@ -364,6 +429,31 @@ fn window_conf() -> mq::Conf {
     let argv: Vec<String> = std::env::args().collect();
     if argv.iter().any(|a| a == "--version" || a == "-V") {
         println!("FERRITE {}", env!("CARGO_PKG_VERSION"));
+        std::process::exit(0);
+    }
+    // `ferrite --export-map NAME FILE`: write a built-in map out as a map
+    // document, to start a custom map from.
+    if let Some(i) = argv.iter().position(|a| a == "--export-map") {
+        let (Some(name), Some(file)) = (argv.get(i + 1), argv.get(i + 2)) else {
+            eprintln!("usage: ferrite --export-map NAME FILE.fmap");
+            std::process::exit(2);
+        };
+        let seed = argv.iter().position(|a| a == "--seed").and_then(|i| argv.get(i + 1)?.parse().ok()).unwrap_or(0xFE221);
+        let done = ferrite_shared::map::map_by_name(name)
+            .ok_or_else(|| format!("unknown map '{name}'"))
+            .and_then(|m| ferrite_shared::map::doc::MapDoc::from_world(&World::with_map(seed, m)))
+            .and_then(|mut d| {
+                // Keep only the west half where the map allows it, so an
+                // edit changes both sides.
+                if !d.fold() {
+                    println!("{name} is not the same under a half turn: every block is written out");
+                }
+                std::fs::write(file, d.to_json()).map_err(|e| e.to_string())
+            });
+        if let Err(e) = done {
+            eprintln!("cannot export: {e}");
+            std::process::exit(1);
+        }
         std::process::exit(0);
     }
     if argv.iter().any(|a| a == "--update") {
@@ -1277,6 +1367,19 @@ async fn main() {
     let art = ui::init();
     menu::Menu::apply_saved_audio_device();
     let scripted = args.auto || args.spectate || args.shot.is_some() || args.quit_at.is_some();
+    if args.edit.is_some() || args.forge {
+        // A map by path, or by name in the maps folder (a new one there if
+        // it names none).
+        let root = ferrite_shared::map::maps::default_root();
+        let start = args
+            .edit
+            .as_deref()
+            .map(|s| ferrite_shared::map::maps::resolve(&root, s).unwrap_or_else(|| ferrite_shared::map::maps::fresh_path(&root, s)));
+        let mut saved = menu::Menu::load(&args.name, args.port, args.per_team);
+        let mut music = Music::silent();
+        forge(&args, start, &art, &mut saved, &mut music).await;
+        return;
+    }
     if direct {
         let choice = match &args.connect {
             Some(a) => menu::Choice::Join(a.clone()),
@@ -1382,6 +1485,12 @@ async fn main() {
         let choice = menu.run(&mut music, &art).await;
         let joining = match &choice {
             menu::Choice::Quit => break,
+            menu::Choice::Forge => {
+                if forge(&args, None, &art, &mut menu, &mut music).await {
+                    break;
+                }
+                continue;
+            }
             menu::Choice::Join(a) => Some(a.clone()),
             menu::Choice::Host { .. } => None,
         };
@@ -1405,15 +1514,108 @@ async fn main() {
 }
 
 /// The renderer for a world: its mesh, sky, scenery and shadow map.
+/// FORGE: its start screen, the maps opened from it and matches on them,
+/// until it is left. `start` opens that map first. Returns whether the
+/// window is closing.
+async fn forge(args: &Args, start: Option<std::path::PathBuf>, art: &ui::Art, saved: &mut menu::Menu, music: &mut Music) -> bool {
+    let mut home = forge_home::Home::new(ferrite_shared::map::maps::default_root());
+    if args.forge_new {
+        home.show_new();
+    }
+    // A capture is of whichever screen is up at its time.
+    let shot = args.shot.as_deref().map(|p| (p, args.shot_at));
+    let mut want = start;
+    let mut first = true;
+    loop {
+        let (path, restore) = match want.take() {
+            Some(p) if first && args.edit_restore => (p, true),
+            want => match home.run(art, music, want, shot).await {
+                forge_home::Pick::Open { path, restore } => (path, restore),
+                forge_home::Pick::Leave => return false,
+                forge_home::Pick::Quit => return true,
+            },
+        };
+        let mut ed = match forge::Editor::open(path.clone(), saved.prefs.shadows, restore) {
+            Ok(ed) => ed,
+            Err(e) => {
+                eprintln!("cannot open map file '{}': {e}", path.display());
+                home.say(&format!("CAN'T OPEN {}: {}", path.display(), e.to_uppercase()));
+                continue;
+            }
+        };
+        if std::mem::take(&mut first) {
+            if let Some(j) = args.edit_select {
+                ed.select(j);
+            }
+            if let Some(f) = &args.edit_folder {
+                ed.show_folder(f);
+            }
+            if let Some((name, x, y)) = &args.edit_stamp {
+                ed.stamp_preview(name, (*x, *y));
+            }
+            if let Some((name, x, y)) = &args.edit_brush {
+                ed.brush_preview(name, (*x, *y));
+            }
+        }
+        if editing(args, &mut ed, art, shot, saved, music, &mut home).await {
+            return true;
+        }
+    }
+}
+
+/// One map in FORGE, and matches on it, until it is left for the start
+/// screen. Returns whether the window is closing.
+async fn editing(
+    args: &Args,
+    ed: &mut forge::Editor,
+    art: &ui::Art,
+    shot: Option<(&str, f64)>,
+    saved: &mut menu::Menu,
+    music: &mut Music,
+    home: &mut forge_home::Home,
+) -> bool {
+    loop {
+        match ed.run(art, shot).await {
+            forge::Exit::Quit => return true,
+            forge::Exit::Home { new } => {
+                if new {
+                    home.show_new();
+                }
+                return false;
+            }
+            forge::Exit::Playtest(map) => {
+                let choice = menu::Choice::Host {
+                    port: args.port,
+                    per_team: args.per_team,
+                    max_bots: args.max_bots.unwrap_or(64),
+                    map,
+                    rotate: false,
+                    lobby: 0,
+                    skill: args.skill,
+                    mode: args.mode.unwrap_or(0),
+                    mode_rotate: false,
+                };
+                let (icon, uuid) = (saved.icon_rgba(), saved.uuid);
+                let name = saved.name();
+                let (_, msg) = play(args, &name, args.team, choice, saved, music, art, uuid, &icon).await;
+                if mq::is_quit_requested() {
+                    return true;
+                }
+                ed.tell(msg.unwrap_or_else(|| "BACK FROM THE PLAYTEST".into()).to_uppercase());
+            }
+        }
+    }
+}
+
 fn world_gpu(world: &World, shadows: u32) -> gfx::Gpu {
-    gfx::Gpu::new(
-        scene::build_world(world),
-        scene::build_sky_for(world.map),
-        shadows,
-        scene::sun_for(world.map).normalize(),
-        scene::shadow_bounds(world.map),
-    )
-    .with_scenery(scene::build_scenery(world))
+    world_gpu_from(world, scene::build_world(world), scene::build_scenery(world), shadows)
+}
+
+/// The renderer for a world whose meshes are already made (on another
+/// thread, say).
+fn world_gpu_from(world: &World, mesh: gfx::Mesh, scenery: gfx::Mesh, shadows: u32) -> gfx::Gpu {
+    gfx::Gpu::new(mesh, scene::build_sky_for(world.map), shadows, scene::sun_for(world.map).normalize(), scene::shadow_bounds(world.map))
+        .with_scenery(scenery)
 }
 
 /// Bring what the settings page changed into the match. `prefs` holds the
@@ -1482,7 +1684,14 @@ async fn play(
                 per_team,
                 max_bots,
                 map,
-                rotation: if rotate { (0..ferrite_shared::map::MAPS.len() as u8).collect() } else { Vec::new() },
+                // A custom map stays up: the rotation is built-in maps.
+                rotation: if map >= ferrite_shared::map::doc::FIRST_CUSTOM {
+                    vec![map]
+                } else if rotate {
+                    (0..ferrite_shared::map::MAPS.len() as u8).collect()
+                } else {
+                    Vec::new()
+                },
                 lobby_secs: lobby,
                 seed: args.seed,
                 tickets: args.tickets,
@@ -1510,7 +1719,7 @@ async fn play(
             server = Some(h);
             format!("127.0.0.1:{port}").parse().unwrap()
         }
-        menu::Choice::Quit => return (false, None),
+        menu::Choice::Forge | menu::Choice::Quit => return (false, None),
     };
     {
         let (sw, sh) = (mq::screen_width(), mq::screen_height());
@@ -1528,6 +1737,9 @@ async fn play(
         Err(e) => return (false, Some(format!("Could not join {addr}: {e}"))),
     };
     let seed = welcome.seed;
+    if !have_map(welcome.map) {
+        return (false, Some(format!("{addr} is playing a custom map this copy of FERRITE does not have.")));
+    }
     let world = World::with_map(seed, welcome.map);
     let bounds = scene::shadow_bounds(world.map);
     let mut gpu = gfx::Gpu::new(
@@ -2162,6 +2374,10 @@ async fn play(
         // world, its mesh and its shadow map.
         if let Some(m) = app.net.latest().map(|s| s.map) {
             if m != app.world.map {
+                if !have_map(m) {
+                    ended = Some("The server moved on to a custom map this copy of FERRITE does not have.".to_string());
+                    break;
+                }
                 app.world = World::with_map(seed, m);
                 let fresh = world_gpu(&app.world, prefs.shadows);
                 std::mem::replace(&mut gpu, fresh).destroy();
@@ -3045,4 +3261,10 @@ async fn play(
     mq::show_mouse(true);
     let _ = NEUTRAL;
     (true, ended)
+}
+
+/// Whether this copy can build map `id`: every built-in map, and a custom
+/// map only once its document is installed.
+fn have_map(id: u8) -> bool {
+    id < ferrite_shared::map::doc::FIRST_CUSTOM || ferrite_shared::map::doc::installed(id).is_some()
 }

@@ -11,11 +11,12 @@
 //! water, lava and tunnels in their own colours. The full plan, for large
 //! views, adds single trees, contour lines and finer building shapes.
 
-use ferrite_shared::map::{map_def, spillway, BlockKind, World, HALF_X, HALF_Z, MAPS};
+use ferrite_shared::map::doc::MapDoc;
+use ferrite_shared::map::{map_def, spillway, BlockKind, MapDef, World, HALF_X, HALF_Z, MAPS};
 use ferrite_shared::{mode, FLAG_POINT, NUM_POINTS, POINT_NAMES};
 use macroquad::prelude::*;
 use std::cell::RefCell;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 
 /// Width over height of every plan: all maps share one footprint.
 pub const ASPECT: f32 = HALF_X / HALF_Z;
@@ -148,10 +149,24 @@ fn morph(m: &[bool], w: usize, h: usize, r: usize, grow: bool) -> Vec<bool> {
     pass(&pass(m, true), false)
 }
 
+/// The plan of a map document, for the map maker's list of maps. Builds
+/// the world first: call it off the frame loop.
+pub fn raster_doc(doc: &MapDoc, detail: Detail) -> Result<Raster, String> {
+    let (points, bases) = doc.layout();
+    let def =
+        MapDef { name: "", blurb: "", points: points.map(|[x, z]| (x, z)), bases: bases.map(|[x, z]| (x, z)), ground: doc.look.ground };
+    // Built as a map id with no special rules for the plan to draw.
+    let world = Arc::new(doc.clone()).build(SEED, 0)?;
+    Ok(raster_with(&world, &def, detail))
+}
+
 /// The plan of `world`: north (-z) up, west (-x, EMBER's base) left.
 fn raster_world(world: &World, detail: Detail) -> Raster {
+    raster_with(world, map_def(world.map), detail)
+}
+
+fn raster_with(world: &World, def: &MapDef, detail: Detail) -> Raster {
     let id = world.map;
-    let def = map_def(id);
     let px = detail.px();
     let thumb = detail == Detail::Thumb;
     let (w, h) = ((2.0 * HALF_X * px).round() as usize, (2.0 * HALF_Z * px).round() as usize);

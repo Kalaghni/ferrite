@@ -52,6 +52,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "{#SourceDir}\ferrite.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\ferrite-server.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\ferrite-forge-mcp.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\README.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\Quantico-OFL.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\start-server.bat"; DestDir: "{app}"; Flags: ignoreversion

@@ -1,4 +1,4 @@
-# FERRITE 0.14.1
+# FERRITE 0.15.0
 
 ![The FERRITE launcher: host, join or change settings](docs/launcher.png)
 
@@ -20,8 +20,8 @@ Either way the game keeps itself current: the launcher checks this repository's 
 **macOS:** the build is not signed with an Apple Developer ID, so a copy downloaded in a browser is blocked by Gatekeeper. The simplest way round it is to download from Terminal, which does not get flagged:
 
 ```sh
-curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.14.1/ferrite-v0.14.1-macos-universal.tar.gz | tar xz
-./ferrite-v0.14.1-macos-universal/ferrite
+curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.15.0/ferrite-v0.15.0-macos-universal.tar.gz | tar xz
+./ferrite-v0.15.0-macos-universal/ferrite
 ```
 
 If you already downloaded it in a browser, run `xattr -dr com.apple.quarantine .` in the unpacked folder once.
@@ -104,6 +104,16 @@ Crouch while sprinting to slide. Hold Space while pushing into a ledge to climb 
 Game modes: `--mode conquest|tdm|ctf|stronghold` when hosting from the command line or on a dedicated server, which also takes `--mode-rotation all|off|a,b,c` (a mode per round), `--score N` and `--time SECS` (the target and the clock outside conquest), `--no-drops` (no pickups) and `--modes` (the list).
 
 Useful flags: `--touch` (on-screen controls), `--name`, `--team ember|cobalt|auto`, `--bots N` (players per team), `--difficulty recruit|regular|veteran|elite` (bots; `--skill 0.6` for a value in between), `--no-music`, `--tickets N`, `--seed N` (different valley), `--fullscreen`, `--volume 0..1`, `--shadows high|low|off`, `--spectate` (watch the bots fight).
+
+## Map maker
+
+MAP MAKER on the home screen (or `ferrite --forge`, or `ferrite --edit NAME`) opens FORGE, the map maker. Its start screen lists your maps with a plan of each; a new map starts blank, on a built-in map's ground, or as a copy of one to remix. Build in 3D with every edit mirrored by a half turn, stamp models from the library drawer (L), shape the ground with the TERRAIN tool (4), and press F5 to playtest against bots. Maps are `.fmap` files in `maps/` beside the game, and library models live in `prefabs/`. Custom maps play on your own machine for now: other players cannot join one yet. How it works and what comes next: [docs/design/map-maker.md](docs/design/map-maker.md).
+
+`ferrite-forge-mcp`, beside the game, is an MCP server that lets an assistant such as Claude build with you: edits appear live in FORGE when it has the map open. It can also sculpt the ground, draw plans, take screenshots, check a map and run a fast bot match on it. To add it to Claude Code:
+
+```sh
+claude mcp add ferrite-forge -- /path/to/ferrite-forge-mcp
+```
 
 ## The game
 

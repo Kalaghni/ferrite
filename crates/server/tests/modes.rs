@@ -105,10 +105,16 @@ fn deathmatch_spawns_forward_and_runs_out_the_clock() {
     for _ in 0..30 {
         g.tick();
     }
-    // Everyone starts round B or D, not back at base.
+    // Everyone starts forward of base, toward B or D.
     for p in g.players.iter().filter(|p| p.alive) {
+        let base = g.world.bases[p.team as usize];
         let c = g.world.points[if p.team == 0 { 1 } else { 3 }];
-        assert!((p.st.pos - c).length() < 30.0, "{} spawned {:.0} m from the forward point", p.name, (p.st.pos - c).length());
+        assert!(
+            (p.st.pos - c).length() < (base - c).length(),
+            "{} spawned {:.0} m from the forward point",
+            p.name,
+            (p.st.pos - c).length()
+        );
     }
     for _ in 0..20 * 60 {
         g.tick();

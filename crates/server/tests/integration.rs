@@ -1270,16 +1270,17 @@ fn spawns_spread_across_the_base_ground() {
             let pos: Vec<_> = g.players.iter().filter(|p| p.alive && p.team == team).map(|p| p.st.pos).collect();
             assert_eq!(pos.len(), 12, "map {map}: everyone deploys at once");
             let flat = |a: ferrite_shared::Vec3, b: ferrite_shared::Vec3| ((a.x - b.x).powi(2) + (a.z - b.z).powi(2)).sqrt();
-            // Each arrival is on the base's spawn ground or within the ring
-            // round a point the team holds.
+            // Each arrival is on open ground in one of the team's zones, on
+            // its own side of the map.
+            let zones = g.spawn_zones(team);
+            let foe_base = g.world.bases[1 - team as usize];
             for &p in &pos {
-                let at_point = g.world.points.iter().any(|&c| flat(p, c) <= 16.5 && flat(p, c) >= 5.5);
                 assert!(
-                    at_point || flat(p, base) <= BASE_SPAWN_RADIUS + 0.5,
-                    "map {map}: spawned {:.1} m from base, {:.2} from nearest point",
+                    zones.iter().any(|z| flat(p, z.c) <= z.r1 + 0.5) && g.spawn_ok(p) && flat(p, base) < flat(p, foe_base),
+                    "map {map}: spawned at {p:?}, {:.1} m from base",
                     flat(p, base),
-                    g.world.points.iter().map(|&c| flat(p, c)).fold(f32::MAX, f32::min)
                 );
+                let _ = BASE_SPAWN_RADIUS;
             }
             // Nobody arrives on top of a teammate, and the group is spread
             // over the spawn ground rather than bunched in its middle.
@@ -1293,6 +1294,35 @@ fn spawns_spread_across_the_base_ground() {
             assert!(min > 2.0 && mean > 5.0, "map {map}, team {team}: nearest teammate min {min:.1} m, mean {mean:.1} m");
             let widest = pos.iter().flat_map(|&p| pos.iter().map(move |&q| flat(p, q))).fold(0.0, f32::max);
             assert!(widest > 18.0, "map {map}, team {team}: spawns span only {widest:.1} m");
+        }
+    }
+}
+
+/// One player dying over and over with the rest of the field standing still
+/// does not keep coming back to the same few metres, and comes back in
+/// sight of an enemy far less often than the ground would by chance.
+#[test]
+fn respawns_move_around_and_keep_out_of_sight() {
+    for mode in [ferrite_shared::mode::CONQUEST, ferrite_shared::mode::TDM, ferrite_shared::mode::CTF] {
+        for map in 0..ferrite_shared::map::MAPS.len() as u8 {
+            let mut g = Game::new(Config { map, mode, ..cfg(6) });
+            for _ in 0..30 {
+                g.tick();
+            }
+            let me = g.players.iter().position(|p| p.team == 0).unwrap();
+            let mut spots = Vec::new();
+            for _ in 0..24 {
+                g.damage(me, None, 1000.0, false, ferrite_shared::sim::LAVA_WEAPON);
+                g.spawn_player(me);
+                spots.push(g.players[me].st.pos);
+                // Three seconds pass between deaths.
+                g.tick += 3 * ferrite_shared::TICK_HZ;
+            }
+            let flat = |a: ferrite_shared::Vec3, b: ferrite_shared::Vec3| ((a.x - b.x).powi(2) + (a.z - b.z).powi(2)).sqrt();
+            let widest = spots.iter().flat_map(|&p| spots.iter().map(move |&q| flat(p, q))).fold(0.0, f32::max);
+            let repeats = spots.windows(2).filter(|w| flat(w[0], w[1]) < 6.0).count();
+            assert!(widest > 30.0, "map {map}, mode {mode}: respawns span only {widest:.1} m");
+            assert!(repeats <= 3, "map {map}, mode {mode}: {repeats} of 23 respawns within 6 m of the last");
         }
     }
 }

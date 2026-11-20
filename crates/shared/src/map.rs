@@ -5,11 +5,16 @@
 //! advantage.
 
 pub mod canopy;
+pub mod doc;
 pub mod fallen_giant;
 pub mod landmarks;
+pub mod library;
+pub mod maps;
+pub mod ops;
 pub mod relay;
 pub mod slag_cathedral;
 pub mod spillway;
+pub mod terrain;
 pub mod tunnels;
 
 use crate::rng::Rng;
@@ -114,6 +119,9 @@ pub static MAPS: [MapDef; 8] = [
 ];
 
 pub fn map_def(id: u8) -> &'static MapDef {
+    if let Some(def) = (id >= doc::FIRST_CUSTOM).then(|| doc::def(id)).flatten() {
+        return def;
+    }
     &MAPS[id as usize % MAPS.len()]
 }
 
@@ -133,7 +141,8 @@ pub fn map_by_name(s: &str) -> Option<u8> {
     (hits.len() == 1).then(|| hits[0] as u8)
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BlockKind {
     Concrete,
     Container,
@@ -173,7 +182,8 @@ pub struct RayHit {
 
 /// Blast-sensitive map features share the same replicated destruction bits
 /// as crates. A bit may remove a whole group of structural collision blocks.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FeatureKind {
     BreachPanel,
     Walkway,
@@ -271,6 +281,9 @@ pub struct World {
     /// How far Canopy's two shade banks are let down (0 up, 1 down). The
     /// server sets it every tick and clients from each snapshot.
     pub shades: [f32; 2],
+    /// The document a custom map was built from (`doc`); `None` on the
+    /// built-in maps.
+    pub doc: Option<std::sync::Arc<doc::MapDoc>>,
 }
 
 fn hash(x: i32, z: i32, seed: u32) -> f32 {
@@ -418,6 +431,11 @@ impl World {
     }
 
     pub fn with_map(seed: u64, map: u8) -> World {
+        if map >= doc::FIRST_CUSTOM {
+            if let Some(w) = doc::installed(map).and_then(|d| d.build(seed, map).ok()) {
+                return w;
+            }
+        }
         let map = map % MAPS.len() as u8;
         let def = map_def(map);
         let s = (seed ^ (seed >> 32)) as u32;
@@ -446,6 +464,7 @@ impl World {
             ladders: Vec::new(),
             lines: Vec::new(),
             shades: [0.0; 2],
+            doc: None,
         };
         for (i, (x, z)) in def.points.iter().enumerate() {
             w.points[i] = vec3(*x, w.height(*x, *z), *z);
@@ -469,20 +488,7 @@ impl World {
 
     /// Terrain height, matching the rendered triangle mesh exactly.
     pub fn height(&self, x: f32, z: f32) -> f32 {
-        let gx = ((x - TER_X0) / CELL).clamp(0.0, TNX as f32 - 0.001);
-        let gz = ((z - TER_Z0) / CELL).clamp(0.0, TNZ as f32 - 0.001);
-        let (ix, iz) = (gx as usize, gz as usize);
-        let (fx, fz) = (gx - ix as f32, gz - iz as f32);
-        let i = iz * (TNX + 1) + ix;
-        let h00 = self.heights[i];
-        let h10 = self.heights[i + 1];
-        let h01 = self.heights[i + TNX + 1];
-        let h11 = self.heights[i + TNX + 2];
-        if fx + fz < 1.0 {
-            h00 + (h10 - h00) * fx + (h01 - h00) * fz
-        } else {
-            h11 + (h01 - h11) * (1.0 - fx) + (h10 - h11) * (1.0 - fz)
-        }
+        terrain::sample(&self.heights, x, z)
     }
 
     pub fn terrain_normal(&self, x: f32, z: f32) -> Vec3 {
@@ -2065,7 +2071,7 @@ mod tests {
         0xa89dded116c53bbc,
     ];
 
-    fn fingerprint(w: &World) -> u64 {
+    pub(crate) fn fingerprint(w: &World) -> u64 {
         let mut h = 0xcbf29ce484222325u64;
         let mut add = |v: u32| {
             for b in v.to_le_bytes() {

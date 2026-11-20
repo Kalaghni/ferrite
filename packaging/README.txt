@@ -21,6 +21,14 @@ PLAY
   PLAYER ICON: pick an emblem and a colour on the home screen, or drop a PNG
   on the launcher window to use your own picture (it is shrunk to 16 x 16).
 
+MAP MAKER
+  MAP MAKER on the home screen opens FORGE: make your own maps, shape the
+  ground, stamp models from the library (L) and press F5 to play them
+  against bots. Maps are saved in the maps folder beside the game, models
+  in the prefabs folder. Other players cannot join a custom map yet.
+  ferrite-forge-mcp lets an AI assistant build with you. For Claude Code:
+    claude mcp add ferrite-forge -- <this folder>/ferrite-forge-mcp
+
 UPDATES
   The launcher looks for a newer release when it opens and shows UPDATE &
   RESTART when there is one. SETTINGS > VIDEO > CHECK FOR UPDATES turns that

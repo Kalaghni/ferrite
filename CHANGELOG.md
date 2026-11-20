@@ -2,6 +2,16 @@
 
 What each FERRITE release added, newest first. The full notes for each release are in [docs/release-notes](docs/release-notes/).
 
+## v0.15
+
+- **FORGE, the map maker.** MAP MAKER on the launcher opens a start screen of your maps, each with a plan. Start blank, on a built-in map's ground, or from a copy of a built-in map, then build in 3D with every edit mirrored for both teams. F5 playtests against bots. Maps are `.fmap` files in the `maps` folder beside the game, and unsaved work is kept and offered back.
+- **The library.** A drawer of models in folders (L): drag one into the world or click to stamp it. Your own live in the `prefabs` folder.
+- **Terrain.** The TERRAIN tool raises, lowers, flattens, smooths, ramps and roughens the ground, and what stands on it moves with it.
+- **The FORGE MCP server.** `ferrite-forge-mcp` lets an assistant such as Claude build with you, live in the editor: edit and sculpt, draw plans, take screenshots, check the map and run a fast bot match on it.
+- **Spawns.** Each team deploys across zones along its own stretch of the front line, out of the enemy's sight and away from where teammates just came in, so there is no single doorway to watch.
+
+No network protocol change (still 21). The new spawns come with the server. Custom maps can be played against bots on your own machine, and other players cannot join one yet. See the [v0.15.0](docs/release-notes/v0.15.0.md) release notes.
+
 ## v0.14
 
 - **Canopy, a new map.** A botanical reserve in the roots and lower boughs of a colossal strangler fig, with C in the hollow under its crown. A ring of walkable boughs 18 m up joins its four trunks, reached by stairs behind B and D and by ladders on the flanks; every objective can still be reached on the ground. See the [Canopy guide](docs/maps/canopy.md).

@@ -1,6 +1,45 @@
 # FERRITE Map Maker - design and plan
 
-Working name: **FORGE** (a launcher page and `ferrite --edit <file>`).
+Working name: **FORGE** (MAP MAKER on the launcher, `ferrite --forge`, or `ferrite --edit <map>`).
+
+## Status (2026-11-19)
+
+Answers taken for section 10: the editor lives in the game client, maps keep half-turn symmetry, no mesh import yet, and sharing is passing `.fmap` files around.
+
+**Phase 0 is done** (`crates/shared/src/map/doc.rs`):
+- **Format and loading:** `MapDoc` is JSON on disk (one block per line) and bincode on the wire. `validate()` enforces every cap, and the loader is fuzzed.
+- **Building:** `MapDoc::build` makes the `World`, generating the east half in half-turn symmetry.
+- **Exact round trip:** `MapDoc::from_world` writes a built map out. Foundry, Depot and Relay come back with the same fingerprint and nav grid.
+- **Folding:** `MapDoc::fold` keeps the west half of a written-out map. Foundry and Depot fold. Relay does not, because its mast is only mirrored left to right.
+- **Custom map ids:** they start at 128 (`doc::install`), and `World::with_map` and `map_def` know them. A custom map's sky, fog and foliage come from `look.mood` (`doc::look_of`).
+- **Missing maps:** a client that joins a custom map it does not have is told so instead of building the wrong world.
+- **No PROTO change.**
+
+**Phase 1 has started** (`crates/client/src/forge.rs`):
+- **Opening:** the start screen (section 11) lists the maps folder; `ferrite --edit NAME` or a `.fmap` path opens one directly, or a new map if it names none.
+- **Camera:** fly with WASD and Q/E while holding right mouse to look; the wheel sets speed.
+- **Tools:**
+  - Select: click a block.
+  - Place: eight kinds, a ghost of the block and its turned copy, R to turn, T for tint.
+  - Objectives: A, B and the west base.
+- **Editing the selection:** move with the arrow keys and PgUp/PgDn, Shift to resize, R, T, Ctrl+D, Delete.
+- **History and files:** Ctrl+Z/Y undo, Ctrl+S save (atomic), and an autosave every minute to `FILE.fmap.autosave`.
+- **Playtest:** F5 plays the map with bots, and leaving the match returns to the editor.
+- **Other entry points:**
+  - `ferrite --export-map NAME FILE` writes a built-in map as a starting point; it is folded when it can be.
+  - `ferrite --host --map-file FILE` hosts a document.
+- **Capture aid:** `--edit-select N`.
+
+**AI tooling has started** (`crates/shared/src/map/ops.rs`, `crates/forge-mcp`, `crates/client/src/forge_link.rs`): see section 11.
+
+**Not yet:**
+- The FORGE launcher page: done (MAP MAKER and the start screen, section 11).
+- The plan view.
+- Box-drag brush, multi-select and mouse-drag move.
+- Trees, ladders and seedlines in the editor (the format has them).
+- The terrain tools (phase 3): sculpting is done (section 11); painting the ground palette per spot, regions (water, lava) and scatter are not.
+- Dedicated-server `maps/` and transfer to remote clients (phase 5): remote clients cannot join a custom map yet.
+- Bespoke art: Depot written out loses its signs and building detail.
 
 ## 1. Where we start from (what the code does today)
 
@@ -206,3 +245,63 @@ Runs live as a warnings list and blocks publishing on errors:
 2. Must custom maps keep half-turn symmetry (recommended), or may authors choose a mirror or no symmetry?
 3. Is importing outside meshes (glTF) wanted, given the vertex-colour, low-poly look?
 4. Should there be any online sharing beyond passing `.fmap` files around?
+
+## 11. AI: the FORGE MCP server and generated assets
+
+The direction (2026-11-19): AI comes in through an MCP server that any assistant can drive, and through assets it can generate and change. No chat panel inside the editor.
+
+**Edits as data** (`map::ops`): every change is an `Op` (place, add, move, reshape, restyle, turn, copy, remove, clear, prefab, tree, objective, base, rename, look). A batch applies in order and lands whole or not at all, validated once at the end. The editor's tools, the MCP server and the coming command palette all speak it.
+
+**The live link** (`forge_link.rs`): FORGE listens on `127.0.0.1:47817` (loopback only) for newline-separated JSON: `status`, `doc`, `apply`, `save`, `undo`/`redo`, `view` (camera, selection, a note) and `shot` (a picture from any camera, the user's view put back after). It is polled once a frame and never blocks. Every applied batch is one undo step, and the panel shows LINKED while a tool is connected.
+
+**The MCP server** (`ferrite-forge-mcp`, stdio): when FORGE is open on the map, tools go through the link, so edits appear on screen. Otherwise they work on the `.fmap` file directly. The tools:
+
+| Tool | What it does |
+|---|---|
+| `forge_status` | Is FORGE open, on what, unsaved or not, where the camera is |
+| `list_maps` | The maps folder, newest first: names, files, ages, sizes, which is open, which have newer autosaves |
+| `create_map` | New map in the maps folder: flat, on a built-in map's ground, or a copy of a built-in map to remix (folded to half-turn where it allows) |
+| `describe_map` | Layout and blocks with ids, filterable by region and kind |
+| `plan_image` | Top-down PNG of the built map; with `heat`, where bots died in the last soak |
+| `edit_map` | A batch of ops; prefabs by name |
+| `analyze_map` | The map doctor (section 5), first cut: routes, cover and openness per objective, sight between objectives, spawn exposure, mirror twins, and floating, buried or overlapping blocks |
+| `soak_test` | A headless bot match (120 s of 10 v 10 runs in about 1 s): kills, ranges, early deaths, captures, hot spots and a heat plan |
+| `screenshot` / `show_user` | See the 3D view, and point the user's camera at something |
+| `save_map`, `undo` | Through FORGE |
+| `list_prefabs`, `get_prefab`, `save_prefab` | The asset library |
+
+To register it with Claude Code: `claude mcp add ferrite-forge -- C:/path/to/ferrite-forge-mcp.exe`.
+
+**Generated assets, in order of what the engine can carry:**
+1. **Prefabs (now):** named groups of blocks and trees in `prefabs/*.fprefab` next to the map, or `FERRITE_PREFABS`. An assistant can compose one from a description (a bunker, a gatehouse), capture one from blocks already placed, then turn, restyle, resize and stamp it. Prefabs fit the box-only collision exactly, so what you see is what you collide with.
+2. **Looks (now, through `look`):** ground palettes and borrowed moods. Next: named material variants per kind, beyond the four tints.
+3. **Meshes (phase 6):** text-to-3D models as visual-only meshes, with collision fitted automatically as a few boxes and shown by the "collision differs from art" overlay. They need the renderer to load meshes, a vertex-colour pass to match the low-poly look, and phase 5 transfer to reach other players. Until then a generated "model" should be a prefab.
+
+**The library drawer** (`forge_library.rs`, `forge_thumbs.rs`, `map::library`): the library is `prefabs/` next to the game (or `FERRITE_PREFABS`), its sub-folders are folders and its `.fprefab` files are models, plus a built-in set (BLOCKS: one of each kind; COVER, STRUCTURES, NATURE: 13 models). FORGE shows it as a drawer on the right (L toggles it):
+- Folder cards preview the first four models inside; model cards show a picture, name, footprint and block count, and a green dot for your own.
+- Pictures are drawn by a small software renderer (flat-lit faces, dark edges, soft shadow), six a frame; the hovered card turns slowly.
+- Drag a card into the world to place it (a ghost and its turned copy follow the mouse, R turns it, it lands on whatever block is under the mouse), or click it to stamp it with every click on the world until Esc.
+- OPEN FOLDER opens the library in the file browser; the drawer rereads the folder every 2 s, so models saved by the MCP server, or folders made by hand, appear on their own.
+- The MCP tools `list_prefabs`, `get_prefab`, `save_prefab` (with `folder`) and the `prefab` edit op use the same library.
+- Capture aids: `--edit-folder NAME`, `--edit-stamp NAME@X,Y`.
+
+**Maps and the start screen** (`forge_home.rs`, `map::maps`): maps live in `maps/` next to the game (or `FERRITE_MAPS`), one `.fmap` each, unsaved work beside it as `.fmap.autosave`.
+- **Getting in:** MAP MAKER on the launcher's first page, `ferrite --forge`, or `ferrite --edit NAME` (a name in the maps folder, a new map there if it names none, or any `.fmap` path).
+- **The start screen:** a card per map, newest first, with its plan (drawn from the document on a worker thread, objectives and bases marked), its name, when it was edited and its block count; hovering shows the file. Maps with an autosave newer than the file are badged UNSAVED WORK. The folder is reread whenever it changes, so maps made by the MCP server or copied in appear on their own. OPEN FOLDER, BACK (Esc), NEW MAP (Ctrl+N).
+- **New map:** a name, and a start: BLANK (flat), or any built-in map's ground, or everything on it to remix (not for maps with tunnels yet). Copies are folded to their west half where the map allows, so edits land on both sides.
+- **Unsaved work:** opening a map whose autosave is newer asks: RESTORE THEM (the map opens with that work, unsaved), OPEN LAST SAVE (the autosave is dropped), or CANCEL. Saving drops the autosave; leaving with unsaved changes asks once, then keeps them in the autosave.
+- **In FORGE:** Esc or Ctrl+O goes back to the start screen, Ctrl+N to its new-map panel, Ctrl+Shift+S saves as a new map in the folder under a typed name.
+- **MCP:** every `path` also takes a map's name in the folder; `create_map` writes there unless given a path.
+- Capture aids: `--forge`, `--forge-new`, `--edit-restore`.
+
+**Terrain** (`map::terrain`, the `sculpt` op, FORGE's TERRAIN tool on key 4): a round brush on the 2 m height grid.
+- **Modes:** RAISE and LOWER (metres at the centre, soft to the rim), FLATTEN (towards the height where the stroke began, flat over the inner half), SMOOTH (towards the mean of the ground within 4 m), RAMP (a straight slope between two points, the brush radius either side) and NOISE (seeded lumps).
+- **In FORGE:** hold and drag on the ground (RAMP: drag from foot to top). Tab changes mode, [ and ] the size, - and = the strength. The brush shows as two rings, and its turned twin in half-turn maps. A whole stroke is one undo step and Esc takes it back. While a stroke runs the world is rebuilt on a worker thread (a full rebuild is 150-250 ms, mostly the ground mesh), so the frame rate holds and the ground catches up several times a second; every other edit now rebuilds off the frame too.
+- **Symmetry:** in half-turn maps each stroke is made at its turned spot as well, taking the stronger of the two where they meet, so the ground stays the same under a half turn.
+- **What stands on the ground follows it:** trees at its foot, blocks footed in it (foot at or up to 4 m under the lowest ground beneath them), and blocks stacked on those. Floating blocks stay put. Later ops in the same batch stand on the new ground.
+- **Stored** as the preset's heights plus a per-point delta in centimetres (up to 200 m), written back after each stroke; the preset's heights are cached.
+- **MCP:** `edit_map` takes `sculpt {mode, at, radius, amount?, height?, to?, heights?, scale?, seed?}`. `analyze_map` gains a GROUND section (what was sculpted, the height range, each objective against the ground around it) and warns about sculpted slopes over about 37 degrees (anyone walks up any slope, so they are not walls), objectives in a hollow or on a rise of over 3 m, and capture zones spanning over 4 m of height.
+- **Not yet:** painting the ground palette per spot (the format has one palette per map), water and lava regions, and finer than 2 m (cliffs are still rock blocks).
+- Capture aid: `--edit-brush MODE@X,Y`.
+
+**Next for this track:** multi-select in FORGE and "save selection to library", search in the drawer, the command palette sending typed requests to an assistant, and suggestions shown as ghost diffs to accept or reject.

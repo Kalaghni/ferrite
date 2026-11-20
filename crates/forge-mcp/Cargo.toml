@@ -1,0 +1,16 @@
+[package]
+name = "ferrite-forge-mcp"
+version.workspace = true
+license.workspace = true
+publish = false
+edition.workspace = true
+description = "MCP server for the FERRITE map maker"
+
+[dependencies]
+ferrite-shared = { path = "../shared" }
+ferrite-server = { path = "../server" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

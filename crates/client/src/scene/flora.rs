@@ -158,6 +158,7 @@ static CANOPY: Mood = Mood {
 /// The classic maps' moods and Canopy's. Relay and Slag Cathedral paint
 /// their own.
 pub fn mood(map: u8) -> Option<&'static Mood> {
+    let map = ferrite_shared::map::doc::look_of(map);
     if map == super::canopy::ID {
         return Some(&CANOPY);
     }
@@ -812,7 +813,8 @@ fn moss(m: &mut Mesh, b: &Block, i: usize, r: &mut Rng) {
 
 /// Plant a map's undergrowth into its static mesh.
 pub fn grow(m: &mut Mesh, w: &World) {
-    let Some(b) = (if w.map == super::canopy::ID { Some(&CANOPY_BIOME) } else { BIOMES.get(w.map as usize) }) else { return };
+    let look = ferrite_shared::map::doc::look_of(w.map);
+    let Some(b) = (if look == super::canopy::ID { Some(&CANOPY_BIOME) } else { BIOMES.get(look as usize) }) else { return };
     let seed = (w.seed as u32) ^ 0xF10A;
     // The ground under each objective, not the objective: Spillway's C stands
     // on a deck over the channel.

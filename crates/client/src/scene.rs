@@ -2,6 +2,7 @@
 
 use crate::gfx::{rgb, shade, Col, Mesh};
 use ferrite_shared::glam::{vec3, Mat4, Vec3};
+use ferrite_shared::map::doc::look_of;
 use ferrite_shared::map::*;
 use ferrite_shared::{NEUTRAL, POINT_RADIUS};
 
@@ -353,7 +354,7 @@ pub const LEAF: [[f32; 3]; 5] = [[0.74, 0.33, 0.13], [0.86, 0.57, 0.16], [0.63, 
 
 /// The leaf colours a map's broadleaf trees pick from.
 pub(crate) fn leaf_for(map: u8) -> &'static [[f32; 3]; 5] {
-    if map == canopy::ID {
+    if look_of(map) == canopy::ID {
         &canopy::LEAF
     } else {
         &LEAF
@@ -464,6 +465,7 @@ fn build_ground_cover(m: &mut Mesh, w: &World) {
 /// Each map has its own hour: Relay and Slag Cathedral carry theirs with
 /// their art, the rest take a `flora::Mood`.
 pub fn fog_for(map: u8) -> [f32; 4] {
+    let map = look_of(map);
     match map {
         slag_cathedral::ID => slag_cathedral::FOG,
         relay::ID => relay::FOG,
@@ -471,6 +473,7 @@ pub fn fog_for(map: u8) -> [f32; 4] {
     }
 }
 pub fn sun_for(map: u8) -> Vec3 {
+    let map = look_of(map);
     match map {
         slag_cathedral::ID => slag_cathedral::SUN,
         relay::ID => relay::SUN,
@@ -485,7 +488,9 @@ pub fn tone_for(map: u8) -> crate::gfx::Tone {
 #[allow(unused_imports)]
 pub use flora::ambience;
 pub fn shadow_bounds(map: u8) -> (Vec3, Vec3) {
-    (vec3(-HALF_X - 8.0, -12.0, -HALF_Z - 8.0), vec3(HALF_X + 8.0, if map == slag_cathedral::ID { 52.0 } else { 34.0 }, HALF_Z + 8.0))
+    // A custom map may build higher than the rest.
+    let top = if map == slag_cathedral::ID || map >= ferrite_shared::map::doc::FIRST_CUSTOM { 52.0 } else { 34.0 };
+    (vec3(-HALF_X - 8.0, -12.0, -HALF_Z - 8.0), vec3(HALF_X + 8.0, top, HALF_Z + 8.0))
 }
 /// A map's high scenery: drawn with the world, but casting no shadow.
 pub fn build_scenery(w: &World) -> Mesh {
@@ -495,6 +500,7 @@ pub fn build_scenery(w: &World) -> Mesh {
 }
 
 pub fn build_sky_for(map: u8) -> Mesh {
+    let map = look_of(map);
     match map {
         slag_cathedral::ID => slag_cathedral::sky(),
         relay::ID => relay::sky(),

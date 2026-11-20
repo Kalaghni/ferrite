@@ -27,7 +27,7 @@ if (-not $iscc) {
 if (-not $iscc) { throw 'Inno Setup 6 was not found. Install it with: winget install JRSoftware.InnoSetup' }
 
 if (-not $SkipBuild) {
-    cargo build --release -p ferrite -p ferrite-server
+    cargo build --release -p ferrite -p ferrite-server -p ferrite-forge-mcp
     if ($LASTEXITCODE -ne 0) { throw 'cargo build failed' }
 }
 
@@ -49,7 +49,7 @@ if (Test-Path -LiteralPath $stage) {
     Remove-Item -LiteralPath $stage -Recurse -Force
 }
 New-Item -ItemType Directory -Force $stage | Out-Null
-Copy-Item (Join-Path $root 'target\release\ferrite.exe'), (Join-Path $root 'target\release\ferrite-server.exe') $stage
+Copy-Item (Join-Path $root 'target\release\ferrite.exe'), (Join-Path $root 'target\release\ferrite-server.exe'), (Join-Path $root 'target\release\ferrite-forge-mcp.exe') $stage
 Copy-Item (Join-Path $PSScriptRoot 'README.txt'), (Join-Path $PSScriptRoot 'Quantico-OFL.txt'), (Join-Path $PSScriptRoot 'start-server.bat') $stage
 
 & $iscc /Qp "/DAppVersion=$Version" "/DSourceDir=$stage" (Join-Path $PSScriptRoot 'ferrite.iss')
