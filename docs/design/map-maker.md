@@ -36,7 +36,7 @@ Answers taken for section 10: the editor lives in the game client, maps keep hal
 - The FORGE launcher page: done (MAP MAKER and the start screen, section 11).
 - The plan view.
 - Box-drag brush, multi-select and mouse-drag move.
-- Trees, ladders and seedlines in the editor (the format has them).
+- Ladders and seedlines in the editor (the format has them). Trees can be selected, moved, resized and removed (v0.15.1); new ones come from the library.
 - The terrain tools (phase 3): sculpting is done (section 11); painting the ground palette per spot, regions (water, lava) and scatter are not.
 - Dedicated-server `maps/` and transfer to remote clients (phase 5): remote clients cannot join a custom map yet.
 - Bespoke art: Depot written out loses its signs and building detail.

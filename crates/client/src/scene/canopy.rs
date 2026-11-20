@@ -99,10 +99,13 @@ pub const GUIDE_LIFT: f32 = 2.45;
 /// every bend, and at each dock a post with a turquoise collar and a
 /// painted landing.
 pub fn build(m: &mut Mesh, w: &World) {
-    if w.map != ID {
+    // Remixes keep their seedlines (and riders need the guides), but the
+    // shade cranks belong to Canopy itself.
+    if w.map == ID {
+        cranks(m, w);
+    } else if w.lines.is_empty() {
         return;
     }
-    cranks(m, w);
     let lift = Vec3::Y * GUIDE_LIFT;
     for line in &w.lines {
         let pts: Vec<Vec3> = line.pts.iter().map(|&p| p + lift).collect();
@@ -233,6 +236,25 @@ fn limb(m: &mut Mesh, a: Vec3, ra: f32, b: Vec3, rb: f32, col: Col, seed: u32) {
 
 /// Where each main trunk stands on the ground plan: the layout's `TRUNKS`
 /// and their mirrors.
+/// Whether the great fig stands here: Canopy itself, or a remix in its mood
+/// that still has a trunk at the foot of every limb of the crown.
+pub fn has_fig(w: &World) -> bool {
+    if w.map == ID {
+        return true;
+    }
+    if w.map < ferrite_shared::map::doc::FIRST_CUSTOM || ferrite_shared::map::doc::look_of(w.map) != ID {
+        return false;
+    }
+    trunk_feet().iter().all(|&(x, z)| {
+        w.blocks.iter().any(|b| {
+            b.kind == BlockKind::Trunk
+                && b.max.y > layout::TRUNK_TOP - 4.0
+                && (b.min.x..=b.max.x).contains(&x)
+                && (b.min.z..=b.max.z).contains(&z)
+        })
+    })
+}
+
 fn trunk_feet() -> Vec<(f32, f32)> {
     let mut v = Vec::new();
     for &(x, z, _, _) in layout::TRUNKS.iter() {
@@ -273,7 +295,7 @@ fn leaves(m: &mut Mesh, c: Vec3, r: f32, id: u32) {
 /// 164 by 144 m. It is scenery: it casts no shadow (that would put the
 /// whole field in shade) and nothing collides with it.
 pub fn crown(m: &mut Mesh, w: &World) {
-    if w.map != ID {
+    if !has_fig(w) {
         return;
     }
     let feet = trunk_feet();

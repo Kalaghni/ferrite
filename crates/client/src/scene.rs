@@ -261,6 +261,8 @@ pub fn build_world_profiled(w: &World) -> (Mesh, Profile) {
     let groups = shade_groups(w);
     let steel = props::steel_roles(w);
     let drawn_elsewhere = spillway::owned(w);
+    let custom = w.map >= doc::FIRST_CUSTOM;
+    let fig = custom && look_of(w.map) == canopy::ID;
     for (i, b) in w.blocks.iter().enumerate() {
         // Breakable route pieces and cabinets are drawn from the current mask
         // every frame, just like crates; none can survive in the static mesh.
@@ -276,6 +278,19 @@ pub fn build_world_profiled(w: &World) -> (Mesh, Profile) {
         if w.map == canopy::ID && b.kind == BlockKind::Trunk {
             canopy::block(&mut m, w, b, i);
             meter.mark(&mut prof, &m, "canopy");
+            continue;
+        }
+        // A map made in FORGE draws its trunk blocks (posts, and a copied
+        // fig's trunks, roots and boughs), except those hidden in a tree.
+        if custom && b.kind == BlockKind::Trunk {
+            if !in_tree(w, b) {
+                if fig {
+                    canopy::block(&mut m, w, b, i);
+                } else {
+                    let k = 0.9 + 0.2 * hash01(i as u32, 0x7057);
+                    m.cuboid(b.min, b.max, rgb(0.36 * k, 0.26 * k, 0.18 * k));
+                }
+            }
             continue;
         }
         if w.map == slag_cathedral::ID {
@@ -492,6 +507,17 @@ pub fn shadow_bounds(map: u8) -> (Vec3, Vec3) {
     let top = if map == slag_cathedral::ID || map >= ferrite_shared::map::doc::FIRST_CUSTOM { 52.0 } else { 34.0 };
     (vec3(-HALF_X - 8.0, -12.0, -HALF_Z - 8.0), vec3(HALF_X + 8.0, top, HALF_Z + 8.0))
 }
+/// A thin trunk block standing inside a tree's trunk: its collision, drawn
+/// by the tree.
+fn in_tree(w: &World, b: &Block) -> bool {
+    let (sx, sz) = (b.max.x - b.min.x, b.max.z - b.min.z);
+    sx < 1.0
+        && sz < 1.0
+        && w.trees
+            .iter()
+            .any(|t| (b.min.x - 0.1..=b.max.x + 0.1).contains(&t.base.x) && (b.min.z - 0.1..=b.max.z + 0.1).contains(&t.base.z))
+}
+
 /// A map's high scenery: drawn with the world, but casting no shadow.
 pub fn build_scenery(w: &World) -> Mesh {
     let mut m = Mesh::default();

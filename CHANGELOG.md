@@ -9,8 +9,9 @@ What each FERRITE release added, newest first. The full notes for each release a
 - **Terrain.** The TERRAIN tool raises, lowers, flattens, smooths, ramps and roughens the ground, and what stands on it moves with it.
 - **The FORGE MCP server.** `ferrite-forge-mcp` lets an assistant such as Claude build with you, live in the editor: edit and sculpt, draw plans, take screenshots, check the map and run a fast bot match on it.
 - **Spawns.** Each team deploys across zones along its own stretch of the front line, out of the enemy's sight and away from where teammates just came in, so there is no single doorway to watch.
+- **v0.15.1.** Canopy remixes show their fig again (its trunks, roots and walkways were invisible walls), posts show on custom maps, and trees can be selected, moved, resized and removed in FORGE.
 
-No network protocol change (still 21). The new spawns come with the server. Custom maps can be played against bots on your own machine, and other players cannot join one yet. See the [v0.15.0](docs/release-notes/v0.15.0.md) release notes.
+No network protocol change (still 21). The new spawns come with the server. Custom maps can be played against bots on your own machine, and other players cannot join one yet. See the [v0.15.0](docs/release-notes/v0.15.0.md) and [v0.15.1](docs/release-notes/v0.15.1.md) release notes.
 
 ## v0.14
 

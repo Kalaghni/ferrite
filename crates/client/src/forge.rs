@@ -11,7 +11,7 @@ use crate::forge_link::Link;
 use crate::gfx::{self, Col, Mesh};
 use crate::{scene, ui};
 use ferrite_shared::glam::{vec3, vec4, Mat4, Vec3};
-use ferrite_shared::map::doc::{self, Brush, MapDoc, Symmetry};
+use ferrite_shared::map::doc::{self, Brush, MapDoc, Symmetry, TreeDoc};
 use ferrite_shared::map::ops::{self, Op, Outcome};
 use ferrite_shared::map::terrain::{Mode, Stroke};
 use ferrite_shared::map::{library, maps};
@@ -99,6 +99,8 @@ pub struct Editor {
     /// The selected brush, and whether it was picked by its turned copy:
     /// moves then go the other way so it follows the mouse.
     sel: Option<(usize, bool)>,
+    /// The selected tree, the same way (never with a brush selected).
+    tree: Option<(usize, bool)>,
     marker: usize,
     undo: Vec<MapDoc>,
     redo: Vec<MapDoc>,
@@ -129,6 +131,13 @@ pub struct Editor {
     radius: f32,
     strength: f32,
     sculpting: Option<Sculpting>,
+}
+
+/// What a click in the world picked, and whether by its turned copy.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Picked {
+    Block(usize, bool),
+    Tree(usize, bool),
 }
 
 /// A screenshot a tool is waiting for.
@@ -184,6 +193,7 @@ impl Editor {
             tint: 0,
             grid: 1,
             sel: None,
+            tree: None,
             marker: 0,
             undo: Vec::new(),
             redo: Vec::new(),
@@ -221,7 +231,7 @@ impl Editor {
     /// Capture aid: start with brush `j` selected.
     pub fn select(&mut self, j: usize) {
         if j < self.doc.brushes.len() {
-            self.sel = Some((j, false));
+            self.choose(Some(Picked::Block(j, false)));
             self.tool = Tool::Select;
         }
     }
@@ -345,7 +355,7 @@ impl Editor {
             self.redo.clear();
             self.touch(now);
             self.leave_armed = false;
-            self.sel = self.sel.filter(|s| s.0 < self.doc.brushes.len());
+            self.keep_selection();
         }
         Ok(out)
     }
@@ -360,9 +370,40 @@ impl Editor {
         }
         if n > 0 {
             self.touch(now);
-            self.sel = self.sel.filter(|s| s.0 < self.doc.brushes.len());
+            self.keep_selection();
         }
         n
+    }
+
+    /// Drop a selection the document no longer has.
+    fn keep_selection(&mut self) {
+        self.sel = self.sel.filter(|s| s.0 < self.doc.brushes.len());
+        self.tree = self.tree.filter(|s| s.0 < self.doc.trees.len());
+    }
+
+    /// Select what the mouse is over: a block, or a tree.
+    fn choose(&mut self, picked: Option<Picked>) {
+        (self.sel, self.tree) = match picked {
+            Some(Picked::Block(j, copy)) => (Some((j, copy)), None),
+            Some(Picked::Tree(j, copy)) => (None, Some((j, copy))),
+            None => (None, None),
+        };
+    }
+
+    /// Where tree `t` stands, or its turned copy.
+    fn tree_spot(t: &TreeDoc, copy: bool) -> Vec3 {
+        let p = Vec3::from(t.at);
+        if copy {
+            vec3(-p.x, p.y, -p.z)
+        } else {
+            p
+        }
+    }
+
+    /// The nearest tree (or turned copy) the ray `o + d s` passes through
+    /// before `limit`.
+    fn tree_hit(&self, o: Vec3, d: Vec3, limit: f32) -> Option<(f32, usize, bool)> {
+        tree_hit(&self.doc, o, d, limit)
     }
 
     /// Where a model dropped now would land: its origin on the ground, and
@@ -411,7 +452,7 @@ impl Editor {
                         let slot = self.free_slot();
                         self.doc.brushes[j].dest = slot;
                     }
-                    self.sel = Some((j, false));
+                    self.choose(Some(Picked::Block(j, false)));
                 }
                 let n = out.added.len();
                 self.say(&format!("PLACED {name}{}", if n > 1 { format!(" ({n} BLOCKS)") } else { String::new() }), now);
@@ -444,6 +485,8 @@ impl Editor {
             "eye": self.eye.to_array(),
             "facing": self.dir().to_array(),
             "selected": self.sel.map(|s| s.0),
+            "selected_tree": self.tree.map(|s| s.0),
+            "trees": self.doc.trees.len(),
         })
     }
 
@@ -493,7 +536,7 @@ impl Editor {
                 if let Some(j) = body["select"].as_u64() {
                     self.select(j as usize);
                 } else if body["select"].is_null() && body.get("select").is_some() {
-                    self.sel = None;
+                    self.choose(None);
                 }
                 if let Some(note) = body["note"].as_str() {
                     self.say(&note.to_uppercase(), now);
@@ -689,10 +732,19 @@ impl Editor {
         Some((vec3(cx - sx * 0.5, y0, cz - sz * 0.5), vec3(cx + sx * 0.5, y1, cz + sz * 0.5)))
     }
 
-    fn pick(&self) -> Option<(usize, bool)> {
+    fn pick(&self) -> Option<Picked> {
         let (o, d) = self.mouse_ray();
-        let hit = self.world.raycast(o, d, 800.0, 0)?;
-        self.sources.get(hit.block?).copied()
+        let hit = self.world.raycast(o, d, 800.0, 0);
+        let block = hit.as_ref().and_then(|h| Some((h.t, *self.sources.get(h.block?)?)));
+        // A tree counts if it is reached before the ground or a block is
+        // (a little past, since the trunk stands in the ground).
+        let tree = self.tree_hit(o, d, hit.as_ref().map_or(800.0, |h| h.t + 0.5));
+        match (block, tree) {
+            (Some((tb, _)), Some((tt, j, copy))) if tt <= tb + 0.5 => Some(Picked::Tree(j, copy)),
+            (Some((_, (j, copy))), _) => Some(Picked::Block(j, copy)),
+            (None, Some((_, j, copy))) => Some(Picked::Tree(j, copy)),
+            (None, None) => None,
+        }
     }
 
     /// Where the mouse meets the ground, inside the battlefield.
@@ -822,8 +874,8 @@ impl Editor {
                 self.say("STROKE CANCELLED", now);
             } else if self.shelf.cancel() {
                 // Stopped carrying or stamping a model.
-            } else if self.sel.is_some() {
-                self.sel = None;
+            } else if self.sel.is_some() || self.tree.is_some() {
+                self.choose(None);
             } else {
                 return self.leave(now, Exit::Home { new: false });
             }
@@ -868,7 +920,7 @@ impl Editor {
                 self.tool = t;
                 self.shelf.armed = None;
                 if t == Tool::Terrain {
-                    self.sel = None;
+                    self.choose(None);
                 }
             }
         }
@@ -968,6 +1020,8 @@ impl Editor {
                 });
                 self.sel = None;
             }
+        } else if let Some((j, copy)) = self.tree {
+            self.edit_tree(now, j, copy, shift, ctrl, turn_key);
         } else if self.tool == Tool::Place && turn_key {
             self.turned = !self.turned;
         } else if self.tool == Tool::Place && pressed(K::T) {
@@ -988,7 +1042,10 @@ impl Editor {
                 return None;
             }
             match self.tool {
-                Tool::Select => self.sel = self.pick(),
+                Tool::Select => {
+                    let picked = self.pick();
+                    self.choose(picked);
+                }
                 Tool::Place => {
                     if let Some((min, max)) = self.ghost() {
                         let kind = KINDS[self.kind].0;
@@ -997,7 +1054,7 @@ impl Editor {
                         let tint = self.tint;
                         self.edit(now, |d| d.brushes.push(Brush { min: min.to_array(), max: max.to_array(), kind, tint, dest }));
                         if self.doc.brushes.len() > n {
-                            self.sel = Some((n, false));
+                            self.choose(Some(Picked::Block(n, false)));
                         }
                     }
                 }
@@ -1148,6 +1205,78 @@ impl Editor {
         }
     }
 
+    /// Keys on a selected tree: arrows move it over the ground (PgUp/PgDn
+    /// lift it), Shift+Up/Down make it taller or shorter, Shift+Left/Right
+    /// its crown narrower or wider, R swaps pine and broadleaf, T its
+    /// colour, Ctrl+D a copy beside it, Delete removes it.
+    fn edit_tree(&mut self, now: f64, j: usize, copy: bool, shift: bool, ctrl: bool, turn_key: bool) {
+        let pressed = mq::is_key_pressed;
+        let g = GRIDS[self.grid];
+        let f = self.dir();
+        let (ax, az) = if f.x.abs() > f.z.abs() { (f.x.signum(), 0.0) } else { (0.0, f.z.signum()) };
+        let fwd = vec3(ax, 0.0, az);
+        let right = fwd.cross(Vec3::Y);
+        let keys = [(K::Up, fwd), (K::Down, -fwd), (K::Right, right), (K::Left, -right), (K::PageUp, Vec3::Y), (K::PageDown, -Vec3::Y)];
+        if shift {
+            let (mut tall, mut wide) = (0.0, 0.0);
+            for (k, dt, dw) in [(K::Up, 1.0, 0.0), (K::Down, -1.0, 0.0), (K::Right, 0.0, 0.5), (K::Left, 0.0, -0.5)] {
+                if pressed(k) {
+                    tall += dt * g.max(0.5);
+                    wide += dw * g.max(0.5);
+                }
+            }
+            if tall != 0.0 || wide != 0.0 {
+                self.edit(now, |d| {
+                    let t = &mut d.trees[j];
+                    t.height = (t.height + tall).clamp(1.0, 60.0);
+                    t.radius = (t.radius + wide).clamp(0.2, 12.0);
+                });
+            }
+        } else {
+            let mut step = Vec3::ZERO;
+            for (k, d) in keys {
+                if pressed(k) {
+                    step += d * g;
+                }
+            }
+            if copy {
+                step = vec3(-step.x, step.y, -step.z);
+            }
+            if step != Vec3::ZERO {
+                let w = &self.world;
+                let t = &self.doc.trees[j];
+                // It keeps its height over the ground as it moves.
+                let over = t.at[1] - w.height(t.at[0], t.at[2]);
+                let (x, z) = ((t.at[0] + step.x).clamp(-HALF_X, HALF_X), (t.at[2] + step.z).clamp(-HALF_Z, HALF_Z));
+                let y = w.height(x, z) + over + step.y;
+                self.edit(now, |d| d.trees[j].at = [x, y, z]);
+            }
+        }
+        if turn_key {
+            self.edit(now, |d| d.trees[j].pine = !d.trees[j].pine);
+        }
+        if pressed(K::T) {
+            self.edit(now, |d| d.trees[j].tint = (d.trees[j].tint + 1) % 5);
+        }
+        if ctrl && pressed(K::D) {
+            let mut t = self.doc.trees[j].clone();
+            let gap = t.radius * 2.0 + g;
+            t.at[0] = (t.at[0] + gap).clamp(-HALF_X, HALF_X);
+            t.at[1] = self.world.height(t.at[0], t.at[2]);
+            let n = self.doc.trees.len();
+            self.edit(now, |d| d.trees.push(t));
+            if self.doc.trees.len() > n {
+                self.choose(Some(Picked::Tree(n, false)));
+            }
+        }
+        if pressed(K::Delete) || pressed(K::Backspace) {
+            self.edit(now, |d| {
+                d.trees.remove(j);
+            });
+            self.choose(None);
+        }
+    }
+
     /// A destruction slot no crate uses yet.
     fn free_slot(&self) -> Option<u8> {
         let max = if self.doc.symmetry == Symmetry::HalfTurn { 32 } else { 64 };
@@ -1182,6 +1311,19 @@ impl Editor {
                 // The world has not caught up: show where it is going.
                 if let Some(b) = self.doc.brushes.get(j) {
                     outline(&mut opaque, Vec3::from(b.min), Vec3::from(b.max), SELECT);
+                }
+            }
+        }
+        if let Some((j, _)) = self.tree {
+            if let Some(t) = self.doc.trees.get(j) {
+                let half = self.doc.symmetry == Symmetry::HalfTurn;
+                for copy in [false, true] {
+                    if copy && !half {
+                        continue;
+                    }
+                    let p = Self::tree_spot(t, copy);
+                    let r = t.radius.max(0.6);
+                    outline(&mut opaque, p - vec3(r, 0.0, r), p + vec3(r, t.height, r), if copy { COPY } else { SELECT });
                 }
             }
         }
@@ -1239,7 +1381,8 @@ impl Editor {
         use ui::color as th;
         let (x, y) = (16.0, 16.0);
         let (pw, ph) = PANEL;
-        ui::plate(x, y, pw, ph + if self.sel.is_some() { 24.0 } else { 0.0 }, th::GLASS, th::STROKE);
+        let picked = self.sel.is_some() || self.tree.is_some();
+        ui::plate(x, y, pw, ph + if picked { 24.0 } else { 0.0 }, th::GLASS, th::STROKE);
         let star = if self.dirty() { " *" } else { "" };
         ui::text(&format!("FORGE  {}{star}", self.doc.meta.name), x + 14.0, y + 30.0, 22.0, th::WHITE);
         if self.link.as_ref().is_some_and(|l| l.linked()) {
@@ -1286,10 +1429,20 @@ impl Editor {
                 );
             }
         }
+        if let Some((j, _)) = self.tree {
+            if let Some(t) = self.doc.trees.get(j) {
+                let kind = if t.pine { "PINE" } else { "BROADLEAF" };
+                let line = format!("SELECTED {kind}  {:.1} m TALL  {:.1} m CROWN", t.height, t.radius);
+                ui::text(&line, x + 14.0, ty, 16.0, th::EMBER);
+            }
+        }
         // Keys along the bottom.
-        let help = match (self.tool, self.sel.is_some()) {
+        let help = match (self.tool, picked) {
+            _ if self.tree.is_some() => {
+                "ARROWS MOVE   PGUP/PGDN RAISE   SHIFT+UP/DOWN TALLER   SHIFT+LEFT/RIGHT CROWN   R PINE   T COLOUR   CTRL+D COPY   DEL REMOVE"
+            }
             (_, true) => "ARROWS MOVE   PGUP/PGDN RAISE   SHIFT+ARROWS SIZE   R TURN   T TINT   CTRL+D COPY   DEL REMOVE   ESC DESELECT",
-            (Tool::Select, false) => "CLICK A BLOCK TO SELECT IT",
+            (Tool::Select, false) => "CLICK A BLOCK OR A TREE TO SELECT IT",
             (Tool::Place, false) => "CLICK TO PLACE   TAB KIND   R TURN   T TINT",
             (Tool::Objectives, false) => "CLICK THE GROUND TO MOVE IT   TAB CHOOSE",
             (Tool::Terrain, false) if Mode::ALL[self.mode] == Mode::Ramp => {
@@ -1337,6 +1490,41 @@ impl Editor {
     }
 }
 
+/// The nearest tree (or turned copy) the ray `o + d s` passes through
+/// before `limit`: its trunk and crown taken as one upright cylinder.
+fn tree_hit(doc: &MapDoc, o: Vec3, d: Vec3, limit: f32) -> Option<(f32, usize, bool)> {
+    let half = doc.symmetry == Symmetry::HalfTurn;
+    let mut best: Option<(f32, usize, bool)> = None;
+    for (j, t) in doc.trees.iter().enumerate() {
+        for copy in [false, true] {
+            if copy && !half {
+                continue;
+            }
+            let p = Editor::tree_spot(t, copy);
+            let r = (t.radius * 0.9).max(0.7);
+            let (y0, y1) = (p.y - 0.3, p.y + t.height);
+            // Where the ray passes closest to the trunk's line, and
+            // where it crosses the crown's middle.
+            let flat = vec3(d.x, 0.0, d.z);
+            let mut tries = Vec::with_capacity(2);
+            if flat.length_squared() > 1e-6 {
+                tries.push((p - o).dot(flat) / flat.length_squared());
+            }
+            if d.y.abs() > 1e-4 {
+                tries.push((y1 - t.radius * 0.5 - o.y) / d.y);
+            }
+            for s in tries {
+                let q = o + d * s;
+                let near = vec3(q.x - p.x, 0.0, q.z - p.z).length() < r;
+                if s > 0.0 && s < limit && near && (y0..=y1).contains(&q.y) && best.is_none_or(|b| s < b.0) {
+                    best = Some((s, j, copy));
+                }
+            }
+        }
+    }
+    best
+}
+
 /// A box's twelve edges as thin bars, lit by nothing (alpha is the
 /// emissive mix).
 fn outline(m: &mut Mesh, min: Vec3, max: Vec3, col: Col) {
@@ -1352,5 +1540,27 @@ fn outline(m: &mut Mesh, min: Vec3, max: Vec3, col: Col) {
         for x in [a.x, b.x] {
             m.cuboid(vec3(x - t, y - t, a.z), vec3(x + t, y + t, b.z), col);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_click_on_a_tree_or_its_turned_copy_picks_it() {
+        let mut d = MapDoc::blank("TREES");
+        d.trees.push(TreeDoc { at: [-40.0, 0.0, 10.0], height: 9.0, radius: 2.5, tint: 0, pine: false });
+        d.trees.push(TreeDoc { at: [-60.0, 0.0, -20.0], height: 7.0, radius: 2.0, tint: 0, pine: true });
+        // Level, at the first tree's crown, from the west.
+        let hit = tree_hit(&d, vec3(-80.0, 6.0, 10.0), vec3(1.0, 0.0, 0.0), 800.0);
+        assert_eq!(hit.map(|h| (h.1, h.2)), Some((0, false)));
+        assert!((hit.unwrap().0 - 40.0).abs() < 3.0);
+        // Straight down on the second tree's turned copy.
+        let hit = tree_hit(&d, vec3(60.0, 50.0, 20.0), vec3(0.0, -1.0, 0.0), 800.0);
+        assert_eq!(hit.map(|h| (h.1, h.2)), Some((1, true)));
+        // Past the trees, beside them, or behind the ground: nothing.
+        assert_eq!(tree_hit(&d, vec3(-80.0, 6.0, 30.0), vec3(1.0, 0.0, 0.0), 800.0), None);
+        assert_eq!(tree_hit(&d, vec3(-80.0, 6.0, 10.0), vec3(1.0, 0.0, 0.0), 20.0), None);
     }
 }
