@@ -58,6 +58,56 @@ struct Sculpting {
     last: f64,
     /// The document before the stroke: one undo step for all of it.
     before: MapDoc,
+    /// What it does (the right button works the opposite of the mode), and
+    /// the button that holds it.
+    mode: Mode,
+    button: mq::MouseButton,
+}
+
+/// A block or tree being dragged over the ground with the select tool.
+struct Moving {
+    what: Picked,
+    before: MapDoc,
+    /// Where the mouse went down, and whether it has moved far enough to
+    /// count as a drag (a plain click only selects).
+    press: (f32, f32),
+    started: bool,
+    /// The height of the plane the mouse drags on, and where on it the
+    /// thing was grabbed, as seen (its turned copy, if that was clicked).
+    plane: f32,
+    grab: Vec3,
+}
+
+/// Something on the tool panel a click can do.
+#[derive(Clone, Copy, PartialEq)]
+enum Act {
+    Tool(Tool),
+    Mode(usize),
+    Size(bool),
+    Strength(bool),
+    Kind,
+    Grid,
+    Tint,
+    Marker,
+}
+
+/// A clickable spot on the panel: x, y, width, height.
+type Spot = (f32, f32, f32, f32);
+
+/// The terrain modes as their chips on the panel say them.
+const MODE_CHIPS: [&str; 6] = ["RAISE", "LOWER", "FLAT", "SMOOTH", "RAMP", "NOISE"];
+
+/// What the right button (or Shift with the left) does in each terrain
+/// mode: the opposite, where there is one.
+fn opposite(m: Mode) -> Option<Mode> {
+    match m {
+        Mode::Raise => Some(Mode::Lower),
+        Mode::Lower => Some(Mode::Raise),
+        Mode::Smooth => Some(Mode::Noise),
+        Mode::Noise => Some(Mode::Smooth),
+        Mode::Flatten => Some(Mode::Smooth),
+        Mode::Ramp => None,
+    }
 }
 
 /// What the place tool stamps: a kind, its name and a starting size.
@@ -131,6 +181,7 @@ pub struct Editor {
     radius: f32,
     strength: f32,
     sculpting: Option<Sculpting>,
+    moving: Option<Moving>,
 }
 
 /// What a click in the world picked, and whether by its turned copy.
@@ -214,6 +265,7 @@ impl Editor {
             radius: 10.0,
             strength: 1.0,
             sculpting: None,
+            moving: None,
         };
         ed.rebuild();
         if restore {
@@ -832,9 +884,12 @@ impl Editor {
             return None;
         }
 
-        // Look while the right button is held.
+        // Look while the middle button is held, or the right one unless the
+        // terrain brush has it (there it works the opposite way).
         let m = mq::mouse_position();
-        let look = mq::is_mouse_button_down(mq::MouseButton::Right);
+        let right_sculpts = self.tool == Tool::Terrain && opposite(Mode::ALL[self.mode]).is_some();
+        let look = mq::is_mouse_button_down(mq::MouseButton::Middle)
+            || (mq::is_mouse_button_down(mq::MouseButton::Right) && !right_sculpts && !self.looking_blocked());
         if look != self.looking {
             self.looking = look;
             mq::set_cursor_grab(look);
@@ -848,8 +903,15 @@ impl Editor {
 
         // Fly.
         let wheel = mq::mouse_wheel().1;
+        let alt = mq::is_key_down(K::LeftAlt) || mq::is_key_down(K::RightAlt);
         if wheel != 0.0 && !self.shelf.wheel(m.0, m.1, wheel) {
-            self.speed = (self.speed * if wheel > 0.0 { 1.25 } else { 0.8 }).clamp(3.0, 160.0);
+            if self.tool == Tool::Terrain && ctrl {
+                self.act(Act::Size(wheel > 0.0));
+            } else if self.tool == Tool::Terrain && alt {
+                self.act(Act::Strength(wheel > 0.0));
+            } else {
+                self.speed = (self.speed * if wheel > 0.0 { 1.25 } else { 0.8 }).clamp(3.0, 160.0);
+            }
         }
         if !ctrl {
             let fwd = self.dir();
@@ -867,7 +929,14 @@ impl Editor {
         }
 
         if pressed(K::Escape) {
-            if let Some(s) = self.sculpting.take() {
+            if let Some(mv) = self.moving.take() {
+                // The drag is taken back.
+                if mv.started {
+                    self.doc = mv.before;
+                    self.touch(now);
+                    self.say("MOVE CANCELLED", now);
+                }
+            } else if let Some(s) = self.sculpting.take() {
                 // The stroke is taken back whole.
                 self.doc = s.before;
                 self.touch(now);
@@ -917,20 +986,15 @@ impl Editor {
 
         for (k, t) in [(K::Key1, Tool::Select), (K::Key2, Tool::Place), (K::Key3, Tool::Objectives), (K::Key4, Tool::Terrain)] {
             if pressed(k) {
-                self.tool = t;
-                self.shelf.armed = None;
-                if t == Tool::Terrain {
-                    self.choose(None);
-                }
+                self.act(Act::Tool(t));
             }
         }
         if self.tool == Tool::Terrain {
-            let grow = |v: f32, up: bool, (lo, hi): (f32, f32)| (v * if up { 1.25 } else { 0.8 }).clamp(lo, hi);
             if pressed(K::LeftBracket) || pressed(K::RightBracket) {
-                self.radius = grow(self.radius, pressed(K::RightBracket), BRUSH).round().max(BRUSH.0);
+                self.act(Act::Size(pressed(K::RightBracket)));
             }
             if pressed(K::Minus) || pressed(K::Equal) {
-                self.strength = grow(self.strength, pressed(K::Equal), STRENGTH);
+                self.act(Act::Strength(pressed(K::Equal)));
             }
         }
         if pressed(K::L) && !ctrl {
@@ -1030,12 +1094,27 @@ impl Editor {
 
         // Clicks.
         let (mx, my) = mq::mouse_position();
-        let over_ui = (mx < 16.0 + PANEL.0 && my < 16.0 + PANEL.1 + 24.0) || self.shelf.over(mx, my);
+        let (panel_h, spots) = self.panel(false, (mx, my));
+        let over_panel = mx < 16.0 + PANEL.0 && my < 16.0 + panel_h;
+        let over_ui = over_panel || self.shelf.over(mx, my);
         if let Some(key) = self.shelf.mouse((mx, my)) {
             // A model dragged out of the library and let go over the world.
             self.place_model(now, key);
         }
+        if over_panel && mq::is_mouse_button_pressed(mq::MouseButton::Left) {
+            if let Some(&(_, a)) = spots.iter().find(|(r, _)| mx >= r.0 && mx < r.0 + r.2 && my >= r.1 && my < r.1 + r.3) {
+                self.act(a);
+            }
+        }
         self.sculpt(now);
+        self.drag(now);
+        // The terrain brush's opposite, on the right button.
+        let right = mq::is_mouse_button_pressed(mq::MouseButton::Right);
+        if self.tool == Tool::Terrain && right && !over_ui && self.shelf.armed.is_none() && self.sculpting.is_none() {
+            if let Some(o) = opposite(Mode::ALL[self.mode]) {
+                self.start_stroke(now, o, mq::MouseButton::Right);
+            }
+        }
         if mq::is_mouse_button_pressed(mq::MouseButton::Left) && !over_ui {
             if let Some(key) = self.shelf.armed {
                 self.place_model(now, key);
@@ -1045,6 +1124,8 @@ impl Editor {
                 Tool::Select => {
                     let picked = self.pick();
                     self.choose(picked);
+                    // Hold and drag to move it.
+                    self.moving = picked.and_then(|p| self.grab(p, (mx, my)));
                 }
                 Tool::Place => {
                     if let Some((min, max)) = self.ghost() {
@@ -1058,12 +1139,13 @@ impl Editor {
                         }
                     }
                 }
-                Tool::Terrain => {
-                    if let Some(p) = self.brush_at() {
-                        let height = self.world.height(p[0], p[1]);
-                        self.sculpting = Some(Sculpting { from: p, height, last: now, before: self.doc.clone() });
-                    }
+                Tool::Terrain if self.sculpting.is_none() => {
+                    // Shift works the opposite way, for a trackpad.
+                    let mode = Mode::ALL[self.mode];
+                    let mode = if shift { opposite(mode).unwrap_or(mode) } else { mode };
+                    self.start_stroke(now, mode, mq::MouseButton::Left);
                 }
+                Tool::Terrain => {}
                 Tool::Objectives => {
                     if let Some((x, z)) = self.ground_at_mouse() {
                         let half = self.doc.symmetry == Symmetry::HalfTurn;
@@ -1081,6 +1163,156 @@ impl Editor {
         None
     }
 
+    /// Begin a brush stroke in `mode` at the mouse, held by `button`.
+    fn start_stroke(&mut self, now: f64, mode: Mode, button: mq::MouseButton) {
+        if let Some(p) = self.brush_at() {
+            let height = self.world.height(p[0], p[1]);
+            self.sculpting = Some(Sculpting { from: p, height, last: now, before: self.doc.clone(), mode, button });
+        }
+    }
+
+    /// While the terrain brush has the right button, it does not look.
+    fn looking_blocked(&self) -> bool {
+        self.sculpting.as_ref().is_some_and(|s| s.button == mq::MouseButton::Right)
+    }
+
+    /// Do what a panel click (or its key) asks.
+    fn act(&mut self, a: Act) {
+        let grow = |v: f32, up: bool, (lo, hi): (f32, f32)| (v * if up { 1.25 } else { 0.8 }).clamp(lo, hi);
+        match a {
+            Act::Tool(t) => {
+                self.tool = t;
+                self.shelf.armed = None;
+                self.moving = None;
+                if t == Tool::Terrain {
+                    self.choose(None);
+                }
+            }
+            Act::Mode(i) => self.mode = i.min(Mode::ALL.len() - 1),
+            Act::Size(up) => self.radius = grow(self.radius, up, BRUSH).round().max(BRUSH.0),
+            Act::Strength(up) => self.strength = grow(self.strength, up, STRENGTH),
+            Act::Kind => {
+                self.kind = (self.kind + 1) % KINDS.len();
+                self.size = KINDS[self.kind].2;
+            }
+            Act::Grid => self.grid = (self.grid + 1) % GRIDS.len(),
+            Act::Tint => self.tint = (self.tint + 1) % 4,
+            Act::Marker => self.marker = (self.marker + 1) % MARKERS.len(),
+        }
+    }
+
+    /// Where a block (its foot) or a tree stands, as seen: its turned copy's
+    /// spot if that is what was picked.
+    fn seen_at(&self, what: Picked) -> Option<Vec3> {
+        self.seen_at_in(&self.doc, what)
+    }
+
+    /// Where the mouse ray meets the level plane at height `y`.
+    fn on_plane(&self, y: f32) -> Option<Vec3> {
+        let (o, d) = self.mouse_ray();
+        if d.y.abs() < 1e-4 {
+            return None;
+        }
+        let s = (y - o.y) / d.y;
+        (s > 0.0 && s < 900.0).then(|| o + d * s)
+    }
+
+    /// Take hold of what was clicked, ready to drag it.
+    fn grab(&self, what: Picked, press: (f32, f32)) -> Option<Moving> {
+        let at = self.seen_at(what)?;
+        let hit = self.on_plane(at.y)?;
+        Some(Moving { what, before: self.doc.clone(), press, started: false, plane: at.y, grab: vec3(at.x - hit.x, 0.0, at.z - hit.z) })
+    }
+
+    /// Drag the held block or tree over the ground: it keeps its height
+    /// over the ground (if it stands on it) and moves by whole grid steps.
+    /// Letting go makes the whole drag one undo step.
+    fn drag(&mut self, now: f64) {
+        let Some(mv) = &self.moving else { return };
+        let held = mq::is_mouse_button_down(mq::MouseButton::Left);
+        let (mx, my) = self.cursor();
+        if !mv.started && held && ((mx - mv.press.0).abs() + (my - mv.press.1).abs()) > 6.0 {
+            if let Some(m) = &mut self.moving {
+                m.started = true;
+            }
+        }
+        let Some(mv) = &self.moving else { return };
+        if mv.started && held {
+            let (what, plane, grab) = (mv.what, mv.plane, mv.grab);
+            let before = mv.before.clone();
+            if let (Some(hit), Some(start)) = (self.on_plane(plane), self.seen_at_in(&before, what)) {
+                let want = hit + grab;
+                let g = GRIDS[self.grid];
+                let snap = |v: f32| (v / g).round() * g;
+                let (mut dx, mut dz) = (snap(want.x - start.x), snap(want.z - start.z));
+                let copy = matches!(what, Picked::Block(_, true) | Picked::Tree(_, true));
+                if copy {
+                    (dx, dz) = (-dx, -dz);
+                }
+                let mut d = before;
+                let w = &self.world;
+                match what {
+                    Picked::Block(j, _) => {
+                        let b = &mut d.brushes[j];
+                        let (cx, cz) = ((b.min[0] + b.max[0]) * 0.5, (b.min[2] + b.max[2]) * 0.5);
+                        let (nx, nz) = ((cx + dx).clamp(-HALF_X, HALF_X), (cz + dz).clamp(-HALF_Z, HALF_Z));
+                        let (dx, dz) = (nx - cx, nz - cz);
+                        // A block standing on the ground follows it.
+                        let footed = b.min[1] < w.height(cx, cz) + 0.6;
+                        let dy = if footed { w.height(nx, nz) - w.height(cx, cz) } else { 0.0 };
+                        for (a, v) in [(0, dx), (1, dy), (2, dz)] {
+                            b.min[a] += v;
+                            b.max[a] += v;
+                        }
+                    }
+                    Picked::Tree(j, _) => {
+                        let t = &mut d.trees[j];
+                        let over = t.at[1] - w.height(t.at[0], t.at[2]);
+                        let (nx, nz) = ((t.at[0] + dx).clamp(-HALF_X, HALF_X), (t.at[2] + dz).clamp(-HALF_Z, HALF_Z));
+                        t.at = [nx, w.height(nx, nz) + over, nz];
+                    }
+                }
+                if d != self.doc {
+                    self.doc = d;
+                    self.touch(now);
+                }
+            }
+            return;
+        }
+        if held {
+            return;
+        }
+        // Let go.
+        let Some(mv) = self.moving.take() else { return };
+        if !mv.started || self.doc == mv.before {
+            return;
+        }
+        if let Err(e) = self.doc.validate() {
+            self.doc = mv.before;
+            self.touch(now);
+            self.say(&e.to_uppercase(), now);
+            return;
+        }
+        self.undo.push(mv.before);
+        if self.undo.len() > 200 {
+            self.undo.remove(0);
+        }
+        self.redo.clear();
+        self.leave_armed = false;
+    }
+
+    /// `seen_at`, in another copy of the document.
+    fn seen_at_in(&self, d: &MapDoc, what: Picked) -> Option<Vec3> {
+        let flip = |p: Vec3, copy: bool| if copy { vec3(-p.x, p.y, -p.z) } else { p };
+        match what {
+            Picked::Block(j, copy) => {
+                let b = d.brushes.get(j)?;
+                Some(flip(vec3((b.min[0] + b.max[0]) * 0.5, b.min[1], (b.min[2] + b.max[2]) * 0.5), copy))
+            }
+            Picked::Tree(j, copy) => Some(Self::tree_spot(d.trees.get(j)?, copy)),
+        }
+    }
+
     /// Where the terrain brush is: the spot under the mouse.
     fn brush_at(&self) -> Option<[f32; 2]> {
         let (o, d) = self.mouse_ray();
@@ -1093,9 +1325,8 @@ impl Editor {
     /// it is let go.
     fn sculpt(&mut self, now: f64) {
         let Some(s) = &self.sculpting else { return };
-        let (from, height, since) = (s.from, s.height, now - s.last);
-        let mode = Mode::ALL[self.mode];
-        let held = mq::is_mouse_button_down(mq::MouseButton::Left);
+        let (from, height, since, mode) = (s.from, s.height, now - s.last, s.mode);
+        let held = mq::is_mouse_button_down(s.button);
         let at = self.brush_at();
         let k = self.strength;
         // Most modes bite about 30 times a second; a ramp once, at the end.
@@ -1277,6 +1508,165 @@ impl Editor {
         }
     }
 
+    /// The tool panel, laid out: its height and the spots a click works on.
+    /// Draws it too when `draw` is set (over a plate already drawn).
+    fn panel(&self, draw: bool, mouse: (f32, f32)) -> (f32, Vec<(Spot, Act)>) {
+        use ui::color as th;
+        let (x, y, pw) = (16.0, 16.0, PANEL.0);
+        let mut spots: Vec<(Spot, Act)> = Vec::new();
+        let hot = |r: Spot| mouse.0 >= r.0 && mouse.0 < r.0 + r.2 && mouse.1 >= r.1 && mouse.1 < r.1 + r.3;
+        let hover = |r: Spot| {
+            if draw && hot(r) {
+                mq::draw_rectangle(r.0, r.1, r.2, r.3, ui::fade(th::WHITE, 0.08));
+            }
+        };
+        // A small square button with a sign on it.
+        let button = |r: Spot, sign: &str| {
+            if draw {
+                ui::plate(
+                    r.0,
+                    r.1,
+                    r.2,
+                    r.3,
+                    if hot(r) { th::PANEL_RAISED } else { th::PANEL },
+                    if hot(r) { th::COBALT } else { th::STROKE },
+                );
+                ui::text_c(sign, r.0 + r.2 * 0.5, r.1 + r.3 - 6.0, 18.0, th::WHITE);
+            }
+        };
+        if draw {
+            let star = if self.dirty() { " *" } else { "" };
+            ui::text(&format!("FORGE  {}{star}", self.doc.meta.name), x + 14.0, y + 30.0, 22.0, th::WHITE);
+            if self.link.as_ref().is_some_and(|l| l.linked()) {
+                ui::text("LINKED", x + pw - 76.0, y + 30.0, 16.0, th::EMBER);
+            }
+        }
+        let mut ty = y + 62.0;
+        let tools = [(Tool::Select, "SELECT"), (Tool::Place, "PLACE"), (Tool::Objectives, "OBJECTIVES"), (Tool::Terrain, "TERRAIN")];
+        for (k, (t, name)) in tools.iter().enumerate() {
+            let r = (x + 6.0, ty - 19.0, pw - 12.0, 24.0);
+            hover(r);
+            if draw {
+                let on = self.tool == *t;
+                ui::text(&format!("{}  {name}", k + 1), x + 14.0, ty, 18.0, if on { th::EMBER } else { th::MUTED });
+            }
+            spots.push((r, Act::Tool(*t)));
+            ty += 24.0;
+        }
+        ty += 8.0;
+        match self.tool {
+            Tool::Terrain => {
+                // The modes as chips, then size and strength with - and +.
+                let n = Mode::ALL.len() as f32;
+                let cw = (pw - 28.0 - (n - 1.0) * 4.0) / n;
+                for (i, chip) in MODE_CHIPS.iter().enumerate() {
+                    let r = (x + 14.0 + i as f32 * (cw + 4.0), ty - 18.0, cw, 26.0);
+                    if draw {
+                        let on = i == self.mode;
+                        let fill = if on {
+                            th::EMBER
+                        } else if hot(r) {
+                            th::PANEL_RAISED
+                        } else {
+                            th::PANEL
+                        };
+                        ui::plate(r.0, r.1, r.2, r.3, fill, if on { th::EMBER } else { th::STROKE });
+                        ui::text_c(chip, r.0 + r.2 * 0.5, r.1 + 18.0, 12.0, if on { th::INK } else { th::WHITE });
+                    }
+                    spots.push((r, Act::Mode(i)));
+                }
+                ty += 34.0;
+                let rows = [
+                    ("SIZE", "[ ]  CTRL+WHEEL", format!("{:.0} m", self.radius), Act::Size(false), Act::Size(true)),
+                    ("STRENGTH", "- =  ALT+WHEEL", format!("x{:.2}", self.strength), Act::Strength(false), Act::Strength(true)),
+                ];
+                for (label, keys, value, down, up) in rows {
+                    if draw {
+                        ui::text(label, x + 14.0, ty, 16.0, th::MUTED);
+                        ui::text(&value, x + 112.0, ty, 18.0, th::WHITE);
+                        ui::text(keys, x + 112.0 + 62.0, ty, 12.0, th::QUIET);
+                    }
+                    for (k, (act, sign)) in [(down, "-"), (up, "+")].into_iter().enumerate() {
+                        let r = (x + pw - 72.0 + k as f32 * 30.0, ty - 19.0, 26.0, 24.0);
+                        button(r, sign);
+                        spots.push((r, act));
+                    }
+                    ty += 28.0;
+                }
+                if draw {
+                    let m = Mode::ALL[self.mode];
+                    let line = match opposite(m) {
+                        Some(o) => format!("LEFT MOUSE {}   RIGHT MOUSE {}", m.name(), o.name()),
+                        None => "DRAG FROM THE FOOT TO THE TOP".to_string(),
+                    };
+                    ui::text(&line, x + 14.0, ty, 14.0, th::QUIET);
+                }
+                ty += 24.0;
+            }
+            Tool::Objectives => {
+                let r = (x + 6.0, ty - 19.0, pw - 12.0, 24.0);
+                hover(r);
+                if draw {
+                    ui::text(&format!("TAB  {}", MARKERS[self.marker]), x + 14.0, ty, 18.0, th::WHITE);
+                }
+                spots.push((r, Act::Marker));
+                ty += 24.0;
+            }
+            _ => {
+                let r = (x + 6.0, ty - 19.0, pw - 12.0, 24.0);
+                hover(r);
+                if draw {
+                    let [mut a, b, mut c] = self.size;
+                    if self.turned {
+                        std::mem::swap(&mut a, &mut c);
+                    }
+                    ui::text(&format!("TAB  {}  {a:.1} x {c:.1} x {b:.1} m", KINDS[self.kind].1), x + 14.0, ty, 18.0, th::WHITE);
+                }
+                spots.push((r, Act::Kind));
+                ty += 24.0;
+            }
+        }
+        if self.tool != Tool::Terrain {
+            let half = (pw - 12.0) * 0.5;
+            for (k, (act, text)) in [(Act::Grid, format!("G  GRID {} m", GRIDS[self.grid])), (Act::Tint, format!("T  TINT {}", self.tint))]
+                .into_iter()
+                .enumerate()
+            {
+                let r = (x + 6.0 + k as f32 * half, ty - 19.0, half, 24.0);
+                hover(r);
+                if draw {
+                    ui::text(&text, r.0 + 8.0, ty, 18.0, th::MUTED);
+                }
+                spots.push((r, act));
+            }
+            ty += 24.0;
+        }
+        if draw {
+            ui::text(&format!("{} / {} BLOCKS", self.world.blocks.len(), doc::MAX_BLOCKS), x + 14.0, ty, 18.0, th::MUTED);
+        }
+        ty += 24.0;
+        let selected = self
+            .sel
+            .and_then(|(j, _)| self.doc.brushes.get(j))
+            .map(|b| {
+                let sz = [b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]];
+                format!("SELECTED {:?}  {:.2} x {:.2} x {:.2}", b.kind, sz[0], sz[2], sz[1]).to_uppercase()
+            })
+            .or_else(|| {
+                self.tree.and_then(|(j, _)| self.doc.trees.get(j)).map(|t| {
+                    let kind = if t.pine { "PINE" } else { "BROADLEAF" };
+                    format!("SELECTED {kind}  {:.1} m TALL  {:.1} m CROWN", t.height, t.radius)
+                })
+            });
+        if let Some(line) = selected {
+            if draw {
+                ui::text(&line, x + 14.0, ty, 16.0, th::EMBER);
+            }
+            ty += 24.0;
+        }
+        (ty - y + 8.0, spots)
+    }
+
     /// A destruction slot no crate uses yet.
     fn free_slot(&self) -> Option<u8> {
         let max = if self.doc.symmetry == Symmetry::HalfTurn { 32 } else { 64 };
@@ -1328,7 +1718,30 @@ impl Editor {
             }
         }
         let (mx, my) = self.cursor();
-        let in_world = !self.looking && !self.shelf.over(mx, my);
+        let over_panel = mx < 16.0 + PANEL.0 && my < 16.0 + self.panel(false, (mx, my)).0;
+        let in_world = !self.looking && !self.shelf.over(mx, my) && !over_panel;
+        // What a click would select, outlined faintly.
+        if self.tool == Tool::Select && in_world && self.moving.is_none() && self.shelf.armed.is_none() {
+            let faint: Col = [0.8, 0.85, 0.95, 1.0];
+            match self.pick() {
+                Some(Picked::Block(j, _)) if self.sel.map(|s| s.0) != Some(j) && self.stale.is_none() => {
+                    for (i, &(src, _)) in self.sources.iter().enumerate() {
+                        if src == j {
+                            let b = &w.blocks[i];
+                            outline(&mut opaque, b.min, b.max, faint);
+                        }
+                    }
+                }
+                Some(Picked::Tree(j, copy)) if self.tree.map(|s| s.0) != Some(j) => {
+                    if let Some(t) = self.doc.trees.get(j) {
+                        let p = Self::tree_spot(t, copy);
+                        let r = t.radius.max(0.6);
+                        outline(&mut opaque, p - vec3(r, 0.0, r), p + vec3(r, t.height, r), faint);
+                    }
+                }
+                _ => {}
+            }
+        }
         if let Some(key) = self.shelf.stamping().filter(|_| in_world) {
             let half = self.doc.symmetry == Symmetry::HalfTurn;
             for (min, max) in self.stamp_ghost(key) {
@@ -1379,81 +1792,35 @@ impl Editor {
 
     fn hud(&self, _art: &ui::Art, sw: f32, sh: f32, now: f64) {
         use ui::color as th;
-        let (x, y) = (16.0, 16.0);
-        let (pw, ph) = PANEL;
         let picked = self.sel.is_some() || self.tree.is_some();
-        ui::plate(x, y, pw, ph + if picked { 24.0 } else { 0.0 }, th::GLASS, th::STROKE);
-        let star = if self.dirty() { " *" } else { "" };
-        ui::text(&format!("FORGE  {}{star}", self.doc.meta.name), x + 14.0, y + 30.0, 22.0, th::WHITE);
-        if self.link.as_ref().is_some_and(|l| l.linked()) {
-            ui::text("LINKED", x + pw - 76.0, y + 30.0, 16.0, th::EMBER);
-        }
-        let mut ty = y + 62.0;
-        for (k, (t, name)) in
-            [(Tool::Select, "SELECT"), (Tool::Place, "PLACE"), (Tool::Objectives, "OBJECTIVES"), (Tool::Terrain, "TERRAIN")]
-                .iter()
-                .enumerate()
-        {
-            let on = self.tool == *t;
-            ui::text(&format!("{}  {name}", k + 1), x + 14.0, ty, 18.0, if on { th::EMBER } else { th::MUTED });
-            ty += 24.0;
-        }
-        ty += 8.0;
-        let detail = match self.tool {
-            Tool::Objectives => format!("TAB  {}", MARKERS[self.marker]),
-            Tool::Terrain => format!("TAB  {}   [ ] {:.0} m   - = x{:.2}", Mode::ALL[self.mode].name(), self.radius, self.strength),
-            _ => {
-                let [mut a, b, mut c] = self.size;
-                if self.turned {
-                    std::mem::swap(&mut a, &mut c);
-                }
-                format!("TAB  {}  {a:.1} x {c:.1} x {b:.1} m", KINDS[self.kind].1)
-            }
-        };
-        ui::text(&detail, x + 14.0, ty, 18.0, th::WHITE);
-        ty += 24.0;
-        ui::text(&format!("G  GRID {} m     T  TINT {}", GRIDS[self.grid], self.tint), x + 14.0, ty, 18.0, th::MUTED);
-        ty += 24.0;
-        let n = self.world.blocks.len();
-        ui::text(&format!("{n} / {} BLOCKS", doc::MAX_BLOCKS), x + 14.0, ty, 18.0, th::MUTED);
-        ty += 24.0;
-        if let Some((j, _)) = self.sel {
-            if let Some(b) = self.doc.brushes.get(j) {
-                let s = [b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]];
-                ui::text(
-                    &format!("SELECTED {:?}  {:.2} x {:.2} x {:.2}", b.kind, s[0], s[2], s[1]).to_uppercase(),
-                    x + 14.0,
-                    ty,
-                    16.0,
-                    th::EMBER,
-                );
-            }
-        }
-        if let Some((j, _)) = self.tree {
-            if let Some(t) = self.doc.trees.get(j) {
-                let kind = if t.pine { "PINE" } else { "BROADLEAF" };
-                let line = format!("SELECTED {kind}  {:.1} m TALL  {:.1} m CROWN", t.height, t.radius);
-                ui::text(&line, x + 14.0, ty, 16.0, th::EMBER);
-            }
-        }
+        let mouse = self.cursor();
+        let (ph, _) = self.panel(false, mouse);
+        ui::plate(16.0, 16.0, PANEL.0, ph, th::GLASS, th::STROKE);
+        self.panel(true, mouse);
         // Keys along the bottom.
         let help = match (self.tool, picked) {
             _ if self.tree.is_some() => {
                 "ARROWS MOVE   PGUP/PGDN RAISE   SHIFT+UP/DOWN TALLER   SHIFT+LEFT/RIGHT CROWN   R PINE   T COLOUR   CTRL+D COPY   DEL REMOVE"
             }
-            (_, true) => "ARROWS MOVE   PGUP/PGDN RAISE   SHIFT+ARROWS SIZE   R TURN   T TINT   CTRL+D COPY   DEL REMOVE   ESC DESELECT",
-            (Tool::Select, false) => "CLICK A BLOCK OR A TREE TO SELECT IT",
+            (_, true) => "DRAG OR ARROWS MOVE   PGUP/PGDN RAISE   SHIFT+ARROWS SIZE   R TURN   T TINT   CTRL+D COPY   DEL REMOVE   ESC DESELECT",
+            (Tool::Select, false) => "CLICK A BLOCK OR A TREE TO SELECT IT   DRAG IT TO MOVE IT",
             (Tool::Place, false) => "CLICK TO PLACE   TAB KIND   R TURN   T TINT",
             (Tool::Objectives, false) => "CLICK THE GROUND TO MOVE IT   TAB CHOOSE",
             (Tool::Terrain, false) if Mode::ALL[self.mode] == Mode::Ramp => {
                 "DRAG FROM THE FOOT OF THE RAMP TO ITS TOP   TAB MODE   [ ] WIDTH   ESC CANCELS"
             }
-            (Tool::Terrain, false) => "HOLD AND DRAG ON THE GROUND   TAB MODE   [ ] SIZE   - = STRENGTH   ESC TAKES BACK A STROKE",
+            (Tool::Terrain, false) => {
+                "LEFT DRAG SCULPTS   RIGHT DRAG (OR SHIFT) THE OPPOSITE   TAB MODE   CTRL+WHEEL SIZE   ALT+WHEEL STRENGTH   ESC TAKES IT BACK"
+            }
         };
         mq::draw_rectangle(0.0, sh - 64.0, sw, 64.0, th::GLASS);
         ui::text(help, 16.0, sh - 38.0, 17.0, th::WHITE);
         ui::text(
-            "RIGHT MOUSE LOOK   WASD+Q/E FLY   WHEEL SPEED   L LIBRARY   CTRL+Z/Y UNDO   CTRL+S SAVE (+SHIFT AS)   F5 PLAY   ESC MAPS",
+            if self.tool == Tool::Terrain {
+                "MIDDLE MOUSE LOOK   WASD+Q/E FLY   WHEEL SPEED   L LIBRARY   CTRL+Z/Y UNDO   CTRL+S SAVE (+SHIFT AS)   F5 PLAY   ESC MAPS"
+            } else {
+                "RIGHT OR MIDDLE MOUSE LOOK   WASD+Q/E FLY   WHEEL SPEED   L LIBRARY   CTRL+Z/Y UNDO   CTRL+S SAVE (+SHIFT AS)   F5 PLAY   ESC MAPS"
+            },
             16.0,
             sh - 14.0,
             17.0,
@@ -1546,6 +1913,20 @@ fn outline(m: &mut Mesh, min: Vec3, max: Vec3, col: Col) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_right_button_undoes_what_the_left_does() {
+        assert_eq!(opposite(Mode::Raise), Some(Mode::Lower));
+        assert_eq!(opposite(Mode::Lower), Some(Mode::Raise));
+        assert_eq!(opposite(Mode::Smooth), Some(Mode::Noise));
+        assert_eq!(opposite(Mode::Noise), Some(Mode::Smooth));
+        assert_eq!(opposite(Mode::Ramp), None);
+        // Every mode has a chip, in the same order.
+        assert_eq!(MODE_CHIPS.len(), Mode::ALL.len());
+        for (chip, m) in MODE_CHIPS.iter().zip(Mode::ALL) {
+            assert!(m.name().starts_with(&chip[..3]), "{chip} vs {}", m.name());
+        }
+    }
 
     #[test]
     fn a_click_on_a_tree_or_its_turned_copy_picks_it() {
