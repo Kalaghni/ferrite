@@ -11,8 +11,9 @@ What each FERRITE release added, newest first. The full notes for each release a
 - **Spawns.** Each team deploys across zones along its own stretch of the front line, out of the enemy's sight and away from where teammates just came in, so there is no single doorway to watch.
 - **v0.15.1.** Canopy remixes show their fig again (its trunks, roots and walkways were invisible walls), posts show on custom maps, and trees can be selected, moved, resized and removed in FORGE.
 - **v0.15.2.** Friendlier map maker controls: the right mouse button lowers (the opposite of the brush), middle mouse looks, a clickable panel with mode chips and size and strength buttons, Ctrl/Alt+wheel for the brush, drag-to-move and a hover outline in SELECT.
+- **v0.15.3.** Public servers: JOIN SERVER lists NA1 and NA2 (and any others on the list at playferrite.com) with their map, players and your ping, and dedicated servers answer that status query on their game port.
 
-No network protocol change (still 21). The new spawns come with the server. Custom maps can be played against bots on your own machine, and other players cannot join one yet. See the [v0.15.0](docs/release-notes/v0.15.0.md), [v0.15.1](docs/release-notes/v0.15.1.md) and [v0.15.2](docs/release-notes/v0.15.2.md) release notes.
+No network protocol change (still 21). The new spawns come with the server. Custom maps can be played against bots on your own machine, and other players cannot join one yet. See the [v0.15.0](docs/release-notes/v0.15.0.md), [v0.15.1](docs/release-notes/v0.15.1.md), [v0.15.2](docs/release-notes/v0.15.2.md) and [v0.15.3](docs/release-notes/v0.15.3.md) release notes.
 
 ## v0.14
 

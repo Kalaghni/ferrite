@@ -1,4 +1,4 @@
-# FERRITE 0.15.2
+# FERRITE 0.15.3
 
 ![The FERRITE launcher: host, join or change settings](docs/launcher.png)
 
@@ -20,8 +20,8 @@ Either way the game keeps itself current: the launcher checks this repository's 
 **macOS:** the build is not signed with an Apple Developer ID, so a copy downloaded in a browser is blocked by Gatekeeper. The simplest way round it is to download from Terminal, which does not get flagged:
 
 ```sh
-curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.15.2/ferrite-v0.15.2-macos-universal.tar.gz | tar xz
-./ferrite-v0.15.2-macos-universal/ferrite
+curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.15.3/ferrite-v0.15.3-macos-universal.tar.gz | tar xz
+./ferrite-v0.15.3-macos-universal/ferrite
 ```
 
 If you already downloaded it in a browser, run `xattr -dr com.apple.quarantine .` in the unpacked folder once.
@@ -34,7 +34,7 @@ Needs stable Rust. No setup - geometry and sound effects are generated in code, 
 cargo run --release -p ferrite
 ```
 
-The game opens on a home screen. **Host and play** starts a match inside the game (24 fighters, bots fill every empty slot). **Join a server** lists games found on your network - click one to join - and also takes an address and a port (default 27500) and remembers servers you have joined. Click the window to deploy.
+The game opens on a home screen. **Host and play** starts a match inside the game (24 fighters, bots fill every empty slot). **Join a server** lists the public servers (see [playferrite.com](https://playferrite.com)) and games found on your network - click one to join - and also takes an address and a port (default 27500) and remembers servers you have joined. Click the window to deploy.
 
 Skip the home screen, or run a dedicated server:
 
@@ -139,7 +139,7 @@ claude mcp add ferrite-forge -- /path/to/ferrite-forge-mcp
 - **Bursts.** Each shot heats the barrel and widens the cone; it cools in a fraction of a second off the trigger. The crosshair shows the real spread.
 - **Sidearms.** Every class carries a handgun: the 12-round pistol, a six-shot revolver, an automatic machine pistol, or a two-shot sawn-off. Drawing it takes a quarter of a second - far quicker than a reload - and you move slightly faster with it out.
 - **Sights.** Press T to cycle the sight on the weapon in hand: iron sights, red dot, holo, 2.5x optic, and 4x / 8x scopes on the Longrifle. Each has its own model, reticle and zoom; your choice is remembered per weapon. Protected front posts and clear rear notches improve the iron sights, while red dots, holographic sights and scopes have open sight windows and fitted rail mounts.
-- **Launcher.** HOST & PLAY (players per team, map, rotation, bot difficulty), JOIN SERVER (games found on your network, saved servers, or an address), and SETTINGS (sound output device, music on/off, music and effects volume, mouse sensitivity). Choosing an output device works on Windows; Linux and macOS always use the system default. It relies on a small patch to the audio library, kept in `vendor/quad-snd`.
+- **Launcher.** HOST & PLAY (players per team, map, rotation, bot difficulty), JOIN SERVER (public servers, games found on your network, saved servers, or an address), and SETTINGS (sound output device, music on/off, music and effects volume, mouse sensitivity). Choosing an output device works on Windows; Linux and macOS always use the system default. It relies on a small patch to the audio library, kept in `vendor/quad-snd`.
 - **Pause overlay.** ESC brings up match control over the live game: resume, loadout, settings (sensitivity, effects and music volume), change team, leave. Beside it are the score, the front line, your squad and the controls.
 - **Music.** Songs rotate on the launcher with a NOW PLAYING plate and a skip button; the lobby has its own track. MUSIC IN A MATCH (off by default) keeps the rotation going, quieter, while you play. Your own `.ogg` or `.wav` files in a `music` folder beside the executable join the rotation. To build a song in, add the `.ogg` to `crates/client/assets/` and a line to `SONGS` in `crates/client/src/audio.rs`.
 - **Round by round.** The scoreboard (TAB, and at the end of every round) lists the rounds played so far - map, winner, tickets, length and top scorer - with the series score, and shows each player's record on that server next to this round's figures: kills, deaths, and rounds won out of rounds played. A server keeps its players' records in `ferrite-stats.txt` beside the executable (`--stats FILE` or `--stats off` on the dedicated server), so they survive a restart. Records go by callsign.

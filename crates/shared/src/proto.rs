@@ -27,6 +27,23 @@ pub const DISCOVERY_GROUP: [u8; 4] = [239, 255, 70, 82];
 pub const DISCOVERY_QUERY: &[u8] = b"FERRITE?";
 pub const DISCOVERY_REPLY: &[u8] = b"FERRITE!";
 
+/// Status query a client sends straight to a server's game port, for the
+/// public server list: the same `DISCOVERY_REPLY` comes back. The query is
+/// padded to `STATUS_QUERY_LEN`, more than any reply, so a forged source
+/// address can never be sent more than it sent.
+pub const STATUS_QUERY: &[u8] = b"FERRITE?STATUS";
+pub const STATUS_QUERY_LEN: usize = 96;
+
+pub fn status_query() -> Vec<u8> {
+    let mut v = STATUS_QUERY.to_vec();
+    v.resize(STATUS_QUERY_LEN, 0);
+    v
+}
+
+pub fn is_status_query(b: &[u8]) -> bool {
+    b.len() == STATUS_QUERY_LEN && b.starts_with(STATUS_QUERY)
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ServerInfo {
     pub proto: u32,

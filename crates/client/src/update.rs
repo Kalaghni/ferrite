@@ -187,6 +187,15 @@ pub fn latest_tag() -> Option<String> {
     tag_from_headers(&String::from_utf8_lossy(&out.stdout))
 }
 
+/// Where the public server list is published.
+pub const PUBLIC_LIST: &str = "https://playferrite.com/servers.json";
+
+/// The public server list as published, if the site answers.
+pub fn public_list() -> Option<String> {
+    let out = curl().args(["-fsSL", "--max-time", "6", "--max-filesize", "65536"]).arg(PUBLIC_LIST).output().ok()?;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 /// The files of release `tag` and their sizes, from GitHub's release API.
 fn release_assets(tag: &str) -> Result<Vec<verify::Asset>, String> {
     let out = curl()

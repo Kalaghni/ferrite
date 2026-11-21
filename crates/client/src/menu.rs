@@ -230,6 +230,7 @@ pub struct Menu {
     pub shot: Option<String>,
     frames: u32,
     lan: Lan,
+    public: Public,
 }
 
 fn cfg_path() -> PathBuf {
@@ -301,6 +302,143 @@ impl Lan {
     }
 }
 
+/// Public servers anyone can join, used when the published list cannot be
+/// fetched.
+const PUBLIC: [&str; 2] = ["na1.playferrite.com:27500", "na2.playferrite.com:27500"];
+/// Most public servers listed.
+const MAX_PUBLIC: usize = 8;
+
+/// "host:port" entries from the published list: `{"servers":[{"address":
+/// "host:port"}, ...]}`. Anything that does not look like an address is
+/// left out.
+fn parse_public(json: &str) -> Vec<String> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else { return Vec::new() };
+    let Some(list) = v.get("servers").and_then(|s| s.as_array()) else { return Vec::new() };
+    let mut out: Vec<String> = Vec::new();
+    for s in list {
+        let Some(a) = s.get("address").and_then(|a| a.as_str()) else { continue };
+        let a = a.trim().to_ascii_lowercase();
+        let ok = !a.is_empty() && a.len() <= 64 && a.chars().all(|c| c.is_ascii_alphanumeric() || ".-:".contains(c));
+        let a = if a.contains(':') { a } else { format!("{a}:{DEFAULT_PORT}") };
+        if ok && !out.contains(&a) && out.len() < MAX_PUBLIC {
+            out.push(a);
+        }
+    }
+    out
+}
+
+/// One public server and what it last said.
+struct PubRow {
+    addr: String,
+    ip: Option<std::net::SocketAddr>,
+    info: Option<ServerInfo>,
+    /// When it last answered, and when it was last asked.
+    seen: f64,
+    asked: f64,
+    /// Round trip of the last answer, in milliseconds.
+    ping: u32,
+    /// It answered with a version this one cannot play with.
+    other_version: bool,
+    /// It answered, but without its status (a server older than the list).
+    no_status: bool,
+}
+
+impl PubRow {
+    fn online(&self, now: f64) -> bool {
+        (self.info.is_some() || self.no_status) && now - self.seen < 6.0
+    }
+}
+
+/// The public server list: fetched from the website (or the built-in one)
+/// and resolved on a thread, then each server is asked for its status on
+/// its game port every couple of seconds.
+struct Public {
+    sock: Option<std::net::UdpSocket>,
+    rows: Vec<PubRow>,
+    resolved: std::sync::mpsc::Receiver<Vec<(String, Option<std::net::SocketAddr>)>>,
+    next_query: f64,
+}
+
+impl Public {
+    fn new() -> Public {
+        let (tx, resolved) = std::sync::mpsc::channel();
+        let _ = std::thread::Builder::new().name("public servers".into()).spawn(move || {
+            use std::net::ToSocketAddrs;
+            let resolve = |list: &[String]| -> Vec<(String, Option<std::net::SocketAddr>)> {
+                list.iter()
+                    .map(|a| {
+                        let ip = a.to_socket_addrs().ok().and_then(|mut it| {
+                            let all: Vec<_> = it.by_ref().collect();
+                            all.iter().find(|s| s.is_ipv4()).or(all.first()).copied()
+                        });
+                        (a.clone(), ip)
+                    })
+                    .collect()
+            };
+            let built_in: Vec<String> = PUBLIC.iter().map(|s| s.to_string()).collect();
+            let _ = tx.send(resolve(&built_in));
+            let published = update::public_list().map(|j| parse_public(&j)).unwrap_or_default();
+            if !published.is_empty() && published != built_in {
+                let _ = tx.send(resolve(&published));
+            }
+        });
+        let sock = std::net::UdpSocket::bind(("0.0.0.0", 0)).ok();
+        if let Some(s) = &sock {
+            let _ = s.set_nonblocking(true);
+        }
+        Public { sock, rows: Vec::new(), resolved, next_query: 0.0 }
+    }
+
+    fn online(&self, now: f64) -> usize {
+        self.rows.iter().filter(|r| r.online(now)).count()
+    }
+
+    fn poll(&mut self, now: f64) {
+        while let Ok(list) = self.resolved.try_recv() {
+            let old = std::mem::take(&mut self.rows);
+            self.rows = list
+                .into_iter()
+                .map(|(addr, ip)| match old.iter().find(|r| r.addr == addr) {
+                    Some(r) => PubRow { addr, ip, info: r.info.clone(), ..*r },
+                    None => PubRow { addr, ip, info: None, seen: -100.0, asked: -100.0, ping: 0, other_version: false, no_status: false },
+                })
+                .collect();
+            self.next_query = 0.0;
+        }
+        let Some(s) = &self.sock else { return };
+        if now >= self.next_query {
+            self.next_query = now + 2.0;
+            let q = ferrite_shared::proto::status_query();
+            for r in &mut self.rows {
+                if let Some(ip) = r.ip {
+                    let _ = s.send_to(&q, ip);
+                    r.asked = now;
+                }
+            }
+        }
+        let mut buf = [0u8; 512];
+        while let Ok((n, from)) = s.recv_from(&mut buf) {
+            let Some(r) = self.rows.iter_mut().find(|r| r.ip == Some(from)) else { continue };
+            r.seen = now;
+            r.ping = ((now - r.asked).max(0.0) * 1000.0) as u32;
+            match decode_info(&buf[..n]) {
+                Some(i) => {
+                    r.other_version = i.proto != PROTO;
+                    r.no_status = false;
+                    r.info = Some(i);
+                }
+                // A server from before the list says it does not know the
+                // query; it may still be one we can join.
+                None => {
+                    r.other_version = false;
+                    r.no_status = true;
+                    r.info = None;
+                }
+            }
+        }
+    }
+}
+
 fn lan_ip() -> Option<String> {
     let s = std::net::UdpSocket::bind(("0.0.0.0", 0)).ok()?;
     s.connect(("192.0.2.1", 9)).ok()?;
@@ -352,6 +490,41 @@ fn button(x: f32, y: f32, w: f32, h: f32, label: &str, solid: Option<mq::Color>,
         }
     }
     over && clicked()
+}
+
+/// A server in the JOIN list: its name, a line about it, and a JOIN button
+/// when it can be joined. True when it is clicked to join.
+fn server_row(x: f32, y: f32, w: f32, name: &str, detail: &str, joinable: bool, warn: bool) -> bool {
+    let over = hit(x, y, w, 40.0);
+    ui::plate(
+        x,
+        y,
+        w,
+        40.0,
+        if over { th::PANEL_RAISED } else { th::GLASS_STRONG },
+        if over && joinable { th::COBALT } else { th::STROKE },
+    );
+    let name: String = name.chars().filter(|c| !c.is_control()).take(22).collect();
+    ui::text(&name, x + 12.0, y + 27.0, 20.0, if joinable { th::WHITE } else { th::MUTED });
+    ui::text(detail, x + 216.0, y + 26.0, 14.0, if warn { th::DANGER } else { th::MUTED });
+    joinable && (button(x + w - 86.0, y + 5.0, 80.0, 30.0, "JOIN", Some(th::COBALT), 18.0) || (over && clicked()))
+}
+
+/// Map, mode, players and state, for a server list row.
+fn info_line(i: &ServerInfo) -> String {
+    let state = match i.phase {
+        2 => "in lobby",
+        1 => "round over",
+        _ => "in game",
+    };
+    format!(
+        "{}   {}   {}/{} players   {}",
+        MAPS[i.map as usize % MAPS.len()].name,
+        MODES[i.mode as usize % MODES.len()].key.to_uppercase(),
+        i.humans,
+        i.slots,
+        state
+    )
 }
 
 /// One of the big home page buttons: a title, a line under it, a chevron.
@@ -439,6 +612,7 @@ impl Menu {
             shot: None,
             frames: 0,
             lan: Lan::new(),
+            public: Public::new(),
         };
         if let Ok(text) = std::fs::read_to_string(cfg_path()) {
             for line in text.lines() {
@@ -1458,6 +1632,7 @@ impl Menu {
             self.typing(now);
             self.take_dropped();
             self.lan.poll(now);
+            self.public.poll(now);
             self.updater.poll();
             if matches!(self.updater.state, Up::Installed(_) | Up::RolledBack(_)) {
                 // The new (or restored) version is in place: start it.
@@ -1504,10 +1679,12 @@ impl Menu {
                         y += 44.0;
                     }
                     let found = self.lan.found.len();
-                    let join_sub = match found {
-                        0 => "BROWSE OR CONNECT".to_string(),
-                        1 => "1 GAME ON YOUR NETWORK".to_string(),
-                        n => format!("{n} GAMES ON YOUR NETWORK"),
+                    let join_sub = match (found, self.public.online(now)) {
+                        (0, 0) => "BROWSE OR CONNECT".to_string(),
+                        (0, 1) => "1 PUBLIC SERVER ONLINE".to_string(),
+                        (0, n) => format!("{n} PUBLIC SERVERS ONLINE"),
+                        (1, _) => "1 GAME ON YOUR NETWORK".to_string(),
+                        (n, _) => format!("{n} GAMES ON YOUR NETWORK"),
                     };
                     let bh = if sh < 800.0 { 58.0 } else { 70.0 };
                     if big_button(x, y, w, bh, "HOST & PLAY", "CREATE A MATCH  -  BOTS FILL THE EMPTY SLOTS", true) {
@@ -1570,45 +1747,44 @@ impl Menu {
                         out = self.join_addr().map(Choice::Join);
                     }
                     let mut ry = y + 58.0;
+                    let dots = ["", ".", "..", "..."][(now * 2.0) as usize % 4];
+                    // Public servers, from the list on the website.
+                    if !self.public.rows.is_empty() {
+                        let head = if self.public.online(now) == 0 {
+                            format!("PUBLIC SERVERS  -  contacting{dots}")
+                        } else {
+                            "PUBLIC SERVERS".to_string()
+                        };
+                        ui::text(&head, x, ry + 14.0, 18.0, th::MUTED);
+                        ry += 24.0;
+                        let rows = self.public.rows.len().min(if sh < 800.0 { 2 } else { 4 });
+                        for r in self.public.rows.iter().take(rows) {
+                            let host = r.addr.strip_suffix(&format!(":{DEFAULT_PORT}")).unwrap_or(&r.addr);
+                            let joined = match &r.info {
+                                Some(i) if r.online(now) && !r.other_version => {
+                                    server_row(x, ry, w, &i.name, &format!("{}   {} ms", info_line(i), r.ping), true, false)
+                                }
+                                Some(_) if r.online(now) => server_row(x, ry, w, host, "different game version", false, true),
+                                None if r.online(now) => server_row(x, ry, w, host, &format!("online   {} ms", r.ping), true, false),
+                                _ if r.seen < 0.0 => server_row(x, ry, w, host, &format!("contacting{dots}"), false, false),
+                                _ => server_row(x, ry, w, host, "not answering", false, false),
+                            };
+                            if joined {
+                                out = Some(Choice::Join(r.addr.clone()));
+                            }
+                            ry += 46.0;
+                        }
+                        ry += 8.0;
+                    }
                     // Games answering on the local network.
                     let lan_rows = self.lan.found.len().min(if sh < 800.0 { 3 } else { 4 });
-                    let dots = ["", ".", "..", "..."][(now * 2.0) as usize % 4];
                     let head = if lan_rows == 0 { format!("ON YOUR NETWORK  -  searching{dots}") } else { "ON YOUR NETWORK".to_string() };
                     ui::text(&head, x, ry + 14.0, 18.0, th::MUTED);
                     ry += 24.0;
                     for f in self.lan.found.iter().take(lan_rows) {
-                        let i = &f.info;
-                        let ok = i.proto == PROTO;
-                        let over = hit(x, ry, w, 40.0);
-                        ui::plate(
-                            x,
-                            ry,
-                            w,
-                            40.0,
-                            if over { th::PANEL_RAISED } else { th::GLASS_STRONG },
-                            if over { th::COBALT } else { th::STROKE },
-                        );
-                        let name: String = i.name.chars().filter(|c| !c.is_control()).take(22).collect();
-                        ui::text(&name, x + 12.0, ry + 27.0, 20.0, th::WHITE);
-                        let state = match i.phase {
-                            2 => "in lobby",
-                            1 => "round over",
-                            _ => "in game",
-                        };
-                        let detail = if ok {
-                            format!(
-                                "{}   {}   {}/{} players   {}",
-                                MAPS[i.map as usize % MAPS.len()].name,
-                                MODES[i.mode as usize % MODES.len()].key.to_uppercase(),
-                                i.humans,
-                                i.slots,
-                                state
-                            )
-                        } else {
-                            "different game version".to_string()
-                        };
-                        ui::text(&detail, x + 216.0, ry + 26.0, 14.0, if ok { th::MUTED } else { th::DANGER });
-                        if ok && (button(x + w - 86.0, ry + 5.0, 80.0, 30.0, "JOIN", Some(th::COBALT), 18.0) || (over && clicked())) {
+                        let ok = f.info.proto == PROTO;
+                        let detail = if ok { info_line(&f.info) } else { "different game version".to_string() };
+                        if server_row(x, ry, w, &f.info.name, &detail, ok, !ok) {
                             out = Some(Choice::Join(f.addr.clone()));
                         }
                         ry += 46.0;
@@ -2300,6 +2476,7 @@ impl Menu {
             // (a picture waits for the music, so it shows what is playing)
             if self.frames >= 20
                 && self.shot.is_some()
+                && (self.page != 1 || self.public.online(now) > 0 || self.frames > 600)
                 && (!music.available() || !self.music_on || music.now_playing().is_some() || self.frames > 900)
             {
                 if let Some(p) = &self.shot {
@@ -2324,6 +2501,35 @@ impl Menu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_public_list_keeps_only_addresses() {
+        let j = r#"{"servers":[{"address":"NA1.playferrite.com:27500"},{"address":"eu1.example.org"},
+            {"address":"bad host; rm"},{"address":"na1.playferrite.com:27500"},{"nope":1}]}"#;
+        assert_eq!(parse_public(j), vec!["na1.playferrite.com:27500", "eu1.example.org:27500"]);
+        assert!(parse_public("not json").is_empty());
+        assert!(parse_public("{}").is_empty());
+    }
+
+    #[test]
+    fn a_status_reply_is_never_bigger_than_the_query() {
+        use ferrite_shared::proto::{encode_info, is_status_query, status_query, STATUS_QUERY_LEN};
+        let q = status_query();
+        assert!(is_status_query(&q));
+        assert!(!is_status_query(&q[..STATUS_QUERY_LEN - 1]));
+        let info = ServerInfo {
+            proto: PROTO,
+            id: u32::MAX,
+            port: u16::MAX,
+            name: "W".repeat(40),
+            map: 255,
+            humans: 255,
+            slots: 255,
+            phase: 255,
+            mode: 255,
+        };
+        assert!(encode_info(&info).len() < STATUS_QUERY_LEN);
+    }
 
     #[test]
     fn standard_issue_is_free_and_the_rest_must_be_bought() {

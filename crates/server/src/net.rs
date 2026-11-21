@@ -31,12 +31,21 @@ pub(crate) struct Guard {
     start: Instant,
     seen: HashMap<SocketAddr, u16>,
     rejects: u16,
+    /// Status replies sent this tick, to anyone.
+    statuses: u16,
     issued: u64,
 }
 
 impl Guard {
     pub(crate) fn new() -> Guard {
-        Guard { keys: std::collections::hash_map::RandomState::new(), start: Instant::now(), seen: HashMap::new(), rejects: 0, issued: 0 }
+        Guard {
+            keys: std::collections::hash_map::RandomState::new(),
+            start: Instant::now(),
+            seen: HashMap::new(),
+            rejects: 0,
+            statuses: 0,
+            issued: 0,
+        }
     }
     fn bucket(&self) -> u64 {
         self.start.elapsed().as_secs() / COOKIE_BUCKET.as_secs()
@@ -68,6 +77,7 @@ impl Guard {
     fn new_tick(&mut self) {
         self.seen.clear();
         self.rejects = 0;
+        self.statuses = 0;
     }
 }
 
@@ -88,6 +98,24 @@ struct Conn {
     chat_budget: f32,
     chat_at: Instant,
     icon_at: Instant,
+}
+
+/// Status replies the server sends in one tick, to everyone together.
+const STATUS_PER_TICK: u16 = 32;
+
+/// What the server list shows for this server.
+fn info(game: &Game, id: u32, port: u16) -> ServerInfo {
+    ServerInfo {
+        proto: PROTO,
+        id,
+        port,
+        name: game.cfg.name.clone(),
+        map: game.world.map,
+        humans: game.humans() as u8,
+        slots: game.players.len() as u8,
+        phase: game.phase,
+        mode: game.mode,
+    }
 }
 
 /// The roster, cut into datagrams.
@@ -217,7 +245,16 @@ fn serve(mut game: Game, sock: UdpSocket, stop: Arc<AtomicBool>) {
             match sock.recv_from(&mut buf) {
                 Ok((n, addr)) => {
                     pkts_in += 1;
-                    if guard.admit(addr) {
+                    if !guard.admit(addr) {
+                        continue;
+                    }
+                    // The public server list asking how we are.
+                    if is_status_query(&buf[..n]) {
+                        if guard.statuses < STATUS_PER_TICK {
+                            guard.statuses += 1;
+                            let _ = sock.send_to(&encode_info(&info(&game, instance, game_port)), addr);
+                        }
+                    } else {
                         handle(&mut game, &mut conns, &sock, addr, &buf[..n], log, &mut guard);
                     }
                 }
@@ -230,18 +267,7 @@ fn serve(mut game: Game, sock: UdpSocket, stop: Arc<AtomicBool>) {
             let mut q = [0u8; 64];
             while let Ok((n, from)) = d.recv_from(&mut q) {
                 if &q[..n] == DISCOVERY_QUERY {
-                    let info = ServerInfo {
-                        proto: PROTO,
-                        id: instance,
-                        port: game_port,
-                        name: game.cfg.name.clone(),
-                        map: game.world.map,
-                        humans: game.humans() as u8,
-                        slots: game.players.len() as u8,
-                        phase: game.phase,
-                        mode: game.mode,
-                    };
-                    let _ = d.send_to(&encode_info(&info), from);
+                    let _ = d.send_to(&encode_info(&info(&game, instance, game_port)), from);
                 }
             }
         }

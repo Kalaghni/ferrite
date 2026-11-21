@@ -1,0 +1,14 @@
+{
+  "servers": [
+    {
+      "name": "playferrite NA1",
+      "region": "North America",
+      "address": "na1.playferrite.com:27500"
+    },
+    {
+      "name": "playferrite NA2",
+      "region": "North America",
+      "address": "na2.playferrite.com:27500"
+    }
+  ]
+}

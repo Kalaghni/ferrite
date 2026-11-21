@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FERRITE - twelve against twelve, one front line</title>
+<meta name="description" content="FERRITE is a free, open-source low-poly multiplayer FPS: EMBER and COBALT fight twelve a side over one front line. Windows, Linux and macOS.">
+<meta name="theme-color" content="#0c1020">
+<link rel="canonical" href="https://playferrite.com/">
+<link rel="icon" type="image/png" href="assets/mark.png">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://playferrite.com/">
+<meta property="og:title" content="FERRITE - twelve against twelve, one front line">
+<meta property="og:description" content="A free, open-source low-poly multiplayer FPS. Public servers, bots in every empty seat, and a map maker built in.">
+<meta property="og:image" content="https://playferrite.com/assets/hero-slag-cathedral.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+@font-face{font-family:"Quantico";src:url(assets/quantico-400.ttf) format("truetype");font-weight:400;font-style:normal;font-display:swap}
+@font-face{font-family:"Quantico";src:url(assets/quantico-700.ttf) format("truetype");font-weight:700;font-style:normal;font-display:swap}
+body{margin:0;background:#0c1020;color:#f6f3fa;font-family:"Quantico","Bahnschrift","Arial Narrow",sans-serif}
+html{scroll-behavior:smooth}
+a{color:#b7dcff}a:hover{color:#f6f3fa}
+.pf-cta{transition:background-color 120ms,transform 120ms}
+.pf-cta:hover{background-color:#ff8a66 !important;transform:translateY(-1px)}
+.pf-glass{transition:border-color 120ms}
+.pf-glass:hover,.pf-glass:focus-visible{border-color:#69adff !important}
+.pf-cta:focus-visible,.pf-glass:focus-visible,.pf-nav:focus-visible{outline:2px solid #69adff;outline-offset:3px}
+.pf-nav{text-decoration:none}
+.pf-nav:hover{color:#f6f3fa !important}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}.pf-cta,.pf-glass{transition:none}.pf-cta:hover{transform:none}}
+.pf-mono{font-family:ui-monospace,'Cascadia Mono',Consolas,monospace}
+@media (max-width: 560px){.pf-hero{min-height:620px !important}}
+</style>
+</head>
+<body>
+<div style="font-family: 'Quantico', 'Bahnschrift', 'Arial Narrow', sans-serif; background: #0c1020; color: #f6f3fa; min-width: 0; overflow-x: hidden">
+
+<!-- NAV -->
+<header style="position: relative; z-index: 2; background: rgba(12, 16, 32, 0.88); border-bottom: 1px solid rgba(180, 194, 225, 0.38)">
+<nav aria-label="Main" style="max-width: 1280px; margin: 0 auto; padding: 14px 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 32px">
+<a href="#top" aria-label="FERRITE home" style="display: block; line-height: 0">
+<img src="assets/logo.png" alt="FERRITE" style="width: 170px; height: auto; display: block">
+</a>
+<div style="display: flex; flex-wrap: wrap; gap: 4px 24px; flex: 1 1 360px; font-size: 13px; letter-spacing: 0.08em">
+<a class="pf-nav" href="#front" style="color: #b5b6ce; padding: 12px 0">CONQUEST</a>
+<a class="pf-nav" href="#modes" style="color: #b5b6ce; padding: 12px 0">MODES</a>
+<a class="pf-nav" href="#maps" style="color: #b5b6ce; padding: 12px 0">MAPS</a>
+<a class="pf-nav" href="#arsenal" style="color: #b5b6ce; padding: 12px 0">ARSENAL</a>
+<a class="pf-nav" href="#server" style="color: #b5b6ce; padding: 12px 0">SERVERS</a>
+<a class="pf-nav" href="https://github.com/Kalaghni/ferrite" style="color: #b5b6ce; padding: 12px 0">GITHUB</a>
+</div>
+<a class="pf-cta" href="#download" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 22px; border-radius: 9px; background: #ff754c; color: #0c1020; font-weight: 700; font-size: 16px; letter-spacing: 0.06em; text-decoration: none">DOWNLOAD</a>
+</nav>
+</header>
+
+<!-- HERO -->
+<section id="top" class="pf-hero" style="position: relative; min-height: 760px; display: flex; align-items: flex-end; overflow: hidden">
+<img src="assets/hero-slag-cathedral.jpg" alt="EMBER soldiers advancing on the East Stockyard of Slag Cathedral as the volcano erupts" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 70% 50%">
+<div aria-hidden="true" style="position: absolute; inset: 0; background: linear-gradient(90deg, rgba(12, 16, 32, 0.92) 0%, rgba(12, 16, 32, 0.7) 38%, rgba(12, 16, 32, 0) 68%), linear-gradient(0deg, #0c1020 0%, rgba(12, 16, 32, 0) 30%)"></div>
+<div style="position: relative; width: 100%; max-width: 1280px; margin: 0 auto; padding: 120px 24px 72px; box-sizing: border-box">
+<div style="max-width: 600px; display: flex; flex-direction: column; gap: 20px">
+<p style="margin: 0; font-size: 13px; letter-spacing: 0.08em; color: #ffae79">FREE / OPEN SOURCE / WINDOWS - LINUX - MACOS</p>
+<h1 style="margin: 0; font-size: clamp(40px, 9vw, 64px); line-height: 1.02; font-weight: 700">Twelve against twelve. One front line.</h1>
+<p style="margin: 0; font-size: 19px; line-height: 1.55; color: #d8d8e8; max-width: 540px">An original low-poly multiplayer FPS. EMBER and COBALT fight over five control points strung across a valley, and only the front can be contested. The battle masses, breaks and moves.</p>
+<div style="display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px">
+<a class="pf-cta" data-asset="windows-x64-setup.exe" href="https://github.com/Kalaghni/ferrite/releases/download/v0.15.3/ferrite-v0.15.3-windows-x64-setup.exe" style="display: flex; flex-direction: column; justify-content: center; gap: 4px; min-width: min(260px, 100%); min-height: 76px; padding: 0 24px; box-sizing: border-box; border-radius: 9px; background: #ff754c; color: #0c1020; text-decoration: none">
+<span style="font-size: 24px; font-weight: 700; letter-spacing: 0.02em">DOWNLOAD</span>
+<span data-ver="{v} - WINDOWS INSTALLER" style="font-size: 12px; letter-spacing: 0.08em">v0.15.3 - WINDOWS INSTALLER</span>
+</a>
+<a class="pf-glass" href="#download" style="display: flex; flex-direction: column; justify-content: center; gap: 4px; min-width: min(240px, 100%); min-height: 76px; padding: 0 24px; box-sizing: border-box; border-radius: 9px; background: rgba(12, 16, 32, 0.88); border: 2px solid rgba(180, 194, 225, 0.38); color: #f6f3fa; text-decoration: none">
+<span style="font-size: 24px; font-weight: 700; letter-spacing: 0.02em">ALL PLATFORMS</span>
+<span style="font-size: 12px; letter-spacing: 0.08em; color: #b5b6ce">LINUX - MACOS - PORTABLE</span>
+</a>
+</div>
+<div style="display: inline-flex; align-self: flex-start; align-items: center; gap: 10px; margin-top: 12px; padding: 10px 16px; border-radius: 5px; background: rgba(12, 16, 32, 0.78); border: 1px solid rgba(180, 194, 225, 0.38); font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 13px; letter-spacing: 0.04em; color: #b5b6ce">
+<span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 50%; background: #81e0ba; flex: none"></span>
+<span>24 FIGHTERS / 8 MAPS / 4 MODES / PUBLIC SERVERS / MAP MAKER</span>
+</div>
+</div>
+</div>
+</section>
+
+<!-- CONQUEST -->
+<section id="front" style="max-width: 1280px; margin: 0 auto; padding: 96px 24px; box-sizing: border-box">
+<div style="display: flex; flex-wrap: wrap; gap: 48px; align-items: center">
+<div style="flex: 1 1 440px; min-width: 0; display: flex; flex-direction: column; gap: 16px">
+<p style="margin: 0; font-size: 13px; letter-spacing: 0.08em; color: #ffae79">HOW CONQUEST WORKS</p>
+<h2 style="margin: 0; font-size: clamp(32px, 7vw, 44px); line-height: 1.08; font-weight: 700">The fight always has a shape.</h2>
+<p style="margin: 0; font-size: 17px; line-height: 1.6; color: #b5b6ce">Five points, A to E, run from one base to the other. You can only push a point that touches ground you already hold, so both sides always know where the fight is. Flanking means going round it, not ignoring it.</p>
+<div role="img" aria-label="Front line: EMBER holds A and B, C is contested, COBALT holds D and E" style="display: flex; align-items: center; gap: 0; margin: 12px 0 4px; padding: 16px 20px; border-radius: 10px; background: #1b2035; border: 1px solid rgba(180, 194, 225, 0.38); align-self: flex-start">
+<span style="display: inline-flex; width: 36px; height: 36px; align-items: center; justify-content: center; background: #ff754c; color: #0c1020; font-weight: 700; font-size: 18px">A</span>
+<span aria-hidden="true" style="width: 28px; height: 3px; background: #7881a8"></span>
+<span style="display: inline-flex; width: 36px; height: 36px; align-items: center; justify-content: center; background: #ff754c; color: #0c1020; font-weight: 700; font-size: 18px">B</span>
+<span aria-hidden="true" style="width: 28px; height: 3px; background: #7881a8"></span>
+<span style="display: inline-flex; width: 36px; height: 36px; box-sizing: border-box; align-items: center; justify-content: center; border: 3px solid #f6f3fa; color: #f6f3fa; font-weight: 700; font-size: 18px">C</span>
+<span aria-hidden="true" style="width: 28px; height: 3px; background: #7881a8"></span>
+<span style="display: inline-flex; width: 36px; height: 36px; align-items: center; justify-content: center; background: #69adff; color: #0c1020; font-weight: 700; font-size: 18px">D</span>
+<span aria-hidden="true" style="width: 28px; height: 3px; background: #7881a8"></span>
+<span style="display: inline-flex; width: 36px; height: 36px; align-items: center; justify-content: center; background: #69adff; color: #0c1020; font-weight: 700; font-size: 18px">E</span>
+</div>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 24px 32px; margin-top: 12px">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<h3 style="margin: 0; font-size: 18px; letter-spacing: 0.04em; font-weight: 700">NUMBERS MATTER</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #b5b6ce">Capture speed scales with how many more of you are on the point, up to three. Lone wolves stall. Squads take ground.</p>
+</div>
+<div style="display: flex; flex-direction: column; gap: 6px">
+<h3 style="margin: 0; font-size: 18px; letter-spacing: 0.04em; font-weight: 700">SURGE</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #b5b6ce">Taking a point gives the whole team eight seconds of faster movement and half-time reloads. It is the moment to push the next one.</p>
+</div>
+<div style="display: flex; flex-direction: column; gap: 6px">
+<h3 style="margin: 0; font-size: 18px; letter-spacing: 0.04em; font-weight: 700">WAVES</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #b5b6ce">Reinforcements arrive in waves, and the more ground a team holds the longer its waves take. Winning stretches you thin.</p>
+</div>
+<div style="display: flex; flex-direction: column; gap: 6px">
+<h3 style="margin: 0; font-size: 18px; letter-spacing: 0.04em; font-weight: 700">TICKETS</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #b5b6ce">Every death costs one, and holding more points bleeds the enemy. First side to zero loses.</p>
+</div>
+</div>
+</div>
+<figure style="flex: 1 1 520px; min-width: 0; margin: 0">
+<img src="assets/conquest-foundry.jpg" alt="First-person view on Foundry Valley: COBALT squadmates push toward point C while the front-line bar shows EMBER 244 to COBALT 241" style="width: 100%; height: auto; display: block; border-radius: 14px; border: 1px solid rgba(180, 194, 225, 0.38)">
+<figcaption style="margin-top: 10px; font-size: 13px; color: #8189a5">COBALT pushing toward C on Foundry Valley. Captured in a live match.</figcaption>
+</figure>
+</div>
+</section>
+
+<!-- TEAMS -->
+<section aria-label="Teams" style="background: #15182a; border-top: 1px solid rgba(180, 194, 225, 0.38); border-bottom: 1px solid rgba(180, 194, 225, 0.38)">
+<div style="max-width: 1280px; margin: 0 auto; padding: 56px 24px; box-sizing: border-box; display: flex; flex-wrap: wrap; gap: 24px; align-items: stretch">
+<div style="flex: 1 1 380px; display: flex; gap: 20px; align-items: center; padding: 24px; border-radius: 14px; background: #1b2035; border: 2.5px solid #ff754c">
+<img src="assets/ember.png" alt="EMBER emblem" style="width: 80px; height: 80px; flex: none">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<h3 style="margin: 0; font-size: 28px; font-weight: 700; color: #ffae79">EMBER</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.5; color: #b5b6ce">Twelve fighters. Orange on the shoulders and the pack lid.</p>
+</div>
+</div>
+<div aria-hidden="true" style="flex: 0 0 auto; align-self: center; font-size: 28px; font-weight: 700; color: #8189a5; padding: 0 8px">VS</div>
+<div style="flex: 1 1 380px; display: flex; gap: 20px; align-items: center; padding: 24px; border-radius: 14px; background: #1b2035; border: 2.5px solid #69adff">
+<img src="assets/cobalt.png" alt="COBALT emblem" style="width: 80px; height: 80px; flex: none">
+<div style="display: flex; flex-direction: column; gap: 6px">
+<h3 style="margin: 0; font-size: 28px; font-weight: 700; color: #b7dcff">COBALT</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.5; color: #b5b6ce">Twelve fighters. Blue on the shoulders and the pack lid.</p>
+</div>
+</div>
+<p style="flex: 1 1 100%; margin: 0; font-size: 15px; line-height: 1.55; color: #b5b6ce">Every empty seat is a bot. Each person who joins takes a bot's place, so the teams stay twelve a side whether you play alone or with twenty-three friends.</p>
+</div>
+</section>
+
+<!-- MODES -->
+<section id="modes" style="max-width: 1280px; margin: 0 auto; padding: 96px 24px; box-sizing: border-box">
+<p style="margin: 0 0 12px; font-size: 13px; letter-spacing: 0.08em; color: #ffae79">GAME MODES</p>
+<h2 style="margin: 0 0 40px; font-size: clamp(32px, 7vw, 44px); line-height: 1.08; font-weight: 700">Four ways to hold the valley.</h2>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 16px">
+<article style="display: flex; flex-direction: column; gap: 12px; padding: 28px 24px; border-radius: 14px; background: #1b2035; border: 1px solid rgba(180, 194, 225, 0.38)">
+<p style="margin: 0; font-size: 12px; letter-spacing: 0.08em; color: #ffae79">THE FULL BATTLE</p>
+<h3 style="margin: 0; font-size: 24px; font-weight: 700">CONQUEST</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #b5b6ce">Five points, one front, two ticket pools. The round lasts until one side runs dry.</p>
+</article>
+<article style="display: flex; flex-direction: column; gap: 12px; padding: 28px 24px; border-radius: 14px; background: #1b2035; border: 1px solid rgba(180, 194, 225, 0.38)">
+<p style="margin: 0; font-size: 12px; letter-spacing: 0.08em; color: #ffae79">8 MINUTES</p>
+<h3 style="margin: 0; font-size: 24px; font-weight: 700">TEAM DEATHMATCH</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #b5b6ce">No objectives. Redeploy in three seconds. First to eight kills per player a side, or the lead when the clock runs out.</p>
+</article>
+<article style="display: flex; flex-direction: column; gap: 12px; padding: 28px 24px; border-radius: 14px; background: #1b2035; border: 1px solid rgba(180, 194, 225, 0.38)">
+<p style="margin: 0; font-size: 12px; letter-spacing: 0.08em; color: #ffae79">12 MINUTES</p>
+<h3 style="margin: 0; font-size: 24px; font-weight: 700">CAPTURE THE FLAG</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #b5b6ce">Flags stand on B and D. Walk onto theirs and carry it home. Three captures wins.</p>
+</article>
+<article style="display: flex; flex-direction: column; gap: 12px; padding: 28px 24px; border-radius: 14px; background: #1b2035; border: 1px solid rgba(180, 194, 225, 0.38)">
+<p style="margin: 0; font-size: 12px; letter-spacing: 0.08em; color: #ffae79">180 TO WIN</p>
+<h3 style="margin: 0; font-size: 24px; font-weight: 700">STRONGHOLD</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #b5b6ce">C alone, open to both sides. A point for every second you hold it.</p>
+</article>
+</div>
+<figure style="margin: 24px 0 0">
+<img src="assets/lobby.jpg" alt="The pre-match briefing: map and mode vote cards, the EMBER and COBALT rosters, chat, and the loadout panel with classes, primaries and sidearms" style="width: 100%; height: auto; display: block; border-radius: 14px; border: 1px solid rgba(180, 194, 225, 0.38)">
+<figcaption style="margin-top: 10px; font-size: 13px; color: #8189a5">Every round opens in a lobby. Vote on the map and mode, pick a loadout and a side, then ready up.</figcaption>
+</figure>
+</section>
+
+<!-- MAPS -->
+<section id="maps" style="background: #15182a; border-top: 1px solid rgba(180, 194, 225, 0.38)">
+<div style="max-width: 1280px; margin: 0 auto; padding: 96px 24px; box-sizing: border-box">
+<p style="margin: 0 0 12px; font-size: 13px; letter-spacing: 0.08em; color: #ffae79">BATTLEFIELDS</p>
+<h2 style="margin: 0 0 16px; font-size: clamp(32px, 7vw, 44px); line-height: 1.08; font-weight: 700">Eight maps. Same front, different ground.</h2>
+<p style="margin: 0 0 40px; font-size: 17px; line-height: 1.6; color: #b5b6ce; max-width: 720px">Every map keeps the five-point line and mirrored routes for both sides. What changes is the ground between them, and what it does to you mid-round.</p>
+<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); gap: 16px">
+<article style="position: relative; border-radius: 10px; overflow: hidden; aspect-ratio: 4 / 3; min-height: 300px; display: flex; align-items: flex-end; background: #1b2035; border: 1px solid rgba(180, 194, 225, 0.38)">
+<img src="assets/map-slag-cathedral.jpg" alt="Molten metal pouring into the lava runner beneath the galleries of Slag Cathedral" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover">
+<div style="position: relative; margin: 12px; padding: 14px 16px; border-radius: 9px; background: rgba(12, 16, 32, 0.88); display: flex; flex-direction: column; gap: 6px">
+<h3 style="margin: 0; font-size: 18px; font-weight: 700">SLAG CATHEDRAL</h3>
+<p style="margin: 0; font-size: 14px; line-height: 1.45; color: #b5b6ce">A casting nave under a live volcano. When it erupts, lava cuts the south side in two for half a minute.</p>
+</div>
+</article>
+<article style="position: relative; border-radius: 10px; overflow: hidden; aspect-ratio: 4 / 3; min-height: 300px; display: flex; align-items: flex-end; background: #1b2035; border: 1px solid rgba(180, 194, 225, 0.38)">
+<img src="assets/map-foundry-valley.jpg" alt="A locomotive hanging over the broken railway viaduct above Foundry Valley" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover">
+<div style="position: relative; margin: 12px; padding: 14px 16px; border-radius: 9px; background: rgba(12, 16, 32, 0.88); display: flex; flex-direction: column; gap: 6px">
+<h3 style="margin: 0; font-size: 18px; font-weight: 700">FOUNDRY VALLEY</h3>
+<p style="margin: 0; font-size: 14px; line-height: 1.45; color: #b5b6ce">Autumn steelworks, boiler workshops and covered culverts, under a broken viaduct.</p>
+</div>
+</article>
+<article style="position: relative; border-radius: 10px; overflow: hidden; aspect-ratio: 4 / 3; min-height: 300px; display: flex; align-items: flex-end; background: #1b2035; border: 1px solid rgba(180, 194, 225, 0.38)">
+<img src="assets/map-quarry.jpg" alt="The TITAN walking dragline excavator reaching over the Quarry" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover">
+<div style="position: relative; margin: 12px; padding: 14px 16px; border-radius: 9px; background: rgba(12, 16, 32, 0.88); display: flex; flex-direction: column; gap: 6px">
+<h3 style="margin: 0; font-size: 18px; font-weight: 700">QUARRY</h3>
+<p style="margin: 0; font-size: 14px; line-height: 1.45; color: #b5b6ce">A terraced pit with an underground mine, headframes and a walking excavator overhead.</p>
+</div>
+</article>
+<article style="position: relative; border-radius: 10px; overflow: hidden; aspect-ratio: 4 / 3; min-height: 300px; display: flex; align-items: flex-end; background: #1b2035; border: 1px solid rgba(180, 194, 225, 0.38)">
+<img src="assets/map-ridgeline.jpg" alt="The Fallen Giant aircraft wreck on the saddle of Ridgeline" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover">
+<div style="position: relative; margin: 12px; padding: 14px 16px; border-radius: 9px; background: rgba(12, 16, 32, 0.88); display: flex; flex-direction: column; gap: 6px">
+<h3 style="margin: 0; font-size: 18px; font-weight: 700">RIDGELINE</h3>
+<p style="margin: 0; font-size: 14px; line-height: 1.45; color: #b5b6ce">Pine passes and ranger lodges, with the Fallen Giant wreck broken in three across the saddle.</p>
+</div>
+</article>
+<article style="position: relative; border-radius: 10px; overflow: hidden; aspect-ratio: 4 / 3; min-height: 300px; display: flex; align-items: flex-end; background: #1b2035; border: 1px solid rgba(180, 194, 225, 0.38)">
+<img src="assets/map-depot.jpg" alt="First-person view among stacked shipping containers and sandbags on Depot" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover">
+<div style="position: relative; margin: 12px; padding: 14px 16px; border-radius: 9px; background: rgba(12, 16, 32, 0.88); display: flex; flex-direction: column; gap: 6px">
+<h3 style="margin: 0; font-size: 18px; font-weight: 700">DEPOT</h3>
+<p style="margin: 0; font-size: 14px; line-height: 1.45; color: #b5b6ce">Container passages and dispatch warehouses under a giant working gantry.</p>
+</div>
+</article>
+<article style="position: relative; border-radius: 10px; overflow: hidden; aspect-ratio: 4 / 3; min-height: 300px; display: flex; align-items: flex-end; background: #1b2035; border: 1px solid rgba(180, 194, 225, 0.38)">
+<img src="assets/map-spillway.jpg" alt="Spillway's channel flooded around the gate C deck, the dam behind" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover">
+<div style="position: relative; margin: 12px; padding: 14px 16px; border-radius: 9px; background: rgba(12, 16, 32, 0.88); display: flex; flex-direction: column; gap: 6px">
+<h3 style="margin: 0; font-size: 18px; font-weight: 700">SPILLWAY</h3>
+<p style="margin: 0; font-size: 14px; line-height: 1.45; color: #b5b6ce">Drained waterworks. After each siren test the channel floods, and the water is deadly.</p>
+</div>
+</article>
+<article style="position: relative; border-radius: 10px; overflow: hidden; aspect-ratio: 4 / 3; min-height: 300px; display: flex; align-items: flex-end; background: #1b2035; border: 1px solid rgba(180, 194, 225, 0.38)">
+<img src="assets/map-relay.jpg" alt="Relay's listening station exchange towers at sunset" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover">
+<div style="position: relative; margin: 12px; padding: 14px 16px; border-radius: 9px; background: rgba(12, 16, 32, 0.88); display: flex; flex-direction: column; gap: 6px">
+<h3 style="margin: 0; font-size: 18px; font-weight: 700">RELAY</h3>
+<p style="margin: 0; font-size: 14px; line-height: 1.45; color: #b5b6ce">Four climbable towers, two great dishes, and a mast with a deck at 36.75 m.</p>
+</div>
+</article>
+<article style="position: relative; border-radius: 10px; overflow: hidden; aspect-ratio: 4 / 3; min-height: 300px; display: flex; flex-direction: column; justify-content: space-between; padding: 24px; box-sizing: border-box; background: #1b2035; border: 2.5px solid #81e0ba">
+<span style="align-self: flex-start; font-size: 11px; letter-spacing: 0.08em; padding: 4px 8px; border-radius: 5px; background: #81e0ba; color: #0c1020">THE NEWEST MAP</span>
+<div style="display: flex; flex-direction: column; gap: 6px">
+<h3 style="margin: 0; font-size: 18px; font-weight: 700">CANOPY</h3>
+<p style="margin: 0; font-size: 14px; line-height: 1.45; color: #b5b6ce">The roots and boughs of a colossal strangler fig. Ride seedlines between the trunks and fight on walkways 18 m up.</p>
+</div>
+</article>
+</div>
+</div>
+</section>
+
+<!-- ARSENAL -->
+<section id="arsenal" style="max-width: 1280px; margin: 0 auto; padding: 96px 24px; box-sizing: border-box">
+<p style="margin: 0 0 12px; font-size: 13px; letter-spacing: 0.08em; color: #ffae79">ARSENAL</p>
+<h2 style="margin: 0 0 40px; font-size: clamp(32px, 7vw, 44px); line-height: 1.08; font-weight: 700">Three classes. Sixteen guns.</h2>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 16px">
+<article style="display: flex; flex-direction: column; gap: 14px; padding: 28px 24px; border-radius: 14px; background: #1b2035; border: 1px solid rgba(180, 194, 225, 0.38)">
+<div style="display: flex; justify-content: space-between; align-items: baseline; gap: 12px">
+<h3 style="margin: 0; font-size: 24px; font-weight: 700">VANGUARD</h3>
+<span style="font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 14px; color: #b5b6ce">100 HP / 2 FRAGS</span>
+</div>
+<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #b5b6ce">The all-rounder. Holds a point and clears one.</p>
+<p style="margin: 0; padding-top: 14px; border-top: 1px solid #7881a8; font-size: 15px; line-height: 1.6">Carbine / Lancer burst rifle / Wasp submachine gun / Bulwark machine gun</p>
+</article>
+<article style="display: flex; flex-direction: column; gap: 14px; padding: 28px 24px; border-radius: 14px; background: #1b2035; border: 1px solid rgba(180, 194, 225, 0.38)">
+<div style="display: flex; justify-content: space-between; align-items: baseline; gap: 12px">
+<h3 style="margin: 0; font-size: 24px; font-weight: 700">BREACHER</h3>
+<span style="font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 14px; color: #b5b6ce">130 HP / FASTER</span>
+</div>
+<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #b5b6ce">Built for the inside of a building. Gets through the door first.</p>
+<p style="margin: 0; padding-top: 14px; border-top: 1px solid #7881a8; font-size: 15px; line-height: 1.6">Scattergun / Rattler / Slugger / Drummer / Wasp</p>
+</article>
+<article style="display: flex; flex-direction: column; gap: 14px; padding: 28px 24px; border-radius: 14px; background: #1b2035; border: 1px solid rgba(180, 194, 225, 0.38)">
+<div style="display: flex; justify-content: space-between; align-items: baseline; gap: 12px">
+<h3 style="margin: 0; font-size: 24px; font-weight: 700">MARKSMAN</h3>
+<span style="font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 14px; color: #b5b6ce">90 HP / SCOPES</span>
+</div>
+<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #b5b6ce">Anyone a scoped rifle hits is marked through walls for the whole team for six seconds.</p>
+<p style="margin: 0; padding-top: 14px; border-top: 1px solid #7881a8; font-size: 15px; line-height: 1.6">Longrifle / Ranger / Hammerhead / Warden battle rifle</p>
+</article>
+</div>
+<img src="assets/arsenal.jpg" alt="All sixteen weapons: Carbine, Scattergun, Longrifle, Sidearm, Warden, Bulwark, Rattler, Wasp, Ranger, Magnum, Stinger, Lancer, Slugger, Drummer, Hammerhead and Deuce" style="width: 100%; height: auto; display: block; margin-top: 16px; border-radius: 14px; border: 1px solid rgba(180, 194, 225, 0.38)">
+<p style="margin: 20px 0 0; font-size: 15px; line-height: 1.55; color: #b5b6ce">Every class carries a sidearm: the Sidearm pistol, the Magnum revolver, the Stinger machine pistol or the two-barrel Deuce. Cycle iron sights, red dot, holo and scopes with T.</p>
+</section>
+
+<!-- FEATURES -->
+<section aria-label="Features" style="background: #15182a; border-top: 1px solid rgba(180, 194, 225, 0.38); border-bottom: 1px solid rgba(180, 194, 225, 0.38)">
+<div style="max-width: 1280px; margin: 0 auto; padding: 96px 24px; box-sizing: border-box">
+<p style="margin: 0 0 12px; font-size: 13px; letter-spacing: 0.08em; color: #ffae79">FIELD NOTES</p>
+<h2 style="margin: 0 0 40px; font-size: clamp(32px, 7vw, 44px); line-height: 1.08; font-weight: 700">Built for the long match.</h2>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr)); gap: 40px 48px">
+<div style="display: flex; flex-direction: column; gap: 8px">
+<h3 style="margin: 0; font-size: 18px; letter-spacing: 0.04em; font-weight: 700">BOTS THAT PLAY AS A SQUAD</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.6; color: #b5b6ce">Bots send the same commands a player does and pass the same checks. They wait for the squad before stepping onto a point, save grenades for bunched enemies, and fight at the range their weapon is good at. Four difficulties, Recruit to Elite.</p>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<h3 style="margin: 0; font-size: 18px; letter-spacing: 0.04em; font-weight: 700">KILLCAM</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.6; color: #b5b6ce">The three seconds before you went down, replayed through the eyes of whoever got you. Rebuilt from snapshots your client already had, so it costs the server nothing.</p>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<h3 style="margin: 0; font-size: 18px; letter-spacing: 0.04em; font-weight: 700">BREAKABLE COVER</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.6; color: #b5b6ce">Wooden crates shatter under fire and grenades, for everyone at once. Crouch, slide and climb what is still standing.</p>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<h3 style="margin: 0; font-size: 18px; letter-spacing: 0.04em; font-weight: 700">CINEMATIC CAMERA</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.6; color: #b5b6ce">Press P for a free camera with real depth of field and screenshots up to four times screen size. The key art on this page was shot with it.</p>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<h3 style="margin: 0; font-size: 18px; letter-spacing: 0.04em; font-weight: 700">MOUSE, PAD OR TOUCH</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.6; color: #b5b6ce">Keyboard and mouse, a controller, or a touch screen with a floating stick and drag-look. Every key can be rebound, even mid-match.</p>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<h3 style="margin: 0; font-size: 18px; letter-spacing: 0.04em; font-weight: 700">KEEPS ITSELF CURRENT</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.6; color: #b5b6ce">The launcher checks for new releases, verifies each download against its published SHA-256, and rolls back on its own if a new build fails to start.</p>
+</div>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 32px 48px; align-items: center; margin-top: 80px">
+<figure style="flex: 1 1 520px; min-width: 0; margin: 0">
+<img src="assets/armory.jpg" alt="The Armory: weapon finishes from Factory to Gilded with prices in credits, and the Emberfall finish previewed on a Carbine" style="width: 100%; height: auto; display: block; border-radius: 14px; border: 1px solid rgba(180, 194, 225, 0.38)">
+</figure>
+<div style="flex: 1 1 360px; min-width: 0; display: flex; flex-direction: column; gap: 14px">
+<p style="margin: 0; font-size: 13px; letter-spacing: 0.08em; color: #ffae79">THE ARMORY</p>
+<h3 style="margin: 0; font-size: 32px; line-height: 1.1; font-weight: 700">Earned in the field. Worn by choice.</h3>
+<p style="margin: 0; font-size: 16px; line-height: 1.6; color: #b5b6ce">A round won pays 120 to 240 credits, a round lost 45 to 165, more for a better score. Spend them on weapon finishes from Oxide to Gilded, and on soldier looks. Nothing for sale changes how a gun shoots, and the standard kit is free.</p>
+</div>
+</div>
+</div>
+</section>
+
+<!-- SERVERS -->
+<section id="server" style="max-width: 1280px; margin: 0 auto; padding: 96px 24px; box-sizing: border-box">
+<div style="display: flex; flex-wrap: wrap; gap: 48px; align-items: center">
+<div style="flex: 1 1 420px; min-width: 0; display: flex; flex-direction: column; gap: 16px">
+<p style="margin: 0; font-size: 13px; letter-spacing: 0.08em; color: #ffae79">PLAY ONLINE</p>
+<h2 style="margin: 0; font-size: clamp(32px, 7vw, 44px); line-height: 1.08; font-weight: 700">Public servers, or your own.</h2>
+<p style="margin: 0; font-size: 17px; line-height: 1.6; color: #b5b6ce">Two public servers run around the clock, twelve a side with a bot in every empty seat. Open JOIN SERVER and they are listed under PUBLIC SERVERS with the map, who is on and your ping.</p>
+<div style="display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 14px 16px; border-radius: 9px; background: #1b2035; border: 1px solid rgba(180, 194, 225, 0.38)">
+<span aria-hidden="true" style="width: 10px; height: 10px; background: #69adff; flex: none"></span>
+<span style="font-size: 17px; font-weight: 700; letter-spacing: 0.04em">PLAYFERRITE NA1</span>
+<span class="pf-mono" style="font-size: 14px; color: #f6f3fa">na1.playferrite.com</span>
+<span style="margin-left: auto; font-size: 12px; letter-spacing: 0.08em; color: #b5b6ce">NORTH AMERICA</span>
+</div>
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; padding: 14px 16px; border-radius: 9px; background: #1b2035; border: 1px solid rgba(180, 194, 225, 0.38)">
+<span aria-hidden="true" style="width: 10px; height: 10px; background: #69adff; flex: none"></span>
+<span style="font-size: 17px; font-weight: 700; letter-spacing: 0.04em">PLAYFERRITE NA2</span>
+<span class="pf-mono" style="font-size: 14px; color: #f6f3fa">na2.playferrite.com</span>
+<span style="margin-left: auto; font-size: 12px; letter-spacing: 0.08em; color: #b5b6ce">NORTH AMERICA</span>
+</div>
+</div>
+<p style="margin: 0; font-size: 17px; line-height: 1.6; color: #b5b6ce">Or press HOST &amp; PLAY to start a match from the game, or run the dedicated server on Windows, Linux, macOS or in Docker. Games on your network show up in JOIN SERVER on their own.</p>
+<p style="margin: 0; font-size: 15px; line-height: 1.6; color: #b5b6ce">Open UDP 27500 for game traffic, and UDP 27499 if you want to be listed on the local network. Set the map, mode, rotation, bot count and difficulty from the command line.</p>
+</div>
+<div style="flex: 1 1 520px; min-width: 0; border-radius: 14px; background: #15182a; border: 1px solid rgba(180, 194, 225, 0.38); overflow: hidden">
+<div style="display: flex; align-items: center; gap: 10px; padding: 12px 18px; border-bottom: 1px solid rgba(180, 194, 225, 0.38); font-size: 12px; letter-spacing: 0.08em; color: #b5b6ce">
+<span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 50%; background: #81e0ba"></span>
+<span>SYSTEMS ONLINE / 0.0.0.0:27500 / 60 TICK</span>
+</div>
+<pre style="margin: 0; padding: 20px 18px; overflow-x: auto; font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 14px; line-height: 1.7; color: #f6f3fa"><span style="color: #8189a5"># dedicated server, Slag Cathedral, Conquest</span>
+ferrite-server --map slag --mode conquest
+
+<span style="color: #8189a5"># rotate two maps, cap the bots</span>
+ferrite-server --rotation quarry,depot --max-bots 8
+
+<span style="color: #8189a5"># or in Docker, from the repository</span>
+docker compose -f deploy/docker-compose.yml up -d</pre>
+</div>
+</div>
+<figure style="margin: 48px 0 0">
+<img src="assets/host-and-play.jpg" alt="HOST &amp; PLAY: players per team, max bots, port, game mode, map rotation and bot difficulty beside the map picker, over Foundry Valley" style="width: 100%; height: auto; display: block; border-radius: 14px; border: 1px solid rgba(180, 194, 225, 0.38)">
+<figcaption style="margin-top: 10px; font-size: 13px; color: #8189a5">HOST YOUR OWN: twelve a side, bots in every empty seat, and the address others on your network join at.</figcaption>
+</figure>
+</section>
+
+<!-- FORGE -->
+<section id="forge" aria-label="Forge map editor" style="background: #15182a; border-top: 1px solid rgba(180, 194, 225, 0.38)">
+<div style="max-width: 1280px; margin: 0 auto; padding: 96px 24px; box-sizing: border-box; display: flex; flex-wrap: wrap; gap: 48px; align-items: center">
+<div style="flex: 1 1 380px; min-width: 0; display: flex; flex-direction: column; gap: 16px">
+<p style="margin: 0; font-size: 13px; letter-spacing: 0.08em; color: #81e0ba">NEW IN 0.15 / MAP MAKER</p>
+<h2 style="margin: 0; font-size: clamp(32px, 7vw, 44px); line-height: 1.08; font-weight: 700">FORGE: build the next battlefield.</h2>
+<p style="margin: 0; font-size: 17px; line-height: 1.6; color: #b5b6ce">A map editor inside the game. Start from a blank valley or remix any of the eight maps. Sculpt the ground, place blocks, trees and ready-made models on a 1 m grid, set the five objectives and both bases, then press F5 to play it with bots.</p>
+<p style="margin: 0; font-size: 15px; line-height: 1.6; color: #b5b6ce">Left drag raises, right drag lowers, and every tool is one click away. How it works is in the <a href="https://github.com/Kalaghni/ferrite/blob/main/docs/design/map-maker.md">design notes</a>.</p>
+</div>
+<figure style="flex: 1 1 560px; min-width: 0; margin: 0">
+<img src="assets/forge.jpg" alt="The FORGE editor sculpting terrain on a Canopy remix: the tool panel with raise, lower, flatten, smooth, ramp and noise, and the model library open beside it" style="width: 100%; height: auto; display: block; border-radius: 14px; border: 1px solid rgba(180, 194, 225, 0.38)">
+</figure>
+</div>
+</section>
+
+<!-- DOWNLOAD -->
+<section id="download" style="position: relative; overflow: hidden; border-top: 1px solid rgba(180, 194, 225, 0.38)">
+<img src="assets/download-bg.jpg" alt="" aria-hidden="true" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: 50% 40%">
+<div aria-hidden="true" style="position: absolute; inset: 0; background: rgba(12, 16, 32, 0.8)"></div>
+<div style="position: relative; max-width: 1280px; margin: 0 auto; padding: 96px 24px; box-sizing: border-box">
+<p data-ver="DOWNLOAD / {v}" style="margin: 0 0 12px; font-size: 13px; letter-spacing: 0.08em; color: #ffae79">DOWNLOAD / v0.15.3</p>
+<h2 style="margin: 0 0 16px; font-size: clamp(32px, 7vw, 44px); line-height: 1.08; font-weight: 700">Choose your deployment.</h2>
+<p style="margin: 0 0 40px; font-size: 17px; line-height: 1.6; color: #d8d8e8; max-width: 680px">Free, MIT licensed, no account. Everyone in a match needs the same release, and the game updates itself when a new one is out.</p>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); gap: 12px">
+<a class="pf-cta" data-asset="windows-x64-setup.exe" href="https://github.com/Kalaghni/ferrite/releases/download/v0.15.3/ferrite-v0.15.3-windows-x64-setup.exe" style="display: flex; flex-direction: column; justify-content: center; gap: 4px; min-height: 92px; padding: 0 24px; border-radius: 9px; background: #ff754c; color: #0c1020; text-decoration: none">
+<span style="font-size: 24px; font-weight: 700">WINDOWS</span>
+<span style="font-size: 12px; letter-spacing: 0.08em">INSTALLER - NO ADMIN PROMPT</span>
+</a>
+<a class="pf-glass" data-asset="windows-x64.zip" href="https://github.com/Kalaghni/ferrite/releases/download/v0.15.3/ferrite-v0.15.3-windows-x64.zip" style="display: flex; flex-direction: column; justify-content: center; gap: 4px; min-height: 92px; padding: 0 24px; border-radius: 9px; background: rgba(12, 16, 32, 0.88); border: 2px solid rgba(180, 194, 225, 0.38); color: #f6f3fa; text-decoration: none">
+<span style="font-size: 24px; font-weight: 700">WINDOWS PORTABLE</span>
+<span style="font-size: 12px; letter-spacing: 0.08em; color: #b5b6ce">.ZIP - RUN FROM ANYWHERE</span>
+</a>
+<a class="pf-glass" data-asset="linux-x64.tar.gz" href="https://github.com/Kalaghni/ferrite/releases/download/v0.15.3/ferrite-v0.15.3-linux-x64.tar.gz" style="display: flex; flex-direction: column; justify-content: center; gap: 4px; min-height: 92px; padding: 0 24px; border-radius: 9px; background: rgba(12, 16, 32, 0.88); border: 2px solid rgba(180, 194, 225, 0.38); color: #f6f3fa; text-decoration: none">
+<span style="font-size: 24px; font-weight: 700">LINUX</span>
+<span style="font-size: 12px; letter-spacing: 0.08em; color: #b5b6ce">X64 - .TAR.GZ</span>
+</a>
+<a class="pf-glass" data-asset="macos-universal.tar.gz" href="https://github.com/Kalaghni/ferrite/releases/download/v0.15.3/ferrite-v0.15.3-macos-universal.tar.gz" style="display: flex; flex-direction: column; justify-content: center; gap: 4px; min-height: 92px; padding: 0 24px; border-radius: 9px; background: rgba(12, 16, 32, 0.88); border: 2px solid rgba(180, 194, 225, 0.38); color: #f6f3fa; text-decoration: none">
+<span style="font-size: 24px; font-weight: 700">MACOS</span>
+<span style="font-size: 12px; letter-spacing: 0.08em; color: #b5b6ce">UNIVERSAL - INTEL AND APPLE SILICON</span>
+</a>
+</div>
+<p style="margin: 24px 0 0; font-size: 14px; line-height: 1.6; color: #b5b6ce; max-width: 820px">Older releases, the checksums and the notes for each are on <a href="https://github.com/Kalaghni/ferrite/releases">GitHub</a>. The builds are not code-signed yet. Windows SmartScreen may call the installer unrecognised. On macOS, run <code style="font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; color: #f6f3fa">xattr -dr com.apple.quarantine .</code> once in the unpacked folder. Prefer to build it yourself: <code style="font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; color: #f6f3fa">cargo run --release -p ferrite</code>.</p>
+</div>
+</section>
+
+<!-- FOOTER -->
+<footer style="background: #0c1020; border-top: 1px solid rgba(180, 194, 225, 0.38)">
+<div style="max-width: 1280px; margin: 0 auto; padding: 40px 24px; box-sizing: border-box; display: flex; flex-wrap: wrap; gap: 24px 48px; align-items: center; justify-content: space-between">
+<div style="display: flex; flex-direction: column; gap: 10px">
+<img src="assets/logo.png" alt="FERRITE" style="width: 150px; height: auto; display: block">
+<p data-ver="FERRITE / {n} / ORIGINAL MUSIC BY breadKernel" style="margin: 0; font-size: 13px; letter-spacing: 0.06em; color: #8189a5">FERRITE / 0.15.3 / ORIGINAL MUSIC BY breadKernel</p>
+</div>
+<nav aria-label="Footer" style="display: flex; flex-wrap: wrap; gap: 4px 24px; font-size: 13px; letter-spacing: 0.08em">
+<a class="pf-nav" href="https://github.com/Kalaghni/ferrite" style="color: #b5b6ce; padding: 12px 0">SOURCE</a>
+<a class="pf-nav" href="https://github.com/Kalaghni/ferrite/blob/main/CHANGELOG.md" style="color: #b5b6ce; padding: 12px 0">CHANGELOG</a>
+<a class="pf-nav" href="https://github.com/Kalaghni/ferrite/blob/main/SECURITY.md" style="color: #b5b6ce; padding: 12px 0">SECURITY</a>
+<a class="pf-nav" href="https://github.com/Kalaghni/ferrite/issues" style="color: #b5b6ce; padding: 12px 0">REPORT A BUG</a>
+<a class="pf-nav" href="https://github.com/Kalaghni/ferrite/blob/main/LICENSE" style="color: #b5b6ce; padding: 12px 0">MIT LICENCE</a>
+</nav>
+</div>
+</footer>
+
+</div>
+<script>
+// The newest release, so the page never offers an old build.
+fetch("https://api.github.com/repos/Kalaghni/ferrite/releases/latest")
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (d) {
+    var v = d && d.tag_name;
+    if (!v || !/^v\d+\.\d+\.\d+$/.test(v)) return;
+    document.querySelectorAll("[data-ver]").forEach(function (e) {
+      e.textContent = e.getAttribute("data-ver").replace("{v}", v).replace("{n}", v.slice(1));
+    });
+    document.querySelectorAll("[data-asset]").forEach(function (a) {
+      a.href = "https://github.com/Kalaghni/ferrite/releases/download/" + v + "/ferrite-" + v + "-" + a.getAttribute("data-asset");
+    });
+  })
+  .catch(function () {});
+</script>
+</body>
+</html>
