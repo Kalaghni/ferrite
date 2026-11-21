@@ -455,7 +455,7 @@ impl Shelf {
             let (cx, cy) = (r.0, r.1);
             match c {
                 Card::Back => {
-                    ui::text_c("<", cx + CARD_W / 2.0, cy + 70.0, 40.0, if hot { th::WHITE } else { th::MUTED });
+                    ui::arrow(cx + CARD_W / 2.0, cy + 57.0, 30.0, 3.5, ui::Point::Left, if hot { th::WHITE } else { th::MUTED });
                     ui::text_c("BACK", cx + CARD_W / 2.0, cy + 130.0, 14.0, th::WHITE);
                 }
                 Card::Folder(f) => {

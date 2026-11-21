@@ -7,7 +7,7 @@ use crate::audio::{Music, Scene};
 use crate::bindings::{Action, Bindings, Input};
 use crate::ui::{self, color as th};
 use crate::update::{self, State as Up};
-use crate::{controller, gfx, ident, scene};
+use crate::{controller, gfx, ident, pick, scene};
 use ferrite_shared::glam::{vec3, Mat4, Vec3};
 use ferrite_shared::map::World;
 use ferrite_shared::map::{map_by_name, MAPS};
@@ -172,6 +172,8 @@ pub struct Menu {
     custom: Option<Vec<u8>>,
     /// The last files dropped on the window (path, size, hash).
     last_drop: Vec<(Option<std::path::PathBuf>, usize, u32)>,
+    /// The system's file dialog, open to choose a picture for the icon.
+    picking: Option<pick::Pick>,
     /// The icon as drawn on the home page, and what it was made from.
     icon_tex: Option<((u8, u8, u32), Option<mq::Texture2D>)>,
     /// Bot difficulty when hosting: index into `ferrite_server::DIFFICULTIES`.
@@ -481,14 +483,51 @@ fn button(x: f32, y: f32, w: f32, h: f32, label: &str, solid: Option<mq::Color>,
         Some(c) => {
             let k = if over { 1.0 } else { 0.86 };
             mq::draw_rectangle(x, y, w, h, mq::Color::new(c.r * k, c.g * k, c.b * k, 1.0));
-            ui::text_c(label, x + w / 2.0, y + h / 2.0 + size * 0.28, size, th::INK);
+            button_label(label, x + w / 2.0, y + h / 2.0, size, th::INK);
         }
         None => {
             ui::plate(x, y, w, h, th::GLASS_STRONG, if over { th::COBALT } else { th::STROKE });
-            ui::text_c(label, x + w / 2.0, y + h / 2.0 + size * 0.28, size, if over { th::WHITE } else { th::MUTED });
+            button_label(label, x + w / 2.0, y + h / 2.0, size, if over { th::WHITE } else { th::MUTED });
         }
     }
     over && clicked()
+}
+
+/// A button's label centred on (cx, cy). "<", ">" and ">>", and a "< " or
+/// " >" at either end of a word, are drawn as chevrons centred on the
+/// button rather than typed.
+fn button_label(label: &str, cx: f32, cy: f32, size: f32, ink: mq::Color) {
+    use ui::Point::{Left, Right};
+    let (s, t) = (size * 0.62, (size * 0.12).max(2.0));
+    let base = cy + size * 0.28;
+    match label {
+        "<" => ui::chevron(cx, cy, s, t, Left, ink),
+        ">" => ui::chevron(cx, cy, s, t, Right, ink),
+        ">>" => {
+            ui::chevron(cx - s * 0.3, cy, s, t, Right, ink);
+            ui::chevron(cx + s * 0.3, cy, s, t, Right, ink);
+        }
+        _ => {
+            let (word, to) = match (label.strip_prefix("< "), label.strip_suffix(" >")) {
+                (Some(w), _) => (w, Some(Left)),
+                (_, Some(w)) => (w, Some(Right)),
+                _ => (label, None),
+            };
+            let Some(to) = to else {
+                ui::text_c(label, cx, base, size, ink);
+                return;
+            };
+            let (cw, gap, tw) = (s * 0.54, size * 0.45, ui::width(word, size));
+            let x0 = cx - (cw + gap + tw) / 2.0;
+            if to == Left {
+                ui::chevron(x0 + cw / 2.0, cy, s, t, Left, ink);
+                ui::text(word, x0 + cw + gap, base, size, ink);
+            } else {
+                ui::text(word, x0, base, size, ink);
+                ui::chevron(x0 + tw + gap + cw / 2.0, cy, s, t, Right, ink);
+            }
+        }
+    }
 }
 
 /// A server in the JOIN list: its name, a line about it, and a JOIN button
@@ -546,7 +585,8 @@ fn big_button(x: f32, y: f32, w: f32, h: f32, title: &str, sub: &str, primary: b
     };
     ui::text(title, x + 22.0, y - lift + h * 0.5 + 2.0, 30.0, ink);
     ui::text(sub, x + 23.0, y - lift + h * 0.5 + 21.0, 15.0, quiet);
-    ui::text(">", x + w - 36.0, y - lift + h * 0.5 + 10.0, 30.0, ink);
+    let nudge = if over { 4.0 } else { 0.0 };
+    ui::arrow(x + w - 38.0 + nudge, y - lift + h * 0.5, 22.0, 3.0, ui::Point::Right, ink);
     over && clicked()
 }
 
@@ -576,6 +616,7 @@ impl Menu {
             icon_colour: 0,
             custom: None,
             last_drop: Vec::new(),
+            picking: None,
             icon_tex: None,
             difficulty: 1,
             volume: 0.7,
@@ -751,7 +792,13 @@ impl Menu {
     /// the emblem's colour. `ix`, `y`: its top left corner.
     fn icon_picker(&mut self, ix: f32, y: f32) {
         ui::text("PLAYER ICON", ix, y - 8.0, 18.0, th::MUTED);
-        ui::plate(ix, y, 38.0, 38.0, th::GLASS_STRONG, th::STROKE);
+        // The icon itself: click it to choose a picture.
+        let over = hit(ix, y, 38.0, 38.0);
+        let busy = self.picking.is_some();
+        ui::plate(ix, y, 38.0, 38.0, th::GLASS_STRONG, if over || busy { th::COBALT } else { th::STROKE });
+        if over && clicked() && !busy {
+            self.picking = Some(pick::Pick::png("Choose a player icon"));
+        }
         match self.icon_texture() {
             Some(t) => mq::draw_texture_ex(
                 &t,
@@ -760,7 +807,12 @@ impl Menu {
                 mq::WHITE,
                 mq::DrawTextureParams { dest_size: Some(mq::vec2(32.0, 32.0)), ..Default::default() },
             ),
-            None => ui::text_c("-", ix + 19.0, y + 26.0, 20.0, th::QUIET),
+            None => {
+                // Nothing worn yet: a plus, to say a picture can go here.
+                let c = if over { th::WHITE } else { th::QUIET };
+                mq::draw_line(ix + 12.0, y + 19.0, ix + 26.0, y + 19.0, 2.5, c);
+                mq::draw_line(ix + 19.0, y + 12.0, ix + 19.0, y + 26.0, 2.5, c);
+            }
         }
         let kinds = self.icon_kinds();
         let at = kinds.iter().position(|k| *k == self.icon_kind).unwrap_or(0) as i32;
@@ -789,7 +841,37 @@ impl Menu {
                 self.icon_colour = (self.icon_colour + 1) % ident::COLOURS.len() as u8;
             }
         }
-        ui::text("or drop a PNG on this window", ix, y + 56.0, 15.0, th::QUIET);
+        let hint = if busy { "choose a PNG in the window that opened" } else { "click the icon for a PNG, or drop one here" };
+        ui::text(hint, ix, y + 56.0, 15.0, th::QUIET);
+    }
+
+    /// The file dialog closed: wear the picture chosen in it.
+    fn take_picked(&mut self) {
+        let Some(answer) = self.picking.as_ref().and_then(|p| p.poll()) else { return };
+        self.picking = None;
+        match answer {
+            pick::Picked::File(path) => {
+                let bytes = std::fs::read(&path).unwrap_or_default();
+                self.wear_picture(&bytes);
+            }
+            pick::Picked::Cancelled => {}
+            pick::Picked::Unavailable => {
+                self.error = Some("No file dialog here. Drop a PNG on the window instead.".to_string());
+            }
+        }
+    }
+
+    /// Wear a picture as the icon, if it is one the game can read.
+    fn wear_picture(&mut self, bytes: &[u8]) {
+        match ident::from_image_bytes(bytes) {
+            Some(px) => {
+                self.custom = Some(px);
+                self.icon_kind = ident::CUSTOM;
+                self.error = None;
+                self.save();
+            }
+            None => self.error = Some("That file is not a picture the game can read. Use a PNG.".to_string()),
+        }
     }
 
     /// A file was dropped on the window: if it is a picture, wear it.
@@ -810,15 +892,7 @@ impl Menu {
         self.last_drop = key;
         for (path, bytes) in drop {
             let bytes = bytes.or_else(|| path.as_ref().and_then(|p| std::fs::read(p).ok())).unwrap_or_default();
-            match ident::from_image_bytes(&bytes) {
-                Some(px) => {
-                    self.custom = Some(px);
-                    self.icon_kind = ident::CUSTOM;
-                    self.error = None;
-                    self.save();
-                }
-                None => self.error = Some("That file is not a picture the game can read. Use a PNG.".to_string()),
-            }
+            self.wear_picture(&bytes);
         }
     }
 
@@ -1630,6 +1704,7 @@ impl Menu {
             }
             self.typing(now);
             self.take_dropped();
+            self.take_picked();
             self.lan.poll(now);
             self.public.poll(now);
             self.updater.poll();
@@ -1857,8 +1932,9 @@ impl Menu {
                         let over = hit(mx, y, mw, 38.0);
                         ui::plate(mx, y, mw, 38.0, th::GLASS_STRONG, if over { th::COBALT } else { th::STROKE });
                         ui::text_c(def.name, mx + mw / 2.0, y + 26.0, 20.0, th::WHITE);
-                        ui::text("<", mx + 10.0, y + 26.0, 20.0, if over { th::WHITE } else { th::QUIET });
-                        ui::text(">", mx + mw - 20.0, y + 26.0, 20.0, if over { th::WHITE } else { th::QUIET });
+                        let ink = if over { th::WHITE } else { th::QUIET };
+                        ui::chevron(mx + 16.0, y + 19.0, 13.0, 2.5, ui::Point::Left, ink);
+                        ui::chevron(mx + mw - 16.0, y + 19.0, 13.0, 2.5, ui::Point::Right, ink);
                         if over && clicked() {
                             let back = controller::mouse_position().0 < mx + mw * 0.3;
                             self.map = (self.map % n + if back { n - 1 } else { 1 }) % n;
@@ -2006,8 +2082,9 @@ impl Menu {
                         let over = hit(x, y, w, 34.0);
                         ui::plate(x, y, w, 34.0, th::GLASS_STRONG, if over { th::COBALT } else { th::STROKE });
                         ui::text_c(&format!("ON THE {}", sim::weapon_def(wid).name.to_uppercase()), x + w / 2.0, y + 23.0, 18.0, th::WHITE);
-                        ui::text("<", x + 12.0, y + 24.0, 20.0, if over { th::WHITE } else { th::QUIET });
-                        ui::text(">", x + w - 22.0, y + 24.0, 20.0, if over { th::WHITE } else { th::QUIET });
+                        let ink = if over { th::WHITE } else { th::QUIET };
+                        ui::chevron(x + 17.0, y + 17.0, 13.0, 2.5, ui::Point::Left, ink);
+                        ui::chevron(x + w - 17.0, y + 17.0, 13.0, 2.5, ui::Point::Right, ink);
                         if over && clicked() {
                             let n = weapons.len();
                             let back = controller::mouse_position().0 < x + w * 0.3;

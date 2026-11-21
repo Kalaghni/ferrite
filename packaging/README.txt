@@ -18,8 +18,9 @@ PLAY
   ferrite-client.txt next to the game, along with your player id: servers
   keep your record under that id, so it follows you if you change callsign.
 
-  PLAYER ICON: pick an emblem and a colour on the home screen, or drop a PNG
-  on the launcher window to use your own picture (it is shrunk to 16 x 16).
+  PLAYER ICON: pick an emblem and a colour on the home screen, or click the
+  icon square to choose a PNG (or drop one on the launcher window) to use
+  your own picture (it is shrunk to 16 x 16).
 
 MAP MAKER
   MAP MAKER on the home screen opens FORGE: make your own maps, shape the
@@ -111,7 +112,8 @@ SKIP THE HOME SCREEN
 
 CREDITS
   Music by breadKernel: "Liquid Plasma", "Submariner", "Barbed Wire",
-  "Foundrite Lobby" and "Slag Cathedral" (made with strudel.cc).
+  "Foundrite Lobby", "Slag Cathedral" (made with strudel.cc), "Relay Static",
+  "Spillway Hours" and "Half Turn" (FORGE).
   Copyright breadKernel, all rights reserved. The music and artwork are
   not covered by the game's MIT licence and may not be reused elsewhere.
   Typeface: Quantico by Matthew Desmond, SIL Open Font License

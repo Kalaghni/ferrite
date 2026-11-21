@@ -3,7 +3,7 @@
 The MIT licence in the repository root covers FERRITE's source code. It does
 **not** cover the files in this folder, except where a file below says so.
 They are here so the game can be built, and every file except this one and
-`slag-cathedral.txt` is embedded in the game executable.
+the `.txt` provenance notes is embedded in the game executable.
 
 Every file in the folder is listed below. A file added here needs an entry,
 with its owner and licence, in the same change.
@@ -16,6 +16,12 @@ with its owner and licence, in the same change.
 | `foundrite-lobby.ogg` | "Foundrite Lobby", lobby music | breadKernel | All rights reserved (music terms below) |
 | `slag-cathedral.ogg` | "Slag Cathedral", the Slag Cathedral map score, made with strudel.cc | breadKernel | All rights reserved (music terms below) |
 | `slag-cathedral.txt` | Provenance and encoding notes for `slag-cathedral.ogg` | the FERRITE authors | MIT, with the source code |
+| `relay-static.ogg` | "Relay Static", the Relay map score | breadKernel | All rights reserved (music terms below) |
+| `relay-static.txt` | Provenance and encoding notes for `relay-static.ogg` | the FERRITE authors | MIT, with the source code |
+| `spillway-hours.ogg` | "Spillway Hours", the Spillway map score | breadKernel | All rights reserved (music terms below) |
+| `spillway-hours.txt` | Provenance and encoding notes for `spillway-hours.ogg` | the FERRITE authors | MIT, with the source code |
+| `half-turn.ogg` | "Half Turn", FORGE (map maker) music | breadKernel | All rights reserved (music terms below) |
+| `half-turn.txt` | Provenance and encoding notes for `half-turn.ogg` | the FERRITE authors | MIT, with the source code |
 | `launcher-background.png`, `lobby-background.png` | Key art: launcher and lobby backgrounds - in-game renders of Slag Cathedral staged with the cinematic camera (reproduce with `docs/keyart/*.cast`) | the FERRITE authors | All rights reserved (artwork terms below) |
 | `ferrite-wordmark.png` | FERRITE logo | the FERRITE authors | All rights reserved (artwork terms below) |
 | `emblem-ember.png`, `emblem-cobalt.png` | Team emblems | the FERRITE authors | All rights reserved (artwork terms below) |
@@ -27,7 +33,9 @@ with its owner and licence, in the same change.
 ## Music - all rights reserved
 
 Copyright (c) breadKernel ("Liquid Plasma", "Submariner", "Barbed Wire",
-"Foundrite Lobby", "Slag Cathedral"). All rights reserved.
+"Foundrite Lobby", "Slag Cathedral", "Relay Static", "Spillway Hours",
+"Half Turn").
+All rights reserved.
 
 You may play these tracks as part of FERRITE, and keep them in a copy or fork
 of this repository so that the game builds. You may not otherwise copy,

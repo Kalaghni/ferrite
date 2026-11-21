@@ -808,7 +808,7 @@ impl Editor {
     }
 
     /// Run the editor until the map is played or the editor is left.
-    pub async fn run(&mut self, art: &ui::Art, shot: Option<(&str, f64)>) -> Exit {
+    pub async fn run(&mut self, art: &ui::Art, music: &mut crate::audio::Music, shot: Option<(&str, f64)>) -> Exit {
         mq::set_cursor_grab(false);
         mq::show_mouse(true);
         if self.gpu.is_none() {
@@ -820,6 +820,7 @@ impl Editor {
         loop {
             let now = mq::get_time();
             let dt = mq::get_frame_time().min(0.1);
+            music.update(crate::audio::Scene::Forge, dt).await;
             if let Some(exit) = self.input(now, dt) {
                 if let Some(g) = self.gpu.take() {
                     g.destroy();

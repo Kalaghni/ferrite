@@ -105,6 +105,41 @@ pub fn width(s: &str, size: f32) -> f32 {
     })
 }
 
+/// Which way a drawn arrow points.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Point {
+    Left,
+    Right,
+}
+
+/// Strokes through `pts`, with round joins and ends.
+fn stroke(pts: &[Vec2], t: f32, c: Color) {
+    for w in pts.windows(2) {
+        draw_line(w[0].x, w[0].y, w[1].x, w[1].y, t, c);
+    }
+    for p in pts {
+        draw_circle(p.x, p.y, t * 0.5, c);
+    }
+}
+
+/// A chevron `s` tall with stroke `t`, centred on (cx, cy). Drawn rather
+/// than typed: a ">" glyph sits on the text baseline, so it reads low and
+/// thin beside a heading.
+pub fn chevron(cx: f32, cy: f32, s: f32, t: f32, to: Point, c: Color) {
+    let k = if to == Point::Right { 1.0 } else { -1.0 };
+    let hw = s * 0.27;
+    stroke(&[vec2(cx - k * hw, cy - s * 0.5), vec2(cx + k * hw, cy), vec2(cx - k * hw, cy + s * 0.5)], t, c);
+}
+
+/// An arrow, a shaft with a chevron head, `len` long and centred on (cx, cy).
+pub fn arrow(cx: f32, cy: f32, len: f32, t: f32, to: Point, c: Color) {
+    let k = if to == Point::Right { 1.0 } else { -1.0 };
+    let tip = vec2(cx + k * len * 0.5, cy);
+    let head = len * 0.4;
+    stroke(&[vec2(cx - k * len * 0.5, cy), tip], t, c);
+    stroke(&[vec2(tip.x - k * head, cy - head), tip, vec2(tip.x - k * head, cy + head)], t, c);
+}
+
 pub fn text_c(s: &str, cx: f32, y: f32, size: f32, c: Color) {
     text(s, cx - width(s, size) / 2.0, y, size, c);
 }

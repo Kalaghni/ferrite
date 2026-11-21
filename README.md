@@ -1,4 +1,4 @@
-# FERRITE 0.15.5
+# FERRITE 0.15.6
 
 ![The FERRITE launcher: host, join or change settings](docs/launcher.png)
 
@@ -22,8 +22,8 @@ Either way the game keeps itself current: the launcher checks this repository's 
 Or without the app, from Terminal (a download made this way is not flagged, and updates itself in place):
 
 ```sh
-curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.15.5/ferrite-v0.15.5-macos-universal.tar.gz | tar xz
-./ferrite-v0.15.5-macos-universal/ferrite
+curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.15.6/ferrite-v0.15.6-macos-universal.tar.gz | tar xz
+./ferrite-v0.15.6-macos-universal/ferrite
 ```
 
 If you already downloaded it in a browser, run `xattr -dr com.apple.quarantine .` in the unpacked folder once.
@@ -128,7 +128,7 @@ claude mcp add ferrite-forge -- /path/to/ferrite-forge-mcp
 - **Melee.** V (or the middle mouse button) strikes with the weapon in hand: 75 damage to whoever is within arm's reach in front of you, and a kill outright from behind. It takes about half a second, during which you cannot fire, and it interrupts a reload. It makes no gunshot, so it does not put you on the enemy's minimap. Bots use it when you get close enough.
 - **Killcam.** A moment after you go down, the three seconds before it are replayed through the eyes of whoever got you - their weapon, their sight picture, you marked YOU - rebuilt from the snapshots your client already had, so it costs the server nothing. SPACE or a click skips it; then the camera follows them live as before.
 - **Callsigns and ids.** On first launch the game makes a random id and keeps it in `ferrite-client.txt`. Servers file your record under that id rather than your callsign, so renaming keeps your kills and someone borrowing your name does not get them. The id is sent to the servers you join and never shown to other players. It is an identity, not a login: there is still no authentication (see below). Records from before v0.7 were kept by name; the first player to come back under that name takes theirs over.
-- **Player icons.** A 16 x 16 icon sits beside your callsign in the kill feed, the scoreboard, chat, the lobby and above your head for teammates. Pick one of nine emblems in eight colours on the home screen, or use your own picture: drop a PNG on the launcher window (or leave one beside the game as `icon.png`) and it is cropped square and shrunk to fit. Other players' clients fetch it from the server the first time they see you.
+- **Player icons.** A 16 x 16 icon sits beside your callsign in the kill feed, the scoreboard, chat, the lobby and above your head for teammates. Pick one of nine emblems in eight colours on the home screen, or use your own picture: click the icon square to choose a PNG, or drop one on the launcher window (or leave one beside the game as `icon.png`) and it is cropped square and shrunk to fit. Other players' clients fetch it from the server the first time they see you.
 - **Kill feed.** A kill by or of a person is a full-size line with icons that stays eight seconds, and yours are outlined in gold; bots shooting bots are small, dim, and gone in four.
 - **Weapon finishes.** Factory plus six finishes fit every existing gun: Oxide, Arctic, Woodland, Midnight, Hazard and Sandstorm. Metal, furniture and small parts use coordinated palettes with bands or digital camouflage. Click the large primary or sidearm model in the loadout panel, or press 7 / 8, to cycle its finish; your choice is remembered separately for each weapon and appears immediately on the equipped gun. A finish for a different pending gun appears when that gun is deployed. The server validates it, and the same finish appears in first person, on soldiers, in the killcam and in the loadout preview. Bots use a mix of finishes.
 - **One front.** Points A-E must be taken in order from your side. You can only push a point that touches ground you hold, so both teams always know where the fight is - and flanking means going around it, not ignoring it.
@@ -143,7 +143,7 @@ claude mcp add ferrite-forge -- /path/to/ferrite-forge-mcp
 - **Sights.** Press T to cycle the sight on the weapon in hand: iron sights, red dot, holo, 2.5x optic, and 4x / 8x scopes on the Longrifle. Each has its own model, reticle and zoom; your choice is remembered per weapon. Protected front posts and clear rear notches improve the iron sights, while red dots, holographic sights and scopes have open sight windows and fitted rail mounts.
 - **Launcher.** HOST & PLAY (players per team, map, rotation, bot difficulty), JOIN SERVER (public servers, games found on your network, saved servers, or an address), and SETTINGS (sound output device, music on/off, music and effects volume, mouse sensitivity). Choosing an output device works on Windows; Linux and macOS always use the system default. It relies on a small patch to the audio library, kept in `vendor/quad-snd`.
 - **Pause overlay.** ESC brings up match control over the live game: resume, loadout, settings (sensitivity, effects and music volume), change team, leave. Beside it are the score, the front line, your squad and the controls.
-- **Music.** Songs rotate on the launcher with a NOW PLAYING plate and a skip button; the lobby has its own track. MUSIC IN A MATCH (off by default) keeps the rotation going, quieter, while you play. Your own `.ogg` or `.wav` files in a `music` folder beside the executable join the rotation. To build a song in, add the `.ogg` to `crates/client/assets/` and a line to `SONGS` in `crates/client/src/audio.rs`.
+- **Music.** Songs rotate on the launcher with a NOW PLAYING plate and a skip button; the lobby has its own track. Slag Cathedral, Relay and Spillway have their own scores in their lobbies (and in their matches, with MUSIC IN A MATCH on), and FORGE has its own track on its start screen and in the editor. MUSIC IN A MATCH (off by default) keeps the rotation going, quieter, while you play; "Liquid Plasma" stays launcher music and sits out the match rotation. Your own `.ogg` or `.wav` files in a `music` folder beside the executable join the rotation. To build a song in, add the `.ogg` to `crates/client/assets/` and a line to `SONGS` in `crates/client/src/audio.rs`.
 - **Round by round.** The scoreboard (TAB, and at the end of every round) lists the rounds played so far - map, winner, tickets, length and top scorer - with the series score, and shows each player's record on that server next to this round's figures: kills, deaths, and rounds won out of rounds played. A server keeps its players' records in `ferrite-stats.txt` beside the executable (`--stats FILE` or `--stats off` on the dedicated server), so they survive a restart. Records go by callsign.
 - **Looks.** Six looks for your soldier (Regular, Scout, Heavy, Ghost, Veteran, Hazard), chosen under the classes on the loadout panel or with 6. They are cosmetic: the team colour stays on the torso. Bots turn out in a mix of them.
 - **Max bots.** HOST & PLAY has a MAX BOTS box (`--max-bots N` on the server). Left empty, bots fill every slot; with a limit the remaining seats stay empty until people join, and the bots move to whichever side is short.
@@ -219,7 +219,7 @@ License: MIT.
 
 ## Credits
 
-- Music by breadKernel: "Liquid Plasma", "Submariner" and "Barbed Wire" (launcher), "Foundrite Lobby" (lobby) and "Slag Cathedral" (the Slag Cathedral score, made with strudel.cc).
+- Music by breadKernel: "Liquid Plasma", "Submariner" and "Barbed Wire" (launcher), "Foundrite Lobby" (lobby), and the map scores "Slag Cathedral" (made with strudel.cc), "Relay Static" and "Spillway Hours", and "Half Turn" (FORGE).
 - Typeface: Quantico by Matthew Desmond, under the SIL Open Font License (`packaging/Quantico-OFL.txt`).
 - Launcher and lobby palette and layout: the FERRITE UI kit, "The Frontline". The launcher and lobby backgrounds are in-game shots of Slag Cathedral, staged with the cinematic camera (`docs/keyart/`).
 

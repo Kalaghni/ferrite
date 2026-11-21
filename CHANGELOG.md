@@ -14,8 +14,9 @@ What each FERRITE release added, newest first. The full notes for each release a
 - **v0.15.3.** Public servers: JOIN SERVER lists NA1 and NA2 (and any others on the list at playferrite.com) with their map, players and your ping, and dedicated servers answer that status query on their game port.
 - **v0.15.4.** FERRITE for macOS as an app on a disk image (`.dmg`), keeping its files in `~/Library/Application Support/FERRITE`, and the lobby chat no longer climbs over the map and mode votes.
 - **v0.15.5.** Collateral damage: long-rifle rounds go through up to 3 enemies in a line, keeping 80% of their force through each, and two or more kills with one round scores a COLLATERAL (+50 per extra kill).
+- **v0.15.6.** Map scores for Relay and Spillway, a FORGE track, "Liquid Plasma" kept to the launcher, a file picker for the player icon, and drawn arrows in the launcher.
 
-No network protocol change (still 21). The new spawns come with the server. Custom maps can be played against bots on your own machine, and other players cannot join one yet. See the [v0.15.0](docs/release-notes/v0.15.0.md), [v0.15.1](docs/release-notes/v0.15.1.md), [v0.15.2](docs/release-notes/v0.15.2.md), [v0.15.3](docs/release-notes/v0.15.3.md), [v0.15.4](docs/release-notes/v0.15.4.md) and [v0.15.5](docs/release-notes/v0.15.5.md) release notes.
+No network protocol change (still 21). The new spawns come with the server. Custom maps can be played against bots on your own machine, and other players cannot join one yet. See the [v0.15.0](docs/release-notes/v0.15.0.md), [v0.15.1](docs/release-notes/v0.15.1.md), [v0.15.2](docs/release-notes/v0.15.2.md), [v0.15.3](docs/release-notes/v0.15.3.md), [v0.15.4](docs/release-notes/v0.15.4.md), [v0.15.5](docs/release-notes/v0.15.5.md) and [v0.15.6](docs/release-notes/v0.15.6.md) release notes.
 
 ## v0.14
 

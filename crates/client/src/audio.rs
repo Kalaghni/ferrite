@@ -2,26 +2,43 @@
 //! are embedded and decoded on background workers.
 
 use ferrite_shared::glam::Vec3;
+use ferrite_shared::map;
 use ferrite_shared::rng::Rng;
 use macroquad::audio::{load_sound_from_bytes, play_sound, set_sound_volume, PlaySoundParams, Sound};
 
 /// Songs that rotate on the launcher (and in a match, if that is switched
-/// on): the title shown as "now playing", and the file.
+/// on): the title shown as "now playing", the file, and whether it also
+/// plays in a match (false: launcher only).
 ///
 /// To add one: put the .ogg (44.1 kHz stereo) in `assets/` and add a line.
 /// Players can add their own without rebuilding, by putting .ogg or .wav
 /// files in a `music` folder next to the executable.
-static SONGS: &[(&str, &[u8])] = &[
-    ("Liquid Plasma - breadKernel", include_bytes!("../assets/liquid-plasma.ogg")),
-    ("Submariner - breadKernel", include_bytes!("../assets/submariner.ogg")),
-    ("Barbed Wire - breadKernel", include_bytes!("../assets/barbed-wire.ogg")),
+static SONGS: &[(&str, &[u8], bool)] = &[
+    ("Liquid Plasma - breadKernel", include_bytes!("../assets/liquid-plasma.ogg"), false),
+    ("Submariner - breadKernel", include_bytes!("../assets/submariner.ogg"), true),
+    ("Barbed Wire - breadKernel", include_bytes!("../assets/barbed-wire.ogg"), true),
 ];
 
 /// The lobby has its own track.
 static LOBBY_SONG: (&str, &[u8]) = ("Foundrite Lobby - breadKernel", include_bytes!("../assets/foundrite-lobby.ogg"));
 
-/// User-supplied score, reserved for the Slag Cathedral battlefield.
-static CATHEDRAL_SONG: (&str, &[u8]) = ("Slag Cathedral", include_bytes!("../assets/slag-cathedral.ogg"));
+/// Scores of their own for some battlefields: the map, the title shown as
+/// "now playing", and the file. They play in that map's lobby, and in its
+/// matches when MUSIC IN A MATCH is on, in place of the lobby track and the
+/// rotation.
+static MAP_SCORES: &[(u8, &str, &[u8])] = &[
+    (map::slag_cathedral::MAP_ID, "Slag Cathedral - breadKernel", include_bytes!("../assets/slag-cathedral.ogg")),
+    (map::relay::MAP_ID, "Relay Static - breadKernel", include_bytes!("../assets/relay-static.ogg")),
+    (map::spillway::MAP_ID, "Spillway Hours - breadKernel", include_bytes!("../assets/spillway-hours.ogg")),
+];
+
+/// FORGE's own track, on its start screen and in the editor. It loops.
+static FORGE_SONG: (&str, &[u8]) = ("Half Turn - breadKernel", include_bytes!("../assets/half-turn.ogg"));
+
+/// Which of `MAP_SCORES` belongs to `map`.
+fn score_for(map: u8) -> Option<usize> {
+    MAP_SCORES.iter().position(|s| s.0 == map)
+}
 
 #[derive(Clone)]
 enum Source {
@@ -32,6 +49,15 @@ enum Source {
 struct Song {
     title: String,
     src: Source,
+    /// Also plays in a match, not only on the launcher.
+    in_match: bool,
+}
+
+/// The song after `cur` that may play here (in a match, only the ones that
+/// play there), or `cur` itself when no other one may.
+fn next_song(songs: &[Song], cur: usize, in_match: bool) -> usize {
+    let n = songs.len();
+    (1..=n).map(|k| (cur + k) % n.max(1)).find(|&j| !in_match || songs[j].in_match).unwrap_or(cur)
 }
 
 /// Decoded on a worker thread: a token for `load_sound_from_bytes` and the
@@ -128,6 +154,8 @@ pub enum Scene {
     Launcher,
     Lobby(u8),
     Match(u8),
+    /// FORGE, the map maker: its start screen and the editor.
+    Forge,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,7 +163,9 @@ enum MusicTarget {
     Silence,
     Rotation,
     Lobby,
-    Cathedral,
+    /// One of `MAP_SCORES`.
+    Score(usize),
+    Forge,
 }
 
 impl Scene {
@@ -143,10 +173,10 @@ impl Scene {
         if !on || matches!(self, Self::Match(_)) && !in_match {
             return MusicTarget::Silence;
         }
-        let cathedral = ferrite_shared::map::slag_cathedral::MAP_ID;
         match self {
             Self::Launcher => MusicTarget::Rotation,
-            Self::Lobby(map) | Self::Match(map) if map == cathedral => MusicTarget::Cathedral,
+            Self::Forge => MusicTarget::Forge,
+            Self::Lobby(map) | Self::Match(map) if score_for(map).is_some() => MusicTarget::Score(score_for(map).unwrap_or(0)),
             Self::Lobby(_) => MusicTarget::Lobby,
             Self::Match(_) => MusicTarget::Rotation,
         }
@@ -166,8 +196,13 @@ pub struct Music {
     cur: usize,
     deck: Deck,
     lobby: Deck,
-    cathedral: Deck,
+    /// A looped track of a place's own (a map's score, or FORGE's), and
+    /// which one it is.
+    score: Deck,
+    score_of: Option<&'static str>,
     target: MusicTarget,
+    /// The rotation is playing in a match, where launcher-only songs sit out.
+    match_rotation: bool,
 }
 
 impl Music {
@@ -181,13 +216,16 @@ impl Music {
             cur: 0,
             deck: Deck::default(),
             lobby: Deck::default(),
-            cathedral: Deck::default(),
+            score: Deck::default(),
+            score_of: None,
             target: MusicTarget::Silence,
+            match_rotation: false,
         }
     }
 
     pub fn new(vol: f32) -> Music {
-        let mut songs: Vec<Song> = SONGS.iter().map(|(t, b)| Song { title: t.to_string(), src: Source::Built(b) }).collect();
+        let mut songs: Vec<Song> =
+            SONGS.iter().map(|&(t, b, in_match)| Song { title: t.to_string(), src: Source::Built(b), in_match }).collect();
         // The player's own songs: a `music` folder in the game's folder.
         let dir = Some(ferrite_shared::paths::data_dir().join("music"));
         if let Some(Ok(rd)) = dir.map(std::fs::read_dir) {
@@ -197,7 +235,7 @@ impl Music {
                 let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
                 if ext == "ogg" || ext == "wav" {
                     let title = p.file_stem().and_then(|s| s.to_str()).unwrap_or("Unknown").to_string();
-                    songs.push(Song { title, src: Source::File(p) });
+                    songs.push(Song { title, src: Source::File(p), in_match: true });
                 }
             }
         }
@@ -211,8 +249,10 @@ impl Music {
             cur: 0,
             deck: Deck::default(),
             lobby,
-            cathedral: Deck::default(),
+            score: Deck::default(),
+            score_of: None,
             target: MusicTarget::Rotation,
+            match_rotation: false,
         }
     }
 
@@ -222,7 +262,7 @@ impl Music {
 
     /// More than one song in the rotation: there is something to skip to.
     pub fn can_skip(&self) -> bool {
-        self.enabled && self.target == MusicTarget::Rotation && self.songs.len() > 1
+        self.enabled && self.target == MusicTarget::Rotation && next_song(&self.songs, self.cur, self.match_rotation) != self.cur
     }
 
     /// Move on to the next song in the rotation.
@@ -234,15 +274,15 @@ impl Music {
             macroquad::audio::stop_sound(&s);
         }
         self.deck.playing = false;
-        self.cur = (self.cur + 1) % self.songs.len();
+        self.cur = next_song(&self.songs, self.cur, self.match_rotation);
     }
 
     /// Title of the track that can be heard right now.
     pub fn now_playing(&self) -> Option<&str> {
         if !self.enabled || !self.on || self.vol <= 0.0 {
             None
-        } else if self.cathedral.playing && self.cathedral.level > 0.05 {
-            Some(CATHEDRAL_SONG.0)
+        } else if self.score.playing && self.score.level > 0.05 {
+            self.score_of
         } else if self.deck.playing && self.deck.level > 0.05 {
             self.songs.get(self.cur).map(|s| s.title.as_str())
         } else if self.lobby.playing && self.lobby.level > 0.05 {
@@ -258,19 +298,49 @@ impl Music {
             return;
         }
         self.target = scene.target(self.on, self.in_match);
-        let want_songs = self.target == MusicTarget::Rotation && !self.songs.is_empty();
+        self.match_rotation = matches!(scene, Scene::Match(_));
+        let mut want_songs = self.target == MusicTarget::Rotation && self.songs.iter().any(|s| !self.match_rotation || s.in_match);
+        // A launcher-only song is up as a match starts: let it fade out
+        // (it is already quiet after the lobby), then move to one that
+        // plays in a match.
+        if want_songs && self.match_rotation && self.songs.get(self.cur).is_some_and(|s| !s.in_match) {
+            want_songs = false;
+            if self.deck.loading.is_none() && self.deck.level < 0.01 {
+                if let Some(s) = self.deck.sound.take() {
+                    macroquad::audio::stop_sound(&s);
+                }
+                self.deck.playing = false;
+                self.cur = next_song(&self.songs, self.cur, true);
+            }
+        }
         let want_lobby = self.target == MusicTarget::Lobby;
-        let want_cathedral = self.target == MusicTarget::Cathedral;
+        let want_score = match self.target {
+            MusicTarget::Score(i) => Some((MAP_SCORES[i].1, MAP_SCORES[i].2)),
+            MusicTarget::Forge => Some(FORGE_SONG),
+            _ => None,
+        };
+        let want_title = want_score.map(|s| s.0);
         // Under a firefight the music sits further back.
         let gain = self.vol * 0.3 * if matches!(scene, Scene::Match(_)) { 0.6 } else { 1.0 };
 
         self.lobby.poll().await;
         self.lobby.run(want_lobby, gain, true, dt);
-        if want_cathedral && self.cathedral.sound.is_none() && self.cathedral.loading.is_none() {
-            self.cathedral.loading = Some(decode_in_background(&Source::Built(CATHEDRAL_SONG.1)));
+        // Another place's track is loaded: fade it out and free it, then
+        // load this one's. One is kept at a time.
+        let stale = want_title.is_some() && self.score_of.is_some() && self.score_of != want_title;
+        if stale && self.score.loading.is_none() && self.score.level < 0.01 {
+            if let Some(s) = self.score.sound.take() {
+                macroquad::audio::stop_sound(&s);
+            }
+            self.score = Deck::default();
+            self.score_of = None;
         }
-        self.cathedral.poll().await;
-        self.cathedral.run(want_cathedral, gain, true, dt);
+        if let (Some((title, bytes)), None) = (want_score, self.score_of) {
+            self.score_of = Some(title);
+            self.score.loading = Some(decode_in_background(&Source::Built(bytes)));
+        }
+        self.score.poll().await;
+        self.score.run(want_title.is_some() && self.score_of == want_title, gain, true, dt);
 
         if self.deck.poll().await == Some(false) {
             // Unreadable file: take it out of the rotation.
@@ -287,10 +357,11 @@ impl Music {
             }
         }
         let ended = self.deck.run(want_songs, gain, false, dt);
-        if ended && self.songs.len() > 1 {
+        let next = next_song(&self.songs, self.cur, self.match_rotation);
+        if ended && next != self.cur {
             // Free this one and let the next be decoded.
             self.deck.sound = None;
-            self.cur = (self.cur + 1) % self.songs.len();
+            self.cur = next;
         }
     }
 }
@@ -958,28 +1029,77 @@ mod music_tests {
     }
 
     #[test]
-    fn cathedral_score_is_map_specific_and_honours_music_switches() {
-        use ferrite_shared::map::slag_cathedral::MAP_ID;
-        assert_eq!(Scene::Lobby(MAP_ID).target(true, false), MusicTarget::Cathedral);
-        assert_eq!(Scene::Match(MAP_ID).target(true, true), MusicTarget::Cathedral);
-        assert_eq!(Scene::Match(MAP_ID).target(true, false), MusicTarget::Silence);
-        for map in 0..MAP_ID {
-            assert_eq!(Scene::Lobby(map).target(true, true), MusicTarget::Lobby);
-            assert_eq!(Scene::Match(map).target(true, true), MusicTarget::Rotation);
+    fn launcher_only_songs_sit_out_a_match() {
+        let songs: Vec<Song> =
+            SONGS.iter().map(|&(t, b, in_match)| Song { title: t.to_string(), src: Source::Built(b), in_match }).collect();
+        let plasma = songs.iter().position(|s| s.title.starts_with("Liquid Plasma")).unwrap();
+        assert!(!songs[plasma].in_match, "Liquid Plasma is launcher music only");
+        // On the launcher every song comes round; in a match, never Liquid Plasma.
+        let mut seen = vec![false; songs.len()];
+        let mut cur = 0;
+        for _ in 0..songs.len() {
+            cur = next_song(&songs, cur, false);
+            seen[cur] = true;
         }
-        assert_eq!(Scene::Launcher.target(true, true), MusicTarget::Rotation);
-        for scene in [Scene::Launcher, Scene::Lobby(MAP_ID), Scene::Match(MAP_ID)] {
-            assert_eq!(scene.target(false, true), MusicTarget::Silence);
+        assert!(seen.iter().all(|&s| s));
+        let mut cur = plasma;
+        for _ in 0..2 * songs.len() {
+            cur = next_song(&songs, cur, true);
+            assert_ne!(cur, plasma);
+            assert!(songs[cur].in_match);
         }
     }
 
     #[test]
-    fn embedded_cathedral_score_decodes_at_the_games_sample_rate() {
-        let pcm = quad_snd::decode(CATHEDRAL_SONG.1).expect("map score must decode");
+    fn map_scores_are_map_specific_and_honour_music_switches() {
+        let scored = [map::slag_cathedral::MAP_ID, map::relay::MAP_ID, map::spillway::MAP_ID];
+        for (k, &m) in scored.iter().enumerate() {
+            let i = score_for(m).expect("map has a score");
+            assert_eq!(MAP_SCORES[i].0, m);
+            assert!(scored[..k].iter().all(|&o| score_for(o) != Some(i)), "maps share a score");
+            assert_eq!(Scene::Lobby(m).target(true, false), MusicTarget::Score(i));
+            assert_eq!(Scene::Match(m).target(true, true), MusicTarget::Score(i));
+            assert_eq!(Scene::Match(m).target(true, false), MusicTarget::Silence);
+            for scene in [Scene::Lobby(m), Scene::Match(m)] {
+                assert_eq!(scene.target(false, true), MusicTarget::Silence);
+            }
+        }
+        for m in (0..MAPS_LEN).filter(|m| !scored.contains(m)) {
+            assert_eq!(Scene::Lobby(m).target(true, true), MusicTarget::Lobby);
+            assert_eq!(Scene::Match(m).target(true, true), MusicTarget::Rotation);
+        }
+        assert_eq!(Scene::Launcher.target(true, true), MusicTarget::Rotation);
+        assert_eq!(Scene::Launcher.target(false, true), MusicTarget::Silence);
+        // FORGE has its own track whether or not music plays in a match.
+        assert_eq!(Scene::Forge.target(true, false), MusicTarget::Forge);
+        assert_eq!(Scene::Forge.target(false, true), MusicTarget::Silence);
+    }
+
+    #[test]
+    fn embedded_forge_track_decodes_at_the_games_sample_rate() {
+        let pcm = quad_snd::decode(FORGE_SONG.1).expect("FORGE track must decode");
         assert_eq!(pcm.len() % 2, 0, "stereo PCM must have complete frames");
         let seconds = pcm.len() as f32 / (44100.0 * 2.0);
-        assert!((seconds - 154.2857).abs() < 0.1, "track duration changed: {seconds}");
-        assert!(pcm.iter().all(|sample| sample.is_finite()));
-        assert!(pcm.iter().any(|sample| sample.abs() > 0.001), "map score is silent");
+        assert!((seconds - 135.0).abs() < 0.1, "track duration changed: {seconds}");
+        assert!(pcm.iter().any(|sample| sample.abs() > 0.001), "FORGE track is silent");
+    }
+
+    const MAPS_LEN: u8 = ferrite_shared::map::MAPS.len() as u8;
+
+    #[test]
+    fn embedded_map_scores_decode_at_the_games_sample_rate() {
+        for &(m, title, bytes) in MAP_SCORES {
+            let pcm = quad_snd::decode(bytes).unwrap_or_else(|| panic!("{title} must decode"));
+            assert_eq!(pcm.len() % 2, 0, "{title}: stereo PCM must have complete frames");
+            let seconds = pcm.len() as f32 / (44100.0 * 2.0);
+            let want = match m {
+                map::slag_cathedral::MAP_ID => 154.2857,
+                map::relay::MAP_ID => 144.0,
+                _ => 124.1379,
+            };
+            assert!((seconds - want).abs() < 0.1, "{title}: track duration changed: {seconds}");
+            assert!(pcm.iter().all(|sample| sample.is_finite()), "{title}");
+            assert!(pcm.iter().any(|sample| sample.abs() > 0.001), "{title} is silent");
+        }
     }
 }

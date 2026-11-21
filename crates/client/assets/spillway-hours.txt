@@ -1,0 +1,5 @@
+Spillway Hours
+Map-specific soundtrack by breadKernel.
+Source: Spillway Hours.wav (48 kHz stereo PCM, 124.137917 seconds).
+Embedded version: Vorbis quality 5, 44.1 kHz stereo, 124.137937 seconds.
+The original WAV remains untouched.

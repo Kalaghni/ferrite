@@ -362,7 +362,7 @@ impl Home {
         let mut shot_done = false;
         loop {
             let now = mq::get_time();
-            music.update(Scene::Launcher, mq::get_frame_time().min(0.1)).await;
+            music.update(Scene::Forge, mq::get_frame_time().min(0.1)).await;
             if mq::is_quit_requested() {
                 return Pick::Quit;
             }

@@ -17,6 +17,7 @@ mod hud;
 mod ident;
 mod menu;
 mod net;
+mod pick;
 mod plan;
 mod scene;
 mod touch;
@@ -1591,7 +1592,7 @@ async fn editing(
     home: &mut forge_home::Home,
 ) -> bool {
     loop {
-        match ed.run(art, shot).await {
+        match ed.run(art, music, shot).await {
             forge::Exit::Quit => return true,
             forge::Exit::Home { new } => {
                 if new {

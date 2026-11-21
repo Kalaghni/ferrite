@@ -1014,7 +1014,8 @@ fn draw_pause(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
             th::WHITE
         };
         draw_text(label, bx + 28.0 * k, by + bh * 0.5 + 10.0 * k, sz(32.0), ink);
-        draw_text(">", bx + bw - 40.0 * k, by + bh * 0.5 + 10.0 * k, sz(32.0), ink);
+        let nudge = if hot { 4.0 * k } else { 0.0 };
+        crate::ui::arrow(bx + bw - 40.0 * k + nudge, by + bh * 0.5, 24.0 * k, 3.0 * k, crate::ui::Point::Right, ink);
     }
     if let Some(hs) = &app.hosting {
         draw_text(&format!("{hs}  -  others on your network can join from JOIN SERVER"), x, h - 30.0 * k, sz(17.0), th::MUTED);
