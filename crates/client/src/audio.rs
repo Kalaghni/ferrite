@@ -188,8 +188,8 @@ impl Music {
 
     pub fn new(vol: f32) -> Music {
         let mut songs: Vec<Song> = SONGS.iter().map(|(t, b)| Song { title: t.to_string(), src: Source::Built(b) }).collect();
-        // The player's own songs: a `music` folder next to the executable.
-        let dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("music")));
+        // The player's own songs: a `music` folder in the game's folder.
+        let dir = Some(ferrite_shared::paths::data_dir().join("music"));
         if let Some(Ok(rd)) = dir.map(std::fs::read_dir) {
             let mut files: Vec<_> = rd.flatten().map(|e| e.path()).collect();
             files.sort();

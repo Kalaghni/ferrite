@@ -12,8 +12,9 @@ What each FERRITE release added, newest first. The full notes for each release a
 - **v0.15.1.** Canopy remixes show their fig again (its trunks, roots and walkways were invisible walls), posts show on custom maps, and trees can be selected, moved, resized and removed in FORGE.
 - **v0.15.2.** Friendlier map maker controls: the right mouse button lowers (the opposite of the brush), middle mouse looks, a clickable panel with mode chips and size and strength buttons, Ctrl/Alt+wheel for the brush, drag-to-move and a hover outline in SELECT.
 - **v0.15.3.** Public servers: JOIN SERVER lists NA1 and NA2 (and any others on the list at playferrite.com) with their map, players and your ping, and dedicated servers answer that status query on their game port.
+- **v0.15.4.** FERRITE for macOS as an app on a disk image (`.dmg`), keeping its files in `~/Library/Application Support/FERRITE`, and the lobby chat no longer climbs over the map and mode votes.
 
-No network protocol change (still 21). The new spawns come with the server. Custom maps can be played against bots on your own machine, and other players cannot join one yet. See the [v0.15.0](docs/release-notes/v0.15.0.md), [v0.15.1](docs/release-notes/v0.15.1.md), [v0.15.2](docs/release-notes/v0.15.2.md) and [v0.15.3](docs/release-notes/v0.15.3.md) release notes.
+No network protocol change (still 21). The new spawns come with the server. Custom maps can be played against bots on your own machine, and other players cannot join one yet. See the [v0.15.0](docs/release-notes/v0.15.0.md), [v0.15.1](docs/release-notes/v0.15.1.md), [v0.15.2](docs/release-notes/v0.15.2.md), [v0.15.3](docs/release-notes/v0.15.3.md) and [v0.15.4](docs/release-notes/v0.15.4.md) release notes.
 
 ## v0.14
 

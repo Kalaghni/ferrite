@@ -103,6 +103,8 @@ pub struct Args {
     show_loadout: bool,
     /// Verification aid: keep the scoreboard on screen.
     show_scores: bool,
+    /// Fill the chat log with this many lines (verification aid).
+    demo_chat: usize,
     /// Side of the sun shadow map in texels; 0 turns shadows off.
     shadows: u32,
     /// Verification aid: freeze the first-person reload animation here.
@@ -191,6 +193,7 @@ fn parse_args() -> Args {
         side: 255,
         show_loadout: false,
         show_scores: false,
+        demo_chat: 0,
         shadows: 4096,
         vm_reload: None,
         no_music: false,
@@ -362,6 +365,7 @@ fn parse_args() -> Args {
             }
             "--prim" => a.prim = val.parse().expect("--prim <weapon id>"),
             "--side" => a.side = val.parse().expect("--side <weapon id>"),
+            "--demo-chat" => a.demo_chat = val.parse().expect("--demo-chat <lines>"),
             "--show-scores" => {
                 a.show_scores = true;
                 used = 1;
@@ -1704,7 +1708,7 @@ async fn play(
                 stats_file: if args.auto || args.shot.is_some() || args.quit_at.is_some() {
                     None
                 } else {
-                    std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("ferrite-stats.txt")))
+                    Some(ferrite_shared::paths::data_dir().join("ferrite-stats.txt"))
                 },
                 mode,
                 mode_rotation: if mode_rotate { (0..ferrite_shared::MODES.len() as u8).collect() } else { Vec::new() },
@@ -1899,6 +1903,10 @@ async fn play(
         cast,
         cast_clock: 0.0,
     };
+    // Verification aid: a chat log as full as a long round leaves it.
+    for i in 0..args.demo_chat {
+        app.notice(format!("Line {} of a long round's chat log: Cinder is on a 3 kill streak", i + 1), 0.0);
+    }
     // Capture aid: open the pause overlay's settings page on a tab.
     if let Some(tab) = args.pause_settings {
         app.pause_settings = true;

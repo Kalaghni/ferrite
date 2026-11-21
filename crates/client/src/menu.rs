@@ -234,8 +234,7 @@ pub struct Menu {
 }
 
 fn cfg_path() -> PathBuf {
-    let dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())).unwrap_or_default();
-    dir.join("ferrite-client.txt")
+    ferrite_shared::paths::data_dir().join("ferrite-client.txt")
 }
 
 /// The address other machines on the network would use to reach a match
@@ -2421,6 +2420,7 @@ impl Menu {
                     Up::Installing(tag) => {
                         (format!("DOWNLOADING {tag}{}", [".", "..", "..."][(now * 2.0) as usize % 3]), th::COBALT_BRIGHT, false)
                     }
+                    Up::Opened(tag) => (format!("OPEN THE {tag} DISK IMAGE AND DRAG FERRITE TO APPLICATIONS"), th::COBALT_BRIGHT, false),
                     Up::Failed(e) => (format!("UPDATE FAILED: {e}"), th::DANGER, false),
                     _ => (String::new(), th::WHITE, false),
                 };
@@ -2430,7 +2430,8 @@ impl Menu {
                     let (px, py) = (sw - pw - 40.0, 30.0);
                     ui::plate(px, py, pw, 44.0, th::GLASS_STRONG, c);
                     ui::text(&line, px + 16.0, py + 29.0, 18.0, c);
-                    if act && button(px + pw - bw - 4.0, py + 5.0, bw, 34.0, "UPDATE & RESTART", Some(th::EMBER), 18.0) {
+                    let label = if update::by_disk_image() { "DOWNLOAD" } else { "UPDATE & RESTART" };
+                    if act && button(px + pw - bw - 4.0, py + 5.0, bw, 34.0, label, Some(th::EMBER), 18.0) {
                         self.updater.install();
                     }
                 }

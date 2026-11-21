@@ -332,7 +332,7 @@ impl Cine {
 /// Where screenshots go: `screenshots/` next to the game (and its
 /// `ferrite-client.txt`), named by the time, UTC.
 pub fn screenshot_path() -> std::path::PathBuf {
-    let dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("screenshots"))).unwrap_or_else(|| "screenshots".into());
+    let dir = ferrite_shared::paths::data_dir().join("screenshots");
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let stamp = timestamp(secs);
     let mut path = dir.join(format!("ferrite-{stamp}.png"));

@@ -4,6 +4,7 @@
 
 pub mod events;
 pub mod map;
+pub mod paths;
 pub mod proto;
 pub mod rng;
 pub mod sim;

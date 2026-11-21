@@ -125,7 +125,7 @@ fn main() {
         Some("off") | Some("none") => None,
         Some(f) => Some(f.into()),
         None if bench.is_some() => None,
-        None => std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("ferrite-stats.txt"))),
+        None => Some(ferrite_shared::paths::data_dir().join("ferrite-stats.txt")),
     };
     if let Some(secs) = bench {
         cfg.lobby_secs = 0;

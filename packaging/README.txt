@@ -67,6 +67,11 @@ PLATFORM NOTES
   everyone uses the same release.
   macOS: the build is not signed. If macOS refuses to open it, run this once
     in the unpacked folder:   xattr -dr com.apple.quarantine .
+  macOS app (the .dmg): drag FERRITE to Applications. The first time, macOS
+    says it cannot check it: open System Settings > Privacy & Security and
+    choose Open Anyway. The app keeps its settings, maps, prefabs, music and
+    screenshots in ~/Library/Application Support/FERRITE. The dedicated
+    server is inside it:  /Applications/FERRITE.app/Contents/MacOS/ferrite-server
   Linux: needs X11, OpenGL and ALSA, which a normal desktop install has.
 
 CONTROLS

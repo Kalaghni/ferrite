@@ -131,6 +131,29 @@ jobs:
             echo "file=$dir.tar.gz" >> "$GITHUB_OUTPUT"
           fi
 
+      # macOS also gets FERRITE.app on a disk image. The image must mount,
+      # the app's signature must hold, and its server must run from it and
+      # keep its files in Application Support rather than inside the app.
+      - name: macOS disk image
+        id: dmg
+        if: matrix.name == 'macos-universal'
+        run: |
+          version="${RELEASE_TAG:-dev-${GITHUB_SHA::7}}"
+          dmg="ferrite-${version}-macos-universal.dmg"
+          ./packaging/build-dmg.sh "$FERRITE_VERSION" out "$dmg"
+          mnt=$(mktemp -d)
+          hdiutil attach "$dmg" -nobrowse -readonly -mountpoint "$mnt"
+          codesign --verify --deep --strict "$mnt/FERRITE.app"
+          test -L "$mnt/Applications"
+          "$mnt/FERRITE.app/Contents/MacOS/ferrite-server" --version
+          "$mnt/FERRITE.app/Contents/MacOS/ferrite-server" --port 27555 --bots 2 --no-discovery &
+          pid=$!
+          sleep 5
+          kill "$pid"
+          test -d "$HOME/Library/Application Support/FERRITE"
+          hdiutil detach "$mnt"
+          echo "file=$dmg" >> "$GITHUB_OUTPUT"
+
       # Windows also gets an installer (Start menu entries, uninstaller).
       - name: Windows installer
         id: installer
@@ -154,6 +177,13 @@ jobs:
         with:
           name: ${{ matrix.name }}
           path: ${{ steps.package.outputs.file }}
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.name == 'macos-universal'
+        with:
+          name: macos-universal-dmg
+          path: ${{ steps.dmg.outputs.file }}
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4

@@ -68,12 +68,13 @@ pub struct Library {
     pub entries: Vec<Entry>,
 }
 
-/// `FERRITE_PREFABS`, or `prefabs/` next to the running program.
+/// `FERRITE_PREFABS`, or `prefabs/` in the game's folder (see
+/// [`crate::paths::data_dir`]).
 pub fn default_root() -> PathBuf {
     if let Some(d) = std::env::var_os("FERRITE_PREFABS") {
         return d.into();
     }
-    std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("prefabs"))).unwrap_or_else(|| "prefabs".into())
+    crate::paths::data_dir().join("prefabs")
 }
 
 /// A file name for a prefab name.

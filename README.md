@@ -1,4 +1,4 @@
-# FERRITE 0.15.3
+# FERRITE 0.15.4
 
 ![The FERRITE launcher: host, join or change settings](docs/launcher.png)
 
@@ -17,11 +17,13 @@ Windows, Linux and macOS builds of the client and the dedicated server are on th
 
 Either way the game keeps itself current: the launcher checks this repository's releases when it opens and shows **UPDATE & RESTART** when there is a newer one (SETTINGS > VIDEO > CHECK FOR UPDATES turns the check off; `ferrite --update` does it from a terminal). Everyone in a match needs the same release, so update together.
 
-**macOS:** the build is not signed with an Apple Developer ID, so a copy downloaded in a browser is blocked by Gatekeeper. The simplest way round it is to download from Terminal, which does not get flagged:
+**macOS:** download `ferrite-vX-macos-universal.dmg` from the [releases page](../../releases), open it and drag FERRITE to Applications. The app is not signed with an Apple Developer ID, so the first time macOS says it cannot check it: open **System Settings > Privacy & Security**, choose **Open Anyway** next to FERRITE, and confirm. The app keeps its settings, maps and prefabs in `~/Library/Application Support/FERRITE`, and when a new version is out the launcher's DOWNLOAD button fetches the new disk image.
+
+Or without the app, from Terminal (a download made this way is not flagged, and updates itself in place):
 
 ```sh
-curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.15.3/ferrite-v0.15.3-macos-universal.tar.gz | tar xz
-./ferrite-v0.15.3-macos-universal/ferrite
+curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.15.4/ferrite-v0.15.4-macos-universal.tar.gz | tar xz
+./ferrite-v0.15.4-macos-universal/ferrite
 ```
 
 If you already downloaded it in a browser, run `xattr -dr com.apple.quarantine .` in the unpacked folder once.

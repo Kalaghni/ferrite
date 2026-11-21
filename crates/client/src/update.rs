@@ -32,6 +32,10 @@
 //! SETTINGS > VIDEO has a ROLL BACK button, and `ferrite --rollback` does the
 //! same from the command line.
 //!
+//! The macOS app (`FERRITE.app`, from the disk image) is the exception: an
+//! app bundle must not change itself, so there UPDATE opens the new disk
+//! image in the browser and the player replaces the app, as they installed it.
+//!
 //! The Windows installer (Inno Setup) and the zip install the same files in
 //! one folder, and the updater treats both the same: it replaces those files
 //! from the zip. The installer's uninstaller still works, and also removes
@@ -76,6 +80,8 @@ pub enum State {
     /// A newer release: its tag, e.g. "v0.7.1".
     Available(String),
     Installing(String),
+    /// The macOS app's new disk image was opened, for the player to install.
+    Opened(String),
     /// Installed; the game should restart.
     Installed(String),
     /// The previous version (e.g. "0.12.0") is back; the game should restart.
@@ -139,6 +145,17 @@ pub fn asset_name(tag: &str) -> String {
     format!("ferrite-{tag}-{ASSET}")
 }
 
+/// The macOS app's disk image in release `tag`.
+pub fn dmg_name(tag: &str) -> String {
+    format!("ferrite-{tag}-macos-universal.dmg")
+}
+
+/// Whether updating means fetching a new disk image (the macOS app) rather
+/// than replacing files in place.
+pub fn by_disk_image() -> bool {
+    ferrite_shared::paths::bundled()
+}
+
 /// Where a file of release `tag` is downloaded from.
 pub fn download_url(tag: &str, file: &str) -> String {
     format!("{REPO}/releases/download/{tag}/{file}")
@@ -171,7 +188,12 @@ fn curl() -> Command {
     c
 }
 
+/// The folder the updater replaces files in. None for the macOS app, which
+/// is replaced whole: nothing is ever swapped, kept or rolled back inside it.
 fn exe_dir() -> Option<PathBuf> {
+    if by_disk_image() {
+        return None;
+    }
     std::env::current_exe().ok()?.parent().map(|d| d.to_path_buf())
 }
 
@@ -510,6 +532,14 @@ impl Updater {
     pub fn install(&mut self) {
         let State::Available(tag) = &self.state else { return };
         let tag = tag.clone();
+        if by_disk_image() {
+            let url = download_url(&tag, &dmg_name(&tag));
+            self.state = match tool("open").arg(&url).spawn() {
+                Ok(_) => State::Opened(tag),
+                Err(e) => State::Failed(format!("could not open {url}: {e}")),
+            };
+            return;
+        }
         let Some(dir) = exe_dir() else {
             self.state = State::Failed("cannot locate the installation directory".into());
             return;
@@ -585,6 +615,10 @@ pub fn run_cli(pretend: Option<&str>) -> i32 {
     };
     if !is_newer(&tag, current) {
         println!("FERRITE {current} is up to date (latest release: {tag})");
+        return 0;
+    }
+    if by_disk_image() {
+        println!("FERRITE {tag} is out: install it from {}", download_url(&tag, &dmg_name(&tag)));
         return 0;
     }
     let Some(dir) = exe_dir() else { return 1 };

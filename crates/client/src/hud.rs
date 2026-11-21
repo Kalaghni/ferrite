@@ -105,8 +105,12 @@ fn draw_chat(app: &App, w: f32, h: f32, now: f64) {
     let pw = (w - 40.0).min(1080.0);
     let x0 = w / 2.0 - pw / 2.0;
     let dead = !app.alive && !app.spectator;
-    let (x, bottom, cw, max_rows) = if app.lobby {
-        (x0 + pw * 0.64, loadout_top(h) - 18.0, pw * 0.36 - 6.0, ((loadout_top(h) - 18.0 - 246.0) / 18.0).floor().max(2.0) as usize)
+    // In the lobby the log fills the chat column of the roster panel, which
+    // starts under the vote (its height depends on the screen), so it never
+    // climbs over the map and mode cards.
+    let lobby_top = app.lobby.then(|| lobby_panel_top(w, h) + 20.0);
+    let (x, bottom, cw, mut max_rows) = if app.lobby {
+        (x0 + pw * 0.64, loadout_top(h) - 18.0, pw * 0.36 - 6.0, 0)
     } else if app.team_pick {
         return;
     } else if app.paused() {
@@ -140,6 +144,9 @@ fn draw_chat(app: &App, w: f32, h: f32, now: f64) {
             draw_rectangle(tx + crate::ui::width(&shown, size) + 2.0, y - 14.0, 2.0, 17.0, col(edge, 1.0));
         }
         y -= 32.0;
+    }
+    if let Some(top) = lobby_top {
+        max_rows = ((y - top) / lh).floor().max(0.0) as usize + 1;
     }
     // Newest at the bottom; a message fades after a while unless the box
     // is open or we are standing in the lobby.
@@ -410,6 +417,12 @@ fn draw_loadout(app: &App, w: f32, h: f32, icons: &mut Vec<GunIcon>) {
 }
 
 type Rect = (f32, f32, f32, f32);
+
+/// Baseline of the headings of the lobby's roster panel (the teams and
+/// the chat), under the vote.
+fn lobby_panel_top(w: f32, h: f32) -> f32 {
+    VoteLayout::new(&LobbyHead::new(w, h), h).bottom + 16.0 + 24.0
+}
 
 /// Lobby click targets: one card per map, the READY button, then one
 /// chip per game mode.
@@ -788,7 +801,7 @@ fn draw_lobby(app: &App, snap: &ferrite_shared::proto::Snapshot, w: f32, h: f32)
         crate::ui::text_c(if app.ready { "READY" } else { "READY UP" }, rb.0 + rb.2 / 2.0, rb.1 + 32.0, 24.0, col(DARK, 1.0));
     }
     // Who is here.
-    let y0 = vote.bottom + 16.0 + 24.0;
+    let y0 = lobby_panel_top(w, h);
     draw_rectangle(x0 - 12.0, y0 - 24.0, pw + 24.0, loadout_top(h) - (y0 - 24.0) - 8.0, col(DARK, 0.72));
     draw_rectangle(x0 - 12.0, loadout_top(h), pw + 24.0, LOADOUT_H, col(DARK, 0.82));
     // The teams take the left of the panel, the chat the right. People

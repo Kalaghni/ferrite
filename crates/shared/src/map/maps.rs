@@ -18,12 +18,13 @@ const MAX_LEN: u64 = super::doc::MAX_JSON as u64;
 /// The seed new maps take a built-in map's ground from.
 pub const SEED: u64 = 0xFE221;
 
-/// The maps folder: `FERRITE_MAPS`, or `maps` beside the executable.
+/// The maps folder: `FERRITE_MAPS`, or `maps` in the game's folder
+/// (see [`crate::paths::data_dir`]).
 pub fn default_root() -> PathBuf {
     if let Some(d) = std::env::var_os("FERRITE_MAPS") {
         return d.into();
     }
-    std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("maps"))).unwrap_or_else(|| "maps".into())
+    crate::paths::data_dir().join("maps")
 }
 
 /// Where unsaved work on `path` is kept.
