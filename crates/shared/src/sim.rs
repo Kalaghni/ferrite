@@ -93,6 +93,12 @@ pub const MELEE_REACH: f32 = 2.4;
 pub const MELEE_DAMAGE: f32 = 75.0;
 pub const MELEE_BACKSTAB: f32 = 250.0;
 
+/// Long rifles (arch 2) shoot through bodies: a round goes through up to
+/// this many enemies in a line, keeping this share of its force through
+/// each. Walls still stop it.
+pub const PIERCE: usize = 3;
+pub const PIERCE_KEEP: f32 = 0.8;
+
 pub struct WeaponDef {
     pub name: &'static str,
     pub blurb: &'static str,

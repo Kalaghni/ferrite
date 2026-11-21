@@ -1,4 +1,4 @@
-# FERRITE 0.15.4
+# FERRITE 0.15.5
 
 ![The FERRITE launcher: host, join or change settings](docs/launcher.png)
 
@@ -22,8 +22,8 @@ Either way the game keeps itself current: the launcher checks this repository's 
 Or without the app, from Terminal (a download made this way is not flagged, and updates itself in place):
 
 ```sh
-curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.15.4/ferrite-v0.15.4-macos-universal.tar.gz | tar xz
-./ferrite-v0.15.4-macos-universal/ferrite
+curl -L https://github.com/Kalaghni/ferrite/releases/download/v0.15.5/ferrite-v0.15.5-macos-universal.tar.gz | tar xz
+./ferrite-v0.15.5-macos-universal/ferrite
 ```
 
 If you already downloaded it in a browser, run `xattr -dr com.apple.quarantine .` in the unpacked folder once.

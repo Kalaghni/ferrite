@@ -642,6 +642,10 @@ pub struct App {
     pub feed: Vec<KillLine>,
     pub banner: Option<(String, [f32; 3], f64)>,
     pub sub_banner: Option<(String, f64)>,
+    /// My long-rifle kills in the snapshot of this tick: two or more is
+    /// one round through several (a collateral; the rifle cannot fire
+    /// twice that fast).
+    pub rifle_kills: (u32, u32),
     pub dmask: u64,
     pub fx: fx::Fx,
     pub audio: Audio,
@@ -1016,6 +1020,14 @@ impl App {
                     self.stats.my_kills += 1;
                     let how = if head { "HEADSHOT" } else { "ELIMINATED" };
                     self.sub_banner = Some((format!("{how}  {}", self.name(victim)), now));
+                    if sim::weapon_def(weapon).arch == 2 {
+                        let n = if self.rifle_kills.0 == tick { self.rifle_kills.1 + 1 } else { 1 };
+                        self.rifle_kills = (tick, n);
+                        if n >= 2 {
+                            self.sub_banner = Some((format!("COLLATERAL  -  {n} WITH ONE SHOT  +{}", 50 * (n - 1)), now));
+                            self.audio.play(Sfx::CapUp, 0.6);
+                        }
+                    }
                 } else if assist == self.my_id && !self.spectator {
                     self.sub_banner = Some((format!("ASSIST  {}  +50", self.name(victim)), now));
                 }
@@ -1836,6 +1848,7 @@ async fn play(
         feed: Vec::new(),
         banner: None,
         sub_banner: None,
+        rifle_kills: (u32::MAX, 0),
         dmask: 0,
         fx: fx::Fx::new(),
         audio,

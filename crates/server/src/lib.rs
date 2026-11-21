@@ -1025,37 +1025,53 @@ impl Game {
         self.players[i].firing_until = t + 90;
         self.players[i].protect_until = 0;
         self.stats.shots += 1;
+        // Long rifles (the sniper family) go through bodies: the round
+        // carries on into the next enemy behind, weaker for each one, until
+        // it reaches a wall or has gone through `sim::PIERCE` of them.
+        let pierce = if wd.arch == 2 { sim::PIERCE } else { 1 };
+        let mut killed = 0u32;
         for d in sim::shot_dirs(kit, cmd.seq, cmd.yaw, cmd.pitch, ads, hspeed, airborne, crouch, heat) {
             let wh = self.world.raycast(origin, d, 300.0, self.dmask);
-            let mut best_t = wh.map_or(300.0, |h| h.t);
-            let mut hit_player = None;
-            for &(j, pos, tc) in &targets {
-                if let Some((tt, head)) = sim::ray_player(origin, d, pos, tc) {
-                    if tt < best_t {
-                        best_t = tt;
-                        hit_player = Some((j, head));
-                    }
-                }
-            }
-            let end = origin + d * best_t;
+            let wall_t = wh.map_or(300.0, |h| h.t);
+            let mut hits: Vec<(f32, usize, bool)> = targets
+                .iter()
+                .filter_map(|&(j, pos, tc)| sim::ray_player(origin, d, pos, tc).map(|(tt, head)| (tt, j, head)))
+                .filter(|h| h.0 < wall_t)
+                .collect();
+            hits.sort_by(|a, b| a.0.total_cmp(&b.0));
+            hits.truncate(pierce);
+            let mut end_t = wall_t;
             let mut kind = 0;
-            if let Some((j, head)) = hit_player {
+            let mut force = 1.0;
+            for &(tt, j, head) in &hits {
                 kind = 2;
-                let mut dmg = wd.damage * sim::falloff(kit, best_t);
+                end_t = tt;
+                let mut dmg = wd.damage * sim::falloff(kit, tt) * force;
                 if head {
                     dmg *= wd.head_mult;
                 }
                 if wd.arch == 2 {
                     self.players[j].marked_until = t + 6 * TICK_HZ;
                 }
+                let was_alive = self.players[j].alive;
                 self.damage(j, Some(i), dmg, head, kit);
-            } else if let Some(h) = wh {
+                killed += (was_alive && !self.players[j].alive) as u32;
+                force *= sim::PIERCE_KEEP;
+            }
+            let end = origin + d * end_t;
+            if let (true, Some(h)) = (hits.is_empty(), wh) {
                 kind = 1;
                 if let Some(bi) = h.block {
                     self.hit_block(bi, wd.damage);
                 }
             }
             self.push_fx(Fx::Shot { who: i as u8, from: origin.to_array(), to: end.to_array(), hit: kind });
+        }
+        // A collateral: one long-rifle round, two or more down.
+        if wd.arch == 2 && killed >= 2 {
+            self.players[i].score += 50 * (killed - 1);
+            let name = self.players[i].name.clone();
+            self.notice(format!("{name} - COLLATERAL: {killed} with one shot"));
         }
     }
 
@@ -2192,6 +2208,74 @@ fn dummy() -> Player {
         killer: SPECTATOR_ID,
         hits: Vec::new(),
         hist: [Vec3::ZERO; HIST],
+    }
+}
+
+#[cfg(test)]
+mod collateral_tests {
+    use super::*;
+
+    /// One shooter facing three enemies in a line, high in open air so
+    /// nothing else is in the way. Returns the game, the shooter and the
+    /// three targets, nearest first.
+    fn lineup(prim: u8, kit: u8) -> (Game, usize, Vec<usize>, Cmd) {
+        let mut g = Game::new(Config { per_team: 4, max_bots: 0, log: false, discover: false, ..Default::default() });
+        let me = g.join_team("shooter", 0).unwrap();
+        let them: Vec<usize> = (0..3).map(|k| g.join_team(&format!("target {k}"), 1).unwrap()).collect();
+        let at = vec3(0.0, 150.0, 0.0);
+        let yaw = 0.0;
+        let ahead = sim::view_dir(yaw, 0.0);
+        g.players[me].st = sim::PState::spawn_with(at, kit, prim, 4);
+        g.players[me].alive = true;
+        g.players[me].st.on_ground = true; // (in the air the cone opens)
+        for (k, &j) in them.iter().enumerate() {
+            let p = &mut g.players[j];
+            p.st = sim::PState::spawn_with(at + ahead * (12.0 + 3.0 * k as f32), 0, 0, 4);
+            p.alive = true;
+            p.protect_until = 0;
+            p.hp = 40.0;
+            p.armor = 0.0;
+        }
+        let cmd = Cmd { seq: 1, buttons: btn::FIRE | btn::ADS, yaw, pitch: 0.0, interp: g.tick as f64, ..Default::default() };
+        (g, me, them, cmd)
+    }
+
+    #[test]
+    fn a_long_rifle_round_goes_through_a_line_of_enemies() {
+        let (mut g, me, them, cmd) = lineup(15, 2); // Hammerhead
+        assert_eq!(sim::weapon_def(sim::wid(&g.players[me].st)).arch, 2);
+        let score = g.players[me].score;
+        g.fire(me, &cmd, 0);
+        for &j in &them {
+            assert!(!g.players[j].alive, "target {j} should be down");
+        }
+        assert_eq!(g.players[me].kills, 3);
+        // The kills, plus the bonus for the two extra.
+        assert!(g.players[me].score >= score + 300 + 100);
+        assert!(g.chat.iter().any(|l| l.text.contains("COLLATERAL: 3 with one shot")));
+    }
+
+    #[test]
+    fn other_guns_stop_at_the_first_body() {
+        let (mut g, me, them, cmd) = lineup(0, 0); // Carbine
+        g.players[them[0]].hp = 1.0;
+        g.fire(me, &cmd, 0);
+        assert!(!g.players[them[0]].alive);
+        assert!(g.players[them[1]].alive && g.players[them[2]].alive);
+        assert!(!g.chat.iter().any(|l| l.text.contains("COLLATERAL")));
+    }
+
+    #[test]
+    fn each_body_takes_some_of_the_force() {
+        let (mut g, me, them, cmd) = lineup(15, 2);
+        for &j in &them {
+            g.players[j].hp = 1000.0;
+        }
+        g.fire(me, &cmd, 0);
+        let lost: Vec<f32> = them.iter().map(|&j| 1000.0 - g.players[j].hp).collect();
+        assert!(lost[0] > 0.0 && lost[1] > 0.0 && lost[2] > 0.0, "{lost:?}");
+        assert!((lost[1] / lost[0] - sim::PIERCE_KEEP).abs() < 0.01, "{lost:?}");
+        assert!((lost[2] / lost[1] - sim::PIERCE_KEEP).abs() < 0.01, "{lost:?}");
     }
 }
 
